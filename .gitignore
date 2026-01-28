@@ -1,0 +1,23 @@
+# build artifacts
+*.o
+*.dSYM/
+
+# compiled binaries
+spectravisual
+liveplot
+liveplot_sdl
+liveplot_sdl.backup
+plotter.exe
+last_spectravisual
+
+# dati di esempio / output di lavoro (tenuti fuori dal repo)
+spettro.txt
+pred.cat
+linelist.csv
+assigned.lin
+assignments.txt
+*.bmp
+*.png
+
+# macOS
+.DS_Store
