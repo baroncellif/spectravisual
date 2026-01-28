@@ -2,6 +2,7 @@
 #include <SDL_ttf.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #include "types.h"
@@ -42,11 +43,17 @@ int main(int argc, char *argv[])
     state.current_pts = state.raw_pts;
     state.pred_lines = malloc(sizeof(PredLine)*MAXPTS);
     
+    // NEW: Allocate LIN data
+    state.lin_data = malloc(sizeof(double)*MAX_LIN_POINTS);
+    
     // Load Data
     printf("Loading data...\n");
     state.n_pred = read_pred_cat(argv[2], state.pred_lines, MAXPTS, &state.pxmin, &state.pxmax, &state.pred_global_max);
     state.n_pts = read_data(argv[1], state.raw_pts, MAXPTS, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
     load_existing_assignments("assignments.txt", state.assignments, &state.n_assignments);
+    
+    // NEW: Load Assigned LIN file
+    state.n_lin_data = read_lin_file("assigned.lin", state.lin_data, MAX_LIN_POINTS);
 
     // Defaults
     state.vxmin = state.xmin; state.vxmax = state.xmax;
@@ -59,32 +66,28 @@ int main(int argc, char *argv[])
     state.lorentz_gamma = 0.5;
     state.pf_sig_pts = 5; state.pf_noise_pts = 50; state.pf_thresh = 3.0;
     state.rolling_avg_window = 10;
-    state.measure_active = 0;  // Set to 0 for OFF, 1 for ON
-    // NEW: Initialize Intensity Cut defaults
-    state.pred_min_log_int = -10.0; // Default min
-    state.pred_max_log_int = 0.0;   // Default max
+    state.measure_active = 0;
+    state.pred_min_log_int = -10.0;
+    state.pred_max_log_int = 0.0;
+    state.exp_offset = 0.0;
+
     // Window Inits
     state.win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};
     state.win_br = (DraggableWindow){{150, 150, 300, 200}, 0, "BROADENING"};
     state.win_as = (DraggableWindow){{200, 200, 600, 400}, 0, "ASSIGNMENTS"};
     state.win_avg = (DraggableWindow){{250, 150, 300, 200}, 0, "ROLLING AVG"};
     state.win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
-
-    // NEW: Initialize the Cut Window Position and Size!
-    state.win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
-    // NEW: Initialize Frequency Jump Window
     state.win_jump = (DraggableWindow){{400, 300, 250, 140}, 0, "FREQ JUMP"};
+    
     // --- 3. MAIN LOOP ---
     int running = 1;
     Layout layout;
 
     while(running) {
-        // Calculate Layout based on current window size
         int w, h; SDL_GetWindowSize(win, &w, &h);
         layout.win_w = w; layout.win_h = h;
         layout.plot_x = 80; layout.gap = 25;
         
-        // Split screen: 2/3 Exp, 1/3 Pred (adjustable later)
         int usable_h = h - 100;
         layout.exp_h = usable_h * 0.6;
         layout.pred_h = usable_h * 0.4 - layout.gap;
@@ -105,6 +108,7 @@ int main(int argc, char *argv[])
 
     // --- 4. CLEANUP ---
     free(state.raw_pts); free(state.smooth_pts); free(state.pred_lines);
+    if(state.lin_data) free(state.lin_data); // Free LIN data
     if(font) TTF_CloseFont(font);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

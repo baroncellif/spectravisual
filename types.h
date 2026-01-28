@@ -9,6 +9,7 @@
 #define MAX_PEAKS 10000
 #define MAX_ASSIGNMENTS 5000
 #define MAX_SELECTED 100
+#define MAX_LIN_POINTS 50000 // New constant for LIN file
 
 // --- DATA STRUCTURES ---
 
@@ -62,12 +63,11 @@ typedef enum {
     INPUT_PF_NOISE, 
     INPUT_PF_THRESH,
     INPUT_AVG_PTS,
-    // Intensity Cut Inputs
     INPUT_PRED_MIN,
     INPUT_PRED_MAX,
-    // Frequency Jump Inputs
     INPUT_JUMP_MIN,
-    INPUT_JUMP_MAX
+    INPUT_JUMP_MAX,
+    INPUT_OFFSET
 } InputState;
 
 // --- MASTER APP STATE ---
@@ -81,6 +81,10 @@ typedef struct {
     PredLine *pred_lines;
     int n_pred;
     double pred_global_max;
+
+    // NEW: Assigned LIN Data
+    double *lin_data;
+    int n_lin_data;
 
     // Ranges
     double xmin, xmax, ymin, ymax; 
@@ -119,8 +123,8 @@ typedef struct {
     DraggableWindow win_br;
     DraggableWindow win_as;
     DraggableWindow win_avg;
-    DraggableWindow win_cut;  // Key 'C'
-    DraggableWindow win_jump; // Key 'F'
+    DraggableWindow win_cut;  
+    DraggableWindow win_jump; 
 
     DraggableWindow *drag_target;
     SDL_Point drag_offset;
@@ -133,15 +137,18 @@ typedef struct {
     SDL_Point sel_start;
     SDL_Point sel_cur;
 
-    double exp_offset;          
+    // Offset State
+    double exp_offset;
+    int dragging_offset; 
+    int drag_last_x;     
     
     // Intensity Cut Variables
     double pred_min_log_int;    
     double pred_max_log_int;    
 
-    // Measure Tool State (Key 'G')
+    // Measure Tool State
     int measure_active;
-    int measure_phase; // 0 = start, 1 = end
+    int measure_phase; 
     double measure_x1;
 
 } AppState;

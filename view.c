@@ -18,7 +18,7 @@ static const SDL_Color COL_INPUT_BORDER = {60, 60, 70, 255};
 // --- INTERNAL HELPERS PROTOTYPES ---
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
-static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state);
+static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 
 // --- MAIN RENDER ENTRY POINT ---
@@ -41,7 +41,7 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     }
 
     // 4. UI Elements (Windows, Buttons, Cursor Info)
-    draw_ui_overlays(ren, font, state);
+    draw_ui_overlays(ren, font, state, l);
     draw_cursor_overlay(ren, font, state, l);
 
     // 5. Present
@@ -104,6 +104,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         }
     }
 
+    // DISABLE CLIPPING so we can draw borders and ticks
     SDL_RenderSetClipRect(ren, NULL);
 
     // Draw Borders
@@ -172,8 +173,6 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
 
         // Optimization: Draw highest line per pixel column
         int last_x = -1;
-        // Logic from original main.c: 
-        // We track the 'highest' line (smallest y coordinate) for the current x pixel.
         int max_y_at_x = -1; 
         int best_i_at_x = -1;
 
@@ -268,6 +267,23 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             }
         }
 
+        // NEW: Draw LIN circles (assigned.lin dots) - CORRECT PLACEMENT
+        if (state->n_lin_data > 0) {
+            SDL_SetRenderDrawColor(ren, 255, 100, 100, 255); // Pastel Red
+            int marker_y = l->pred_y + l->pred_h - 5; 
+            
+            for (int i=0; i<state->n_lin_data; i++) {
+                double f = state->lin_data[i];
+                if (f < state->pvxmin || f > state->pvxmax) continue;
+                
+                int px = l->pred_x + (f - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
+                
+                // Draw small 5x5 rect as "circle"
+                SDL_Rect r = {px-2, marker_y-2, 5, 5};
+                SDL_RenderFillRect(ren, &r);
+            }
+        }
+
         SDL_RenderSetClipRect(ren, NULL);
     }
 
@@ -285,7 +301,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
 }
 
 // --- UI OVERLAYS (Buttons & Windows) ---
-static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state) {
+static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     int mx, my; 
     int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
 
@@ -504,9 +520,24 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state)
             draw_text(ren, font, buf, r_end.x+5, r_end.y+4, COL_TXT);
         }
     }
+
+    // 8. STATIC OFFSET CONTROL (Bottom Right)
+    int ox = l->pred_x + l->pred_w - 150;
+    int oy = l->pred_y + l->pred_h + 10;
+    
+    draw_text(ren, font, "Offset (MHz):", ox - 100, oy + 5, COL_TXT_DIM);
+    SDL_Rect r_off = {ox, oy, 140, 28};
+    SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_off);
+    
+    if(state->input_state == INPUT_OFFSET) {
+        SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255); SDL_RenderDrawRect(ren, &r_off);
+        char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf); draw_text(ren, font, buf, r_off.x+5, r_off.y+4, COL_TXT);
+    } else {
+        SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255); SDL_RenderDrawRect(ren, &r_off);
+        char buf[32]; snprintf(buf, 32, "%.4f", state->exp_offset); draw_text(ren, font, buf, r_off.x+5, r_off.y+4, COL_TXT);
+    }
 }
 
-// --- CURSOR & INFO OVERLAY ---
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     int mx, my;
     SDL_GetMouseState(&mx, &my);
@@ -526,38 +557,52 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         draw_text(ren, font, c2, l->win_w - 220, 30, COL_TXT);
     }
 
-    // 2. Selection Info (Top Left of Prediction View)
+    // 2. Measure Tool Overlay
+    if (state->measure_active) {
+        draw_text(ren, font, "[MEASURE MODE]", l->exp_x + 10, l->exp_y + 10, (SDL_Color){255, 0, 255, 255});
+        if (state->measure_phase == 1) {
+            int px1 = l->exp_x + (state->measure_x1 - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
+            SDL_SetRenderDrawColor(ren, 255, 0, 255, 200);
+            SDL_RenderDrawLine(ren, px1, l->exp_y, px1, l->exp_y + l->exp_h);
+            SDL_RenderDrawLine(ren, px1, my, mx, my);
+            if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
+                double curr_freq = state->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (state->vxmax - state->vxmin);
+                double dist = fabs(curr_freq - state->measure_x1);
+                char buf[64]; snprintf(buf, 64, "%.4f MHz", dist);
+                draw_text(ren, font, buf, mx + 10, my - 20, (SDL_Color){255, 0, 255, 255});
+            }
+        }
+    }
+
+    // 3. Selection Info
     if(state->n_selected > 0) {
         PredLine *p = &state->pred_lines[state->selected_indices[state->n_selected-1]];
         char qn1[128], qn2[128];
         snprintf(qn1, sizeof(qn1), "Sel: %2d %2d %2d %2d %2d %2d", p->Ju, p->Kau, p->Kcu,p->M1u,p->M2u,p->M3u);
         snprintf(qn2, sizeof(qn2), " ->  %2d %2d %2d %2d %2d %2d (%.3f MHz)",  p->Jl, p->Kal, p->Kcl,p->M1l,p->M2l,p->M3l, p->freq_mhz);
-        
         draw_text(ren, font, qn1, l->pred_x + 10, l->pred_y + 10, (SDL_Color){0,255,0,255});
         draw_text(ren, font, qn2, l->pred_x + 10, l->pred_y + 30, (SDL_Color){0,255,0,255});
-        
         if(state->n_selected > 1) {
             char extra[64]; snprintf(extra, sizeof(extra), "... (+ %d more)", state->n_selected - 1);
             draw_text(ren, font, extra, l->pred_x + 10, l->pred_y + 50, (SDL_Color){50,255,100,255});
         }
     }
     
-    // 3. Hover Info (Bar Hover)
+    // 4. Hover Info
     if(state->bar_active) {
-        // Find closest line to bar
         int p_hover_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pbar_x - 1.0);
         int p_hover_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pbar_x + 1.0);
         if(p_hover_start < 0) p_hover_start = 0; 
         if(p_hover_end >= state->n_pred) p_hover_end = state->n_pred - 1;
 
-        double closest_dist = 1e99; 
-        int closest_idx = -1;
+        double closest_dist = 1e99; int closest_idx = -1;
         double freq_tolerance = (state->pvxmax - state->pvxmin) * 0.01; 
 
         for(int i=p_hover_start; i<=p_hover_end; i++) {
-        // FILTER: Ignore lines outside the cut range
+            // Check cut
             if (state->pred_lines[i].lgint < state->pred_min_log_int || 
                 state->pred_lines[i].lgint > state->pred_max_log_int) continue;
+
             double d = fabs(state->pred_lines[i].freq_mhz - state->pbar_x);
             if(d < closest_dist) { closest_dist = d; closest_idx = i; }
         }
@@ -568,36 +613,6 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
             snprintf(h1, sizeof(h1), "Hov: %2d %2d %2d -> %2d %2d %2d (%.3f)", 
                 p->Ju, p->Kau, p->Kcu, p->Jl, p->Kal, p->Kcl, p->freq_mhz);
             draw_text(ren, font, h1, l->pred_x + 10, l->pred_y + 10, (SDL_Color){255,165,0,255});
-        }
-    }
-    
-    // --- NEW: Measure Tool Overlay ---
-    if (state->measure_active) {
-        // 1. Draw Mode Indicator
-        draw_text(ren, font, "[MEASURE MODE]", l->exp_x + 10, l->exp_y + 10, (SDL_Color){255, 0, 255, 255});
-
-        // 2. Draw Active Measurement
-        if (state->measure_phase == 1) {
-            // Calculate pixel position of start point
-            // Note: We must handle cases where start point is off-screen, but simple projection works for visualization
-            int px1 = l->exp_x + (state->measure_x1 - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-            
-            // Draw vertical line at start
-            SDL_SetRenderDrawColor(ren, 255, 0, 255, 200);
-            SDL_RenderDrawLine(ren, px1, l->exp_y, px1, l->exp_y + l->exp_h);
-
-            // Draw line to mouse
-            SDL_RenderDrawLine(ren, px1, my, mx, my);
-
-            // Calculate current distance
-            if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
-                double curr_freq = state->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (state->vxmax - state->vxmin);
-                double dist = fabs(curr_freq - state->measure_x1);
-                
-                char buf[64];
-                snprintf(buf, 64, "%.4f MHz", dist);
-                draw_text(ren, font, buf, mx + 10, my - 20, (SDL_Color){255, 0, 255, 255});
-            }
         }
     }
 }

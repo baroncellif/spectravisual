@@ -41,6 +41,30 @@ static int parse_line(const char *line, double *a, double *b, Separator sep) {
 
 // --- PUBLIC FUNCTIONS ---
 
+// NEW: Read LIN file
+int read_lin_file(const char *fname, double *out, int maxn) {
+    FILE *f = fopen(fname, "r");
+    if (!f) return 0;
+    
+    int n = 0;
+    double val;
+    
+    // Read every whitespace-separated token
+    while (n < maxn) {
+        if (fscanf(f, "%lf", &val) == 1) {
+            out[n++] = val;
+        } else {
+            // If it's not a number, consume the string token and continue
+            char temp[256];
+            if (fscanf(f, "%s", temp) != 1) break; // End of file
+        }
+    }
+    
+    fclose(f);
+    printf("Loaded %d numeric values from %s\n", n, fname);
+    return n;
+}
+
 int read_pred_cat(const char *fname, PredLine *out, int maxn,
                   double *xmin, double *xmax,
                   double *global_max_int)
