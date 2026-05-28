@@ -16,6 +16,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
+static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
@@ -77,6 +78,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     int mx = b->x; 
     int my = b->y;
     int handled = 0;
+    (void)handled;
 
     // 1. Check Floating Windows
     // Helper macro to reduce boilerplate for window drag checks
@@ -211,10 +213,11 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if(point_in_rect(mx, my, (SDL_Rect){s->win_as.rect.x+10, s->win_as.rect.y+360, 100, 30})) {
              FILE *fp = fopen("assignments.txt", "w"); 
              if(fp) {
-                 fprintf(fp, "# PredFreq(MHz) J K a ... ExpFreq ExpInt\n");
+                 fprintf(fp, "# PredFreq(MHz)  Ju Kau Kcu M1u M2u M3u  Jl Kal Kcl M1l M2l M3l  ExpFreq(MHz) ExpInt\n");
                  for(int k=0; k<s->n_assignments; k++) {
                      PredLine p = s->assignments[k].pred;
-                     fprintf(fp, "%3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d   %12.4f %12.4e\n",
+                     fprintf(fp, "%12.4f  %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d   %12.4f %12.4e\n",
+                         p.freq_mhz,
                          p.Ju, p.Kau, p.Kcu,p.M1u,p.M2u,p.M3u, p.Jl, p.Kal, p.Kcl,p.M1l,p.M2l,p.M3l,
                          s->assignments[k].exp_freq, s->assignments[k].exp_int);
                  }
@@ -441,14 +444,24 @@ static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1)
         printf("Peak found: %.4f (Copied to clipboard)\n", px);
 
         // Auto-assign if prediction is selected
-        if(s->n_selected > 0) {
-            for(int k=0; k < s->n_selected; k++) {
-                add_or_update_assignment(s->assignments, &s->n_assignments, 
-                                         s->pred_lines[s->selected_indices[k]], px, py);
-            }
-            s->n_selected = 0; // Clear selection after assignment
-        }
+        assign_selected_predictions(s, px, py);
     }
+}
+
+static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int) {
+    if (s->n_selected <= 0) return;
+
+    int requested = s->n_selected;
+    for(int k = 0; k < requested; k++) {
+        int idx = s->selected_indices[k];
+        if (idx < 0 || idx >= s->n_pred) continue;
+        add_or_update_assignment(s->assignments, &s->n_assignments,
+                                 s->pred_lines[idx], exp_freq, exp_int);
+    }
+
+    printf("Assigned %d selected predicted line%s to %.4f MHz\n",
+           requested, requested == 1 ? "" : "s", exp_freq);
+    s->n_selected = 0;
 }
 
 // --- TEXT INPUT BUFFER ---

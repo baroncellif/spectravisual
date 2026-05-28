@@ -266,10 +266,29 @@ void load_existing_assignments(const char *filename, Assignment *list, int *n) {
         PredLine p; memset(&p, 0, sizeof(p));
         double ef, ei;
 
-        int res = sscanf(line, "%lf %d %d %d %d %d %d %lf %lf",
-               &p.freq_mhz, &p.Ju, &p.Kau, &p.Kcu, &p.Jl, &p.Kal, &p.Kcl, &ef, &ei);
+        int res = sscanf(line, "%lf %d %d %d %d %d %d %d %d %d %d %d %d %lf %lf",
+               &p.freq_mhz,
+               &p.Ju, &p.Kau, &p.Kcu, &p.M1u, &p.M2u, &p.M3u,
+               &p.Jl, &p.Kal, &p.Kcl, &p.M1l, &p.M2l, &p.M3l,
+               &ef, &ei);
 
-        if(res >= 8) {
+        if(res < 15) {
+            double old_ef = 0.0, old_ei = 0.0;
+            PredLine oldp; memset(&oldp, 0, sizeof(oldp));
+            int old_res = sscanf(line, "%d %d %d %d %d %d %d %d %d %d %d %d %lf %lf",
+                   &oldp.Ju, &oldp.Kau, &oldp.Kcu, &oldp.M1u, &oldp.M2u, &oldp.M3u,
+                   &oldp.Jl, &oldp.Kal, &oldp.Kcl, &oldp.M1l, &oldp.M2l, &oldp.M3l,
+                   &old_ef, &old_ei);
+            if (old_res >= 14) {
+                p = oldp;
+                p.freq_mhz = old_ef;
+                ef = old_ef;
+                ei = old_ei;
+                res = 15;
+            }
+        }
+
+        if(res >= 15) {
             p.branch = branch_from_qn(p.Ju, p.Jl);
             p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
             p.lgint = 0; 
