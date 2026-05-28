@@ -116,25 +116,46 @@ int find_assigned_frequency_file(char *out_path, int out_size) {
 static int parse_assigned_frequency_line(const char *line, double *freq) {
     if (line[0] == '\0' || line[0] == '#' || line[0] == ';') return 0;
 
-    if ((int)strlen(line) > 36) {
-        double fixed_freq = 0.0;
-        if (sscanf(line + 36, "%lf", &fixed_freq) == 1 && fabs(fixed_freq) > 1.0) {
-            *freq = fixed_freq;
-            return 1;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", line);
+
+    char *comment = strchr(buf, '#');
+    if (comment) *comment = '\0';
+    comment = strchr(buf, ';');
+    if (comment) *comment = '\0';
+
+    char *tok = strtok(buf, " \t,|");
+    double values[32];
+    int n_values = 0;
+
+    while (tok && n_values < (int)(sizeof(values) / sizeof(values[0]))) {
+        char *end = NULL;
+        double v = strtod(tok, &end);
+        if (end != tok) {
+            values[n_values++] = v;
+        }
+        tok = strtok(NULL, " \t,|");
+    }
+
+    if (n_values == 1) {
+        *freq = values[0];
+        return 1;
+    }
+
+    for (int qn_count = 6; qn_count <= 12; qn_count += 2) {
+        if (n_values == qn_count + 1 || n_values == qn_count + 3) {
+            if (fabs(values[qn_count]) > 1000.0) {
+                *freq = values[qn_count];
+                return 1;
+            }
         }
     }
 
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s", line);
-    char *tok = strtok(buf, " \t,|");
-    while (tok) {
-        char *end = NULL;
-        double v = strtod(tok, &end);
-        if (end != tok && fabs(v) > 1000.0) {
-            *freq = v;
+    for (int i = n_values - 1; i >= 0; i--) {
+        if (fabs(values[i]) > 1000.0) {
+            *freq = values[i];
             return 1;
         }
-        tok = strtok(NULL, " \t,|");
     }
     return 0;
 }
