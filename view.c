@@ -20,6 +20,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static int pred_line_is_selected(AppState *state, int idx);
+static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
 
 // --- MAIN RENDER ENTRY POINT ---
 void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
@@ -188,56 +190,64 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         if(p_start < 0) p_start = 0; 
         if(p_end >= state->n_pred) p_end = state->n_pred - 1;
 
-        // Optimization: Draw highest line per pixel column
-        int last_x = -1;
-        int max_y_at_x = -1; 
-        int best_i_at_x = -1;
+        // Draw all predicted lines. Lines that collapse into the same pixel column
+        // are spread by a few pixels so blended transitions remain visible.
+        int group_idx[256];
+        int group_sy[256];
+        int group_sx = -1000000;
+        int group_n = 0;
+        int overflow_n = 0;
 
         for (int i=p_start; i<=p_end; i++) {
-            // REMOVED INTENSITY CUT FILTER TO RESTORE VISIBILITY
             if (state->pred_lines[i].lgint < state->pred_min_log_int) continue;
             if (state->pred_lines[i].lgint > state->pred_max_log_int) continue;
 
             double h_ratio = (state->pred_lines[i].linear_int / state->pred_global_max) * state->pred_scale;
             if(h_ratio > 1.0) h_ratio = 1.0;
-            
-            // Calculate screen coordinates
+
             int sx = l->pred_x + (state->pred_lines[i].freq_mhz - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
-            // sy1 is the Top Y of the line. Smaller Y = Higher on screen.
             int sy1 = l->pred_y + l->pred_h - (int)(h_ratio * (l->pred_h - 10));
 
-            if (sx == last_x) {
-                // If this line is taller (sy1 is smaller), keep it
-                if (sy1 < max_y_at_x) { 
-                    max_y_at_x = sy1; 
-                    best_i_at_x = i; 
+            if (group_n > 0 && sx != group_sx) {
+                int draw_n = group_n;
+                if (draw_n > 15) draw_n = 15;
+                for (int k = 0; k < draw_n; k++) {
+                    int offset = (draw_n == 1) ? 0 : (k - (draw_n - 1) / 2);
+                    if (draw_n > 7) offset = (offset * 8) / draw_n;
+                    draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
                 }
+                if (group_n + overflow_n > 1) {
+                    SDL_SetRenderDrawColor(ren, 255, 255, 255, 180);
+                    SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
+                    SDL_RenderFillRect(ren, &cluster_mark);
+                }
+                group_n = 0;
+                overflow_n = 0;
+            }
+
+            group_sx = sx;
+            if (group_n < 256) {
+                group_idx[group_n] = i;
+                group_sy[group_n] = sy1;
+                group_n++;
             } else {
-                // Draw previous column's best line
-                if (best_i_at_x != -1) {
-                    SDL_Color c = color_for_pred(state->pred_lines[best_i_at_x].branch, state->pred_lines[best_i_at_x].mu);
-                    // Check selection highlight
-                    int is_sel=0; 
-                    for(int k=0; k<state->n_selected; k++) if(state->selected_indices[k]==best_i_at_x) is_sel=1;
-                    
-                    if(is_sel) SDL_SetRenderDrawColor(ren, 0, 255, 0, 255); 
-                    else SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 255);
-                    
-                    SDL_RenderDrawLine(ren, last_x, l->pred_y + l->pred_h, last_x, max_y_at_x);
-                }
-                // Start new column
-                last_x = sx; 
-                max_y_at_x = sy1; 
-                best_i_at_x = i;
+                overflow_n++;
             }
         }
-        
-        // Draw tail (last pending line)
-        if (best_i_at_x != -1) {
-            SDL_Color c = color_for_pred(state->pred_lines[best_i_at_x].branch, state->pred_lines[best_i_at_x].mu);
-            int is_sel=0; for(int k=0;k<state->n_selected;k++) if(state->selected_indices[k]==best_i_at_x) is_sel=1;
-            if(is_sel) SDL_SetRenderDrawColor(ren, 0, 255, 0, 255); else SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 255);
-            SDL_RenderDrawLine(ren, last_x, l->pred_y + l->pred_h, last_x, max_y_at_x);
+
+        if (group_n > 0) {
+            int draw_n = group_n;
+            if (draw_n > 15) draw_n = 15;
+            for (int k = 0; k < draw_n; k++) {
+                int offset = (draw_n == 1) ? 0 : (k - (draw_n - 1) / 2);
+                if (draw_n > 7) offset = (offset * 8) / draw_n;
+                draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
+            }
+            if (group_n + overflow_n > 1) {
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, 180);
+                SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
+                SDL_RenderFillRect(ren, &cluster_mark);
+            }
         }
 
         // Broadening Simulation (Lorentzian)
@@ -315,6 +325,25 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         char buf[32]; snprintf(buf,sizeof(buf),"%.3f",x);
         draw_text(ren, font, buf, px - 20, l->pred_y + l->pred_h + 8, COL_TXT_DIM);
     }
+}
+
+static int pred_line_is_selected(AppState *state, int idx) {
+    for (int k = 0; k < state->n_selected; k++) {
+        if (state->selected_indices[k] == idx) return 1;
+    }
+    return 0;
+}
+
+static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1) {
+    SDL_Color c = color_for_pred(state->pred_lines[idx].branch, state->pred_lines[idx].mu);
+    if (pred_line_is_selected(state, idx)) {
+        SDL_SetRenderDrawColor(ren, 0, 255, 0, 255);
+        SDL_RenderDrawLine(ren, sx - 1, l->pred_y + l->pred_h, sx - 1, sy1);
+        SDL_RenderDrawLine(ren, sx + 1, l->pred_y + l->pred_h, sx + 1, sy1);
+    } else {
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 210);
+    }
+    SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
 }
 
 // --- UI OVERLAYS (Buttons & Windows) ---
@@ -593,15 +622,19 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
 
     // 3. Selection Info
     if(state->n_selected > 0) {
-        PredLine *p = &state->pred_lines[state->selected_indices[state->n_selected-1]];
-        char qn1[128], qn2[128];
-        snprintf(qn1, sizeof(qn1), "Sel: %2d %2d %2d %2d %2d %2d", p->Ju, p->Kau, p->Kcu,p->M1u,p->M2u,p->M3u);
-        snprintf(qn2, sizeof(qn2), " ->  %2d %2d %2d %2d %2d %2d (%.3f MHz)",  p->Jl, p->Kal, p->Kcl,p->M1l,p->M2l,p->M3l, p->freq_mhz);
-        draw_text(ren, font, qn1, l->pred_x + 10, l->pred_y + 10, (SDL_Color){0,255,0,255});
-        draw_text(ren, font, qn2, l->pred_x + 10, l->pred_y + 30, (SDL_Color){0,255,0,255});
-        if(state->n_selected > 1) {
-            char extra[64]; snprintf(extra, sizeof(extra), "... (+ %d more)", state->n_selected - 1);
-            draw_text(ren, font, extra, l->pred_x + 10, l->pred_y + 50, (SDL_Color){50,255,100,255});
+        char title[64];
+        snprintf(title, sizeof(title), "Selected predicted lines: %d", state->n_selected);
+        draw_text(ren, font, title, l->pred_x + 10, l->pred_y + 10, (SDL_Color){0,255,0,255});
+
+        int show_n = state->n_selected < 4 ? state->n_selected : 4;
+        for (int row_i = 0; row_i < show_n; row_i++) {
+            PredLine *p = &state->pred_lines[state->selected_indices[row_i]];
+            char row[192];
+            snprintf(row, sizeof(row), "%2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %.4f",
+                     p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
+                     p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
+                     p->freq_mhz);
+            draw_text(ren, font, row, l->pred_x + 10, l->pred_y + 30 + row_i * 18, (SDL_Color){80,255,120,255});
         }
     }
     
@@ -613,6 +646,8 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         if(p_hover_end >= state->n_pred) p_hover_end = state->n_pred - 1;
 
         double closest_dist = 1e99; int closest_idx = -1;
+        int hover_idx[4];
+        int hover_n = 0;
         double freq_tolerance = (state->pvxmax - state->pvxmin) * 0.01; 
 
         for(int i=p_hover_start; i<=p_hover_end; i++) {
@@ -622,14 +657,22 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
 
             double d = fabs(state->pred_lines[i].freq_mhz - state->pbar_x);
             if(d < closest_dist) { closest_dist = d; closest_idx = i; }
+            if (d < freq_tolerance && hover_n < 4) hover_idx[hover_n++] = i;
         }
 
         if(closest_idx >= 0 && closest_dist < freq_tolerance && state->n_selected == 0) {
-            PredLine *p = &state->pred_lines[closest_idx];
-            char h1[128];
-            snprintf(h1, sizeof(h1), "Hov: %2d %2d %2d -> %2d %2d %2d (%.3f)", 
-                p->Ju, p->Kau, p->Kcu, p->Jl, p->Kal, p->Kcl, p->freq_mhz);
-            draw_text(ren, font, h1, l->pred_x + 10, l->pred_y + 10, (SDL_Color){255,165,0,255});
+            char htitle[64];
+            snprintf(htitle, sizeof(htitle), "Near bar: %d line%s", hover_n, hover_n == 1 ? "" : "s");
+            draw_text(ren, font, htitle, l->pred_x + 10, l->pred_y + 10, (SDL_Color){255,165,0,255});
+            for (int row_i = 0; row_i < hover_n; row_i++) {
+                PredLine *p = &state->pred_lines[hover_idx[row_i]];
+                char h1[160];
+                snprintf(h1, sizeof(h1), "%2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %.4f",
+                    p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
+                    p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
+                    p->freq_mhz);
+                draw_text(ren, font, h1, l->pred_x + 10, l->pred_y + 30 + row_i * 18, (SDL_Color){255,190,80,255});
+            }
         }
     }
 }

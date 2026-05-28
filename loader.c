@@ -186,7 +186,7 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
         pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
         pl.M1u = parse_qn2(line + qn0 +  6); pl.M2u = parse_qn2(line + qn0 +  8); pl.M3u = parse_qn2(line + qn0 + 10);
         pl.Jl  = parse_qn2(line + qn0 + 12); pl.Kal = parse_qn2(line + qn0 + 14); pl.Kcl = parse_qn2(line + qn0 + 16);
-        pl.M1l = parse_qn2(line + qn0 + 19); pl.M2l = parse_qn2(line + qn0 + 20); pl.M3l = parse_qn2(line + qn0 + 22);
+        pl.M1l = parse_qn2(line + qn0 + 18); pl.M2l = parse_qn2(line + qn0 + 20); pl.M3l = parse_qn2(line + qn0 + 22);
 
         pl.branch = branch_from_qn(pl.Ju, pl.Jl);
         pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
