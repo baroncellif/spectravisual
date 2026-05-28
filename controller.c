@@ -17,6 +17,7 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
+static void delete_assignment(AppState *s, int idx);
 
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
@@ -210,6 +211,15 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             else { s->drag_target = &s->win_as; s->drag_offset.x = mx - s->win_as.rect.x; s->drag_offset.y = my - s->win_as.rect.y; }
             return;
         }
+        int start_idx = (s->n_assignments > 12) ? s->n_assignments - 12 : 0;
+        for (int k = start_idx; k < s->n_assignments; k++) {
+            int row_y = s->win_as.rect.y + 90 + (k - start_idx) * 20;
+            SDL_Rect row_rect = {s->win_as.rect.x + 15, row_y - 2, s->win_as.rect.w - 30, 18};
+            if (point_in_rect(mx, my, row_rect)) {
+                s->selected_assignment = k;
+                return;
+            }
+        }
         if(point_in_rect(mx, my, (SDL_Rect){s->win_as.rect.x+10, s->win_as.rect.y+360, 100, 30})) {
              FILE *fp = fopen("assignments.txt", "w"); 
              if(fp) {
@@ -224,6 +234,9 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                  fclose(fp);
                  printf("Saved assignments.txt\n");
              }
+        }
+        if(point_in_rect(mx, my, (SDL_Rect){s->win_as.rect.x+120, s->win_as.rect.y+360, 110, 30})) {
+            delete_assignment(s, s->selected_assignment);
         }
         return;
     }
@@ -462,6 +475,26 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     printf("Assigned %d selected predicted line%s to %.4f MHz\n",
            requested, requested == 1 ? "" : "s", exp_freq);
     s->n_selected = 0;
+}
+
+static void delete_assignment(AppState *s, int idx) {
+    if (idx < 0 || idx >= s->n_assignments) return;
+
+    double pred_freq = s->assignments[idx].pred.freq_mhz;
+    for (int i = idx; i < s->n_assignments - 1; i++) {
+        s->assignments[i] = s->assignments[i + 1];
+    }
+    s->n_assignments--;
+
+    if (s->n_assignments <= 0) {
+        s->selected_assignment = -1;
+    } else if (idx >= s->n_assignments) {
+        s->selected_assignment = s->n_assignments - 1;
+    } else {
+        s->selected_assignment = idx;
+    }
+
+    printf("Deleted assignment for %.4f MHz\n", pred_freq);
 }
 
 // --- TEXT INPUT BUFFER ---

@@ -294,6 +294,9 @@ void load_existing_assignments(const char *filename, Assignment *list, int *n) {
                &ef, &ei);
 
         if(res < 15) {
+            // Legacy 0.9 format: 12 quantum numbers followed by ExpFreq ExpInt.
+            // There was no predicted frequency field, so keep the quantum-number
+            // order and use ExpFreq as a stable key for old assignments.
             double old_ef = 0.0, old_ei = 0.0;
             PredLine oldp; memset(&oldp, 0, sizeof(oldp));
             int old_res = sscanf(line, "%d %d %d %d %d %d %d %d %d %d %d %d %lf %lf",

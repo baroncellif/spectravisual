@@ -468,6 +468,11 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         for(int k=start_idx; k<state->n_assignments; k++) {
             PredLine p = state->assignments[k].pred;
             char row[256];
+            if (k == state->selected_assignment) {
+                SDL_Rect row_bg = {wx + 15, ty - 2, state->win_as.rect.w - 30, 18};
+                SDL_SetRenderDrawColor(ren, 0, 120, 120, 180);
+                SDL_RenderFillRect(ren, &row_bg);
+            }
             snprintf(row, sizeof(row), "  %2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %9.3f ",
                  p.Ju, p.Kau, p.Kcu,p.M1u,p.M2u,p.M3u, p.Jl, p.Kal, p.Kcl,p.M1l,p.M2l,p.M3l,
                  state->assignments[k].exp_freq);
@@ -477,6 +482,8 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
 
         Button btn_save = {{wx+10, wy+360, 100, 30}, "Save All", {0, 100, 200, 255}, 0};
         draw_button(ren, font, &btn_save, mx, my, m_down, 0);
+        Button btn_del_as = {{wx+120, wy+360, 110, 30}, "Delete", {170, 60, 60, 255}, 0};
+        draw_button(ren, font, &btn_del_as, mx, my, m_down, state->selected_assignment >= 0);
     }
     
     // NEW: 6. INTENSITY CUT WINDOW (Triggered by 'C')

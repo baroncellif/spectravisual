@@ -117,6 +117,7 @@ typedef struct {
     int n_selected;
     Assignment assignments[MAX_ASSIGNMENTS];
     int n_assignments;
+    int selected_assignment;
 
     // Windows
     DraggableWindow win_pf;
