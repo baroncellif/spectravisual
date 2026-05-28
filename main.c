@@ -74,6 +74,7 @@ int main(int argc, char *argv[])
     state.pred_max_log_int = 0.0;
     state.exp_offset = 0.0;
     state.selected_assignment = -1;
+    state.assignments_scroll = 0;
 
     // Window Inits
     state.win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};

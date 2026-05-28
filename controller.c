@@ -15,9 +15,11 @@ static void handle_text_input_event(AppState *s, char *text);
 static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
+static void handle_mouse_wheel(AppState *s, SDL_MouseWheelEvent *w);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 static void delete_assignment(AppState *s, int idx);
+static void clamp_assignment_scroll(AppState *s);
 
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
@@ -69,6 +71,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
             case SDL_MOUSEBUTTONDOWN: handle_mouse_down(state, l, &e.button); break;
             case SDL_MOUSEBUTTONUP:   handle_mouse_up(state, l, &e.button); break;
             case SDL_MOUSEMOTION:     handle_mouse_motion(state, l, &e.motion); break;
+            case SDL_MOUSEWHEEL:      handle_mouse_wheel(state, &e.wheel); break;
             case SDL_KEYDOWN:         handle_keydown(state, l, &e.key); break;
         }
     }
@@ -211,8 +214,11 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             else { s->drag_target = &s->win_as; s->drag_offset.x = mx - s->win_as.rect.x; s->drag_offset.y = my - s->win_as.rect.y; }
             return;
         }
-        int start_idx = (s->n_assignments > 12) ? s->n_assignments - 12 : 0;
-        for (int k = start_idx; k < s->n_assignments; k++) {
+        clamp_assignment_scroll(s);
+        int start_idx = s->assignments_scroll;
+        int end_idx = start_idx + 13;
+        if (end_idx > s->n_assignments) end_idx = s->n_assignments;
+        for (int k = start_idx; k < end_idx; k++) {
             int row_y = s->win_as.rect.y + 90 + (k - start_idx) * 20;
             SDL_Rect row_rect = {s->win_as.rect.x + 15, row_y - 2, s->win_as.rect.w - 30, 18};
             if (point_in_rect(mx, my, row_rect)) {
@@ -369,6 +375,19 @@ static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m)
     }
 }
 
+static void handle_mouse_wheel(AppState *s, SDL_MouseWheelEvent *w) {
+    if (!s->win_as.visible) return;
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    if (!point_in_rect(mx, my, s->win_as.rect)) return;
+
+    int step = (w->y > 0) ? -3 : 3;
+    if (w->y == 0) return;
+    s->assignments_scroll += step;
+    clamp_assignment_scroll(s);
+}
+
 // --- MOUSE UP (Action Completion) ---
 static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     s->drag_target = NULL;
@@ -475,6 +494,8 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     printf("Assigned %d selected predicted line%s to %.4f MHz\n",
            requested, requested == 1 ? "" : "s", exp_freq);
     s->n_selected = 0;
+    s->assignments_scroll = s->n_assignments - 13;
+    clamp_assignment_scroll(s);
 }
 
 static void delete_assignment(AppState *s, int idx) {
@@ -494,7 +515,15 @@ static void delete_assignment(AppState *s, int idx) {
         s->selected_assignment = idx;
     }
 
+    clamp_assignment_scroll(s);
     printf("Deleted assignment for %.4f MHz\n", pred_freq);
+}
+
+static void clamp_assignment_scroll(AppState *s) {
+    int max_scroll = s->n_assignments - 13;
+    if (max_scroll < 0) max_scroll = 0;
+    if (s->assignments_scroll < 0) s->assignments_scroll = 0;
+    if (s->assignments_scroll > max_scroll) s->assignments_scroll = max_scroll;
 }
 
 // --- TEXT INPUT BUFFER ---
@@ -517,6 +546,17 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
         if (is_shift) s->n_peaks = 0; 
         else if (s->n_peaks > 0) s->n_peaks--;
+        return;
+    }
+
+    if (s->win_as.visible && sym == SDLK_PAGEUP) {
+        s->assignments_scroll -= 13;
+        clamp_assignment_scroll(s);
+        return;
+    }
+    if (s->win_as.visible && sym == SDLK_PAGEDOWN) {
+        s->assignments_scroll += 13;
+        clamp_assignment_scroll(s);
         return;
     }
 

@@ -118,6 +118,7 @@ typedef struct {
     Assignment assignments[MAX_ASSIGNMENTS];
     int n_assignments;
     int selected_assignment;
+    int assignments_scroll;
 
     // Windows
     DraggableWindow win_pf;

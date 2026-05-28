@@ -463,9 +463,15 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         SDL_RenderDrawLine(ren, wx+20, ty+25, wx+580, ty+25);
         ty += 30;
         
-        // Simple scroll: show last 12
-        int start_idx = (state->n_assignments > 12) ? state->n_assignments - 12 : 0;
-        for(int k=start_idx; k<state->n_assignments; k++) {
+        int visible_rows = 13;
+        int start_idx = state->assignments_scroll;
+        if (start_idx < 0) start_idx = 0;
+        if (start_idx > state->n_assignments - visible_rows) start_idx = state->n_assignments - visible_rows;
+        if (start_idx < 0) start_idx = 0;
+        int end_idx = start_idx + visible_rows;
+        if (end_idx > state->n_assignments) end_idx = state->n_assignments;
+
+        for(int k=start_idx; k<end_idx; k++) {
             PredLine p = state->assignments[k].pred;
             char row[256];
             if (k == state->selected_assignment) {
@@ -478,6 +484,12 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
                  state->assignments[k].exp_freq);
             draw_text(ren, font, row, wx+20, ty, COL_TXT);
             ty += 20;
+        }
+
+        if (state->n_assignments > visible_rows) {
+            char count[64];
+            snprintf(count, sizeof(count), "%d-%d / %d", start_idx + 1, end_idx, state->n_assignments);
+            draw_text(ren, font, count, wx + state->win_as.rect.w - 115, wy + 360, COL_TXT_DIM);
         }
 
         Button btn_save = {{wx+10, wy+360, 100, 30}, "Save All", {0, 100, 200, 255}, 0};
