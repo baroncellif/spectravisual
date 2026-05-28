@@ -81,6 +81,23 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
          
          SDL_RenderDrawLine(ren, px1, py1, px2, py2);
     }
+
+    // Draw already-assigned experimental frequencies loaded from config/LIN.
+    if (state->n_lin_data > 0) {
+        SDL_SetRenderDrawColor(ren, 120, 255, 140, 210);
+        int marker_top = l->exp_y + 4;
+        int marker_bottom = l->exp_y + l->exp_h - 4;
+
+        for (int i = 0; i < state->n_lin_data; i++) {
+            double f = state->lin_data[i] + state->exp_offset;
+            if (f < state->vxmin || f > state->vxmax) continue;
+
+            int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
+            SDL_RenderDrawLine(ren, px, marker_top, px, marker_bottom);
+            SDL_Rect cap = {px - 3, marker_top, 7, 7};
+            SDL_RenderFillRect(ren, &cap);
+        }
+    }
     
     // Draw Found Peaks
     for (int ip = 0; ip < state->n_peaks; ip++) {
@@ -267,9 +284,9 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             }
         }
 
-        // NEW: Draw LIN circles (assigned.lin dots) - CORRECT PLACEMENT
+        // Draw assigned-frequency dots in the prediction pane as a compact locator.
         if (state->n_lin_data > 0) {
-            SDL_SetRenderDrawColor(ren, 255, 100, 100, 255); // Pastel Red
+            SDL_SetRenderDrawColor(ren, 120, 255, 140, 220);
             int marker_y = l->pred_y + l->pred_h - 5; 
             
             for (int i=0; i<state->n_lin_data; i++) {

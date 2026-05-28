@@ -41,27 +41,120 @@ static int parse_line(const char *line, double *a, double *b, Separator sep) {
 
 // --- PUBLIC FUNCTIONS ---
 
-// NEW: Read LIN file
-int read_lin_file(const char *fname, double *out, int maxn) {
+static void trim_whitespace(char *s) {
+    char *start = s;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
+    if (start != s) memmove(s, start, strlen(start) + 1);
+
+    size_t len = strlen(s);
+    while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t' || s[len-1] == '\r' || s[len-1] == '\n')) {
+        s[--len] = '\0';
+    }
+    if (len >= 2 && ((s[0] == '"' && s[len-1] == '"') || (s[0] == '\'' && s[len-1] == '\''))) {
+        memmove(s, s + 1, len - 2);
+        s[len - 2] = '\0';
+    }
+}
+
+static int parse_config_line(char *line, char *out_path, int out_size) {
+    trim_whitespace(line);
+    if (line[0] == '\0' || line[0] == '#' || line[0] == ';') return 0;
+
+    char *eq = strchr(line, '=');
+    if (eq) {
+        *eq = '\0';
+        char *key = line;
+        char *value = eq + 1;
+        trim_whitespace(key);
+        trim_whitespace(value);
+        if (strcmp(key, "assigned_file") != 0 &&
+            strcmp(key, "lin_file") != 0 &&
+            strcmp(key, "assigned_lines") != 0) {
+            return 0;
+        }
+        snprintf(out_path, out_size, "%s", value);
+        return out_path[0] != '\0';
+    }
+
+    snprintf(out_path, out_size, "%s", line);
+    return out_path[0] != '\0';
+}
+
+int find_assigned_frequency_file(char *out_path, int out_size) {
+    const char *configs[] = {
+        "spectravisual.ini",
+        "liveplot.ini",
+        "assignments.ini",
+        "config.ini"
+    };
+
+    for (int i = 0; i < (int)(sizeof(configs) / sizeof(configs[0])); i++) {
+        FILE *f = fopen(configs[i], "r");
+        if (!f) continue;
+
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            if (parse_config_line(line, out_path, out_size)) {
+                fclose(f);
+                printf("Using assigned frequency file from %s: %s\n", configs[i], out_path);
+                return 1;
+            }
+        }
+        fclose(f);
+    }
+
+    FILE *fallback = fopen("assigned.lin", "r");
+    if (fallback) {
+        fclose(fallback);
+        snprintf(out_path, out_size, "%s", "assigned.lin");
+        printf("Using fallback assigned frequency file: %s\n", out_path);
+        return 1;
+    }
+    return 0;
+}
+
+static int parse_assigned_frequency_line(const char *line, double *freq) {
+    if (line[0] == '\0' || line[0] == '#' || line[0] == ';') return 0;
+
+    if ((int)strlen(line) > 36) {
+        double fixed_freq = 0.0;
+        if (sscanf(line + 36, "%lf", &fixed_freq) == 1 && fabs(fixed_freq) > 1.0) {
+            *freq = fixed_freq;
+            return 1;
+        }
+    }
+
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", line);
+    char *tok = strtok(buf, " \t,|");
+    while (tok) {
+        char *end = NULL;
+        double v = strtod(tok, &end);
+        if (end != tok && fabs(v) > 1000.0) {
+            *freq = v;
+            return 1;
+        }
+        tok = strtok(NULL, " \t,|");
+    }
+    return 0;
+}
+
+int read_assigned_frequencies(const char *fname, double *out, int maxn) {
     FILE *f = fopen(fname, "r");
     if (!f) return 0;
     
     int n = 0;
-    double val;
-    
-    // Read every whitespace-separated token
-    while (n < maxn) {
-        if (fscanf(f, "%lf", &val) == 1) {
-            out[n++] = val;
-        } else {
-            // If it's not a number, consume the string token and continue
-            char temp[256];
-            if (fscanf(f, "%s", temp) != 1) break; // End of file
+    char line[512];
+
+    while (n < maxn && fgets(line, sizeof(line), f)) {
+        double freq = 0.0;
+        if (parse_assigned_frequency_line(line, &freq)) {
+            out[n++] = freq;
         }
     }
     
     fclose(f);
-    printf("Loaded %d numeric values from %s\n", n, fname);
+    printf("Loaded %d assigned frequencies from %s\n", n, fname);
     return n;
 }
 

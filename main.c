@@ -52,8 +52,11 @@ int main(int argc, char *argv[])
     state.n_pts = read_data(argv[1], state.raw_pts, MAXPTS, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
     load_existing_assignments("assignments.txt", state.assignments, &state.n_assignments);
     
-    // NEW: Load Assigned LIN file
-    state.n_lin_data = read_lin_file("assigned.lin", state.lin_data, MAX_LIN_POINTS);
+    // Load optional assigned-frequency markers from config or assigned.lin.
+    char assigned_freq_file[512];
+    if (find_assigned_frequency_file(assigned_freq_file, sizeof(assigned_freq_file))) {
+        state.n_lin_data = read_assigned_frequencies(assigned_freq_file, state.lin_data, MAX_LIN_POINTS);
+    }
 
     // Defaults
     state.vxmin = state.xmin; state.vxmax = state.xmax;

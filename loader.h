@@ -12,8 +12,10 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
 int read_data(const char *fname, Point *pts, int maxpts,
               double *xmin, double *xmax, double *ymin, double *ymax);
 
-// NEW: Reads an assigned.lin file (reading all numbers as doubles)
-int read_lin_file(const char *fname, double *out, int maxn);
+// Reads assigned line frequencies. The config file can contain a line such as
+// assigned_file=assigned.lin, or simply the filename on a non-comment line.
+int find_assigned_frequency_file(char *out_path, int out_size);
+int read_assigned_frequencies(const char *fname, double *out, int maxn);
 
 // Assignment helpers
 void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i);
