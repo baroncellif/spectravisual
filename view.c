@@ -78,7 +78,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     SDL_RenderSetClipRect(ren, &clip);
     
     // Draw Data Lines
-    SDL_SetRenderDrawColor(ren, 228, 232, 236, 245);
+    SDL_SetRenderDrawColor(ren, 205, 214, 225, 235);
     
     int start_idx = binary_search_lower(state->current_pts, state->n_pts, state->vxmin);
     int end_idx   = binary_search_upper(state->current_pts, state->n_pts, state->vxmax);
@@ -103,7 +103,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
     // Draw already-assigned experimental frequencies loaded from config/LIN.
     if (state->n_lin_data > 0) {
-        SDL_SetRenderDrawColor(ren, 115, 225, 145, 180);
+        SDL_SetRenderDrawColor(ren, 115, 225, 145, 130);
         int marker_top = l->exp_y + 4;
         int marker_bottom = l->exp_y + l->exp_h - 4;
 
@@ -113,7 +113,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
             SDL_RenderDrawLine(ren, px, marker_top, px, marker_bottom);
-            SDL_Rect cap = {px - 3, marker_top, 7, 7};
+            SDL_Rect cap = {px - 2, marker_top, 5, 5};
             SDL_RenderFillRect(ren, &cap);
         }
     }
@@ -124,11 +124,15 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (pkx < state->vxmin || pkx > state->vxmax) continue;
         
         int px = l->exp_x + (pkx - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-        SDL_SetRenderDrawColor(ren, 245, 210, 75, 255);
+        SDL_SetRenderDrawColor(ren, 245, 210, 75, 220);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
         
         char label[64]; snprintf(label, sizeof(label), "%.3f", pkx);
-        draw_text_vertical(ren, font, label, px + 4, l->exp_y + l->exp_h - 150, (SDL_Color){255,255,0,255});
+        SDL_Rect tag = {px + 4, l->exp_y + 8, 74, 22};
+        if (tag.x + tag.w < l->exp_x + l->exp_w) {
+            fill_rounded_rect(ren, tag, 4, (SDL_Color){34, 30, 12, 210});
+            draw_text(ren, font, label, tag.x + 6, tag.y + 4, (SDL_Color){245,210,75,255});
+        }
     }
 
     // Draw Navigation Bar (Red)
@@ -155,7 +159,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     
     for(double x=xstart; x<=state->vxmax; x+=xstep) {
         int px = l->exp_x + (x - state->vxmin)/xrange * l->exp_w;
-        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
+        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 60);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
         SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 5);
@@ -181,7 +185,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             // Draw Tick on left axis
             SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
             SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x - 5, py);
-            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 70);
+            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 45);
             SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x + l->exp_w, py);
             
             // Draw Label (Scientific notation)
