@@ -136,6 +136,18 @@ void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *w
     draw_text(ren, font, "x", cx - 3, cy - 8, TXT_BRIGHT);
 }
 
+// Lazily-loaded icon font. The default UI font (Helvetica) lacks arrow/symbol
+// glyphs, so toolbar icons are drawn with Arial Unicode, which provides them.
+static TTF_Font *ui_icon_font(void) {
+    static TTF_Font *f = NULL;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        f = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 13);
+    }
+    return f;
+}
+
 // Flat, crisp button matching spectravisual_redesign.html.
 // Each visual state defines: a fill colour, a 1px border colour, and a text
 // colour. BTN_NORMAL is transparent when idle (just dim text) and only grows a
@@ -197,19 +209,24 @@ void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my,
         fill_rounded_rect(ren, btn->rect, 5, bg);
     }
 
-    // Draw Text Centered
-    if (font && btn->label[0]) {
-        SDL_Surface *surf = TTF_RenderUTF8_Blended(font, btn->label, text_col);
-        if (surf) {
-            int tx = btn->rect.x + (btn->rect.w - surf->w) / 2;
-            int ty = btn->rect.y + (btn->rect.h - surf->h) / 2;
-            if (pressed) { tx += 1; ty += 1; }
+    // Draw icon (icon font) + label (UI font) centered as one group.
+    TTF_Font *ifont = (btn->icon[0]) ? ui_icon_font() : NULL;
+    int iw = 0, ih = 0, lw = 0, lh = 0;
+    if (ifont) TTF_SizeUTF8(ifont, btn->icon, &iw, &ih);
+    if (font && btn->label[0]) TTF_SizeUTF8(font, btn->label, &lw, &lh);
 
-            SDL_Rect dst = {tx, ty, surf->w, surf->h};
-            SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, surf);
-            SDL_RenderCopy(ren, tex, NULL, &dst);
-            SDL_DestroyTexture(tex);
-            SDL_FreeSurface(surf);
-        }
+    int gap = (iw && lw) ? 5 : 0;
+    int total = iw + gap + lw;
+    int sx = btn->rect.x + (btn->rect.w - total) / 2;
+    int cy = btn->rect.y + btn->rect.h / 2;
+    int dy = pressed ? 1 : 0;
+    if (pressed) sx += 1;
+
+    if (ifont && iw) {
+        draw_text(ren, ifont, btn->icon, sx, cy - ih / 2 + dy, text_col);
+        sx += iw + gap;
+    }
+    if (font && btn->label[0]) {
+        draw_text(ren, font, btn->label, sx, cy - lh / 2 + dy, text_col);
     }
 }

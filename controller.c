@@ -274,21 +274,21 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     }
     // 2. Toolbar Buttons
     // (We reconstruct rects to match view.c)
-    int by = UI_TOOLBAR_Y + 10;
+    int by = UI_TOOLBAR_Y + 5;
     int right_x = l->win_w - 18;
-    Button btn_bar  = {{12,  by, 58, 28}, "", {0,0,0,0}, 0};
-    Button btn_sync = {{76,  by, 70, 28}, "", {0,0,0,0}, 0};
-    Button btn_del  = {{156, by, 58, 28}, "", {0,0,0,0}, 0}; 
-    Button btn_list = {{236, by, 64, 28}, "", {0,0,0,0}, 0}; 
-    Button btn_peak = {{306, by, 68, 28}, "", {0,0,0,0}, 0};
-    Button btn_roll = {{380, by, 62, 28}, "", {0,0,0,0}, 0};
-    Button btn_broad = {{448, by, 82, 28}, "", {0,0,0,0}, 0};
-    Button btn_cut = {{552, by, 58, 28}, "", {0,0,0,0}, 0};
-    Button btn_jump = {{616, by, 78, 28}, "", {0,0,0,0}, 0};
-    SDL_Rect r_off = {right_x - 122, by, 122, 28};
+    Button btn_bar  = {{12,  by, 58, 24}, "", {0,0,0,0}, 0};
+    Button btn_sync = {{76,  by, 70, 24}, "", {0,0,0,0}, 0};
+    Button btn_del  = {{156, by, 58, 24}, "", {0,0,0,0}, 0};
+    Button btn_list = {{236, by, 64, 24}, "", {0,0,0,0}, 0};
+    Button btn_peak = {{306, by, 68, 24}, "", {0,0,0,0}, 0};
+    Button btn_roll = {{380, by, 62, 24}, "", {0,0,0,0}, 0};
+    Button btn_broad = {{448, by, 82, 24}, "", {0,0,0,0}, 0};
+    Button btn_cut = {{552, by, 58, 24}, "", {0,0,0,0}, 0};
+    Button btn_jump = {{616, by, 78, 24}, "", {0,0,0,0}, 0};
+    SDL_Rect r_off = {right_x - 122, by, 122, 24};
     right_x = r_off.x - 64;
-    Button btn_export = {{right_x - 88, by, 82, 28}, "", {0,0,0,0}, 0};
-    Button btn_help = {{right_x - 154, by, 60, 28}, "", {0,0,0,0}, 0};
+    Button btn_export = {{right_x - 88, by, 82, 24}, "", {0,0,0,0}, 0};
+    Button btn_help = {{right_x - 154, by, 60, 24}, "", {0,0,0,0}, 0};
     int aux_controls_visible = (l->win_w > 980);
     int offset_control_visible = (l->win_w > 900);
 

@@ -60,6 +60,7 @@ typedef struct {
     SDL_Color color;
     int is_toggle;
     int style;         // ButtonStyle; 0 (BTN_NORMAL) by default
+    char icon[8];      // optional UTF-8 glyph drawn left of the label ("" = none)
 } Button;
 
 // --- STATE ENUMS ---

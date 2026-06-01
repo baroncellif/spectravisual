@@ -175,10 +175,10 @@ int main(int argc, char *argv[])
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     
-    TTF_Font *font = TTF_OpenFont("/Users/filippobaroncelli/Library/Fonts/Aptos-Mono.ttf",14);
+    TTF_Font *font = TTF_OpenFont("/Users/filippobaroncelli/Library/Fonts/Aptos-Mono.ttf",12);
     if (!font) {
-        font = TTF_OpenFont("/System/Library/Fonts/Helvetica.ttc", 14); 
-        if(!font) font = TTF_OpenFont("arial.ttf", 14);
+        font = TTF_OpenFont("/System/Library/Fonts/Helvetica.ttc", 12);
+        if(!font) font = TTF_OpenFont("arial.ttf", 12);
     }
     if(!font) { fprintf(stderr, "No font found.\n"); return 1; }
 
@@ -195,13 +195,13 @@ int main(int argc, char *argv[])
         layout.plot_x = (w < 560) ? 56 : ((w < 760) ? 64 : 78);
         layout.gap = (h < 520) ? 42 : 54;
         
-        int usable_h = h - 194;
+        int usable_h = h - 160;
         if (usable_h < 220) usable_h = 220;
         layout.exp_h = usable_h * 0.6;
         layout.pred_h = usable_h * 0.4 - layout.gap;
         if (layout.pred_h < 70) layout.pred_h = 70;
-        
-        layout.exp_x = layout.plot_x; layout.exp_y = 128;
+
+        layout.exp_x = layout.plot_x; layout.exp_y = 96;
         layout.exp_w = w - layout.plot_x - 25;
         if (layout.exp_w < 240) layout.exp_w = 240;
         
