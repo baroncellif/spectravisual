@@ -21,6 +21,7 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
 static void delete_assignment(AppState *s, int idx);
 static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
+static int path_looks_like_cat(const char *path);
 
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
@@ -56,6 +57,16 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         }
 
         switch (e.type) {
+            case SDL_DROPFILE: {
+                char *path = e.drop.file;
+                if (path_looks_like_cat(path)) snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
+                else snprintf(state->exp_path, sizeof(state->exp_path), "%s", path);
+                if (state->exp_path[0] && state->pred_path[0]) state->pending_load = 1;
+                else snprintf(state->status_message, sizeof(state->status_message),
+                              "Drop both a spectrum file and a .cat file.");
+                SDL_free(path);
+                break;
+            }
             case SDL_MOUSEBUTTONDOWN: handle_mouse_down(state, l, &e.button); break;
             case SDL_MOUSEBUTTONUP:   handle_mouse_up(state, l, &e.button); break;
             case SDL_MOUSEMOTION:     handle_mouse_motion(state, l, &e.motion); break;
@@ -272,7 +283,15 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_cut = {{464, 10, 48, 28}, "", {0,0,0,0}, 0};
     Button btn_jump = {{518, 10, 58, 28}, "", {0,0,0,0}, 0};
     SDL_Rect r_off = {l->win_w - 122 - 18, 10, 122, 28};
+    Button btn_help = {{l->win_w - 310, 10, 54, 28}, "", {0,0,0,0}, 0};
+    Button btn_export = {{l->win_w - 250, 10, 68, 28}, "", {0,0,0,0}, 0};
+    int aux_controls_visible = (l->win_w > 920);
     int offset_control_visible = (l->win_w > 800);
+
+    if (!s->data_loaded && b->button == SDL_BUTTON_LEFT) {
+        if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) s->show_help = !s->show_help;
+        return;
+    }
 
     if (b->button == SDL_BUTTON_LEFT) {
         if (point_in_rect(mx, my, btn_bar.rect)) {
@@ -295,6 +314,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (l->win_w > 475 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
         if (l->win_w > 530 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
         if (l->win_w > 600 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
+        if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) { s->show_help = !s->show_help; return; }
+        if (aux_controls_visible && point_in_rect(mx, my, btn_export.rect)) { if (s->data_loaded) s->export_requested = 1; return; }
         if (offset_control_visible && point_in_rect(mx, my, r_off)) {
             s->input_state = INPUT_OFFSET;
             SDL_StartTextInput();
@@ -302,6 +323,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             return;
         }
     }
+
+    if (!s->data_loaded) return;
 
     // 3. Canvas Interactions
     SDL_Rect r_exp = {l->exp_x, l->exp_y, l->exp_w, l->exp_h};
@@ -440,6 +463,7 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
 // --- HELPER: Right Click Peak Calculation ---
 static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1) {
+    if (!s->data_loaded) return;
     int start = binary_search_lower(s->current_pts, s->n_pts, raw_x0);
     int end   = binary_search_upper(s->current_pts, s->n_pts, raw_x1);
     if(start < 0) start = 0; 
@@ -575,6 +599,11 @@ static void handle_text_input_event(AppState *s, char *text) {
     }
 }
 
+static int path_looks_like_cat(const char *path) {
+    size_t len = strlen(path);
+    return len >= 4 && strcmp(path + len - 4, ".cat") == 0;
+}
+
 // --- KEYBOARD ---
 static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     if (s->input_state != INPUT_NONE) return; // Should be handled by main loop, but safety check
@@ -583,6 +612,16 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     int mod = key->keysym.mod;
     int is_shift = (mod & KMOD_SHIFT);
     double speed_mult = (mod & KMOD_CAPS) ? 3.0 : 1.0;
+
+    if (sym == SDLK_h || sym == SDLK_SLASH) {
+        s->show_help = !s->show_help;
+        return;
+    }
+    if (sym == SDLK_x) {
+        if (s->data_loaded) s->export_requested = 1;
+        return;
+    }
+    if (!s->data_loaded) return;
 
     // Delete Peak
     if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {

@@ -23,6 +23,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static int pred_line_is_selected(AppState *state, int idx);
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
 static double tick_step_for_pixels(double range, int pixels, int min_px);
@@ -48,12 +50,16 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     SDL_SetRenderDrawColor(ren, COL_BG.r, COL_BG.g, COL_BG.b, 255);
     SDL_RenderClear(ren);
 
-    // 2. Draw Graphs
-    draw_spectrum_view(ren, font, state, l);
-    draw_prediction_view(ren, font, state, l);
+    // 2. Draw Graphs / Start Screen
+    if (state->data_loaded) {
+        draw_spectrum_view(ren, font, state, l);
+        draw_prediction_view(ren, font, state, l);
+    } else {
+        draw_onboarding(ren, font, state, l);
+    }
 
     // 3. Draw Selection Rect (if dragging)
-    if(state->selecting_left || state->selecting_right) {
+    if(state->data_loaded && (state->selecting_left || state->selecting_right)) {
         SDL_SetRenderDrawColor(ren, COL_SEL_BOX.r, COL_SEL_BOX.g, COL_SEL_BOX.b, COL_SEL_BOX.a); 
         int rx = (state->sel_cur.x < state->sel_start.x) ? state->sel_cur.x : state->sel_start.x;
         int rw = abs(state->sel_cur.x - state->sel_start.x);
@@ -63,7 +69,8 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 
     // 4. UI Elements (Windows, Buttons, Cursor Info)
     draw_ui_overlays(ren, font, state, l);
-    draw_cursor_overlay(ren, font, state, l);
+    if (state->data_loaded) draw_cursor_overlay(ren, font, state, l);
+    if (state->show_help) draw_help_overlay(ren, font, state, l);
 
     // 5. Present
     SDL_RenderPresent(ren);
@@ -443,6 +450,21 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         draw_text(ren, font, buf, r_off.x + 7, r_off.y + 5, COL_TXT);
     }
 
+    if (l->win_w > 920) {
+        Button btn_help = {{l->win_w - 310, 10, 54, 28}, "Help", {58, 62, 78, 255}, 0};
+        Button btn_export = {{l->win_w - 250, 10, 68, 28}, "Export", {58, 62, 78, 255}, 0};
+        draw_button(ren, font, &btn_help, mx, my, m_down, state->show_help);
+        draw_button(ren, font, &btn_export, mx, my, m_down, 0);
+    }
+
+    if (state->error_message[0]) {
+        SDL_Rect err = {l->plot_x, 51, l->win_w - l->plot_x - 20, 24};
+        fill_rounded_rect(ren, err, 5, (SDL_Color){70, 20, 24, 220});
+        draw_text(ren, font, state->error_message, err.x + 10, err.y + 4, (SDL_Color){255, 170, 175, 255});
+    } else if (state->status_message[0] && l->win_w > 760) {
+        draw_text(ren, font, state->status_message, l->plot_x, 53, COL_TXT_DIM);
+    }
+
     // 2. BROADENING WINDOW
     draw_draggable_window(ren, font, &state->win_br);
     if(state->win_br.visible) {
@@ -666,6 +688,57 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
 
+}
+
+static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    SDL_Rect panel = {l->win_w / 2 - 330, l->win_h / 2 - 150, 660, 300};
+    if (panel.x < 24) panel.x = 24;
+    if (panel.w > l->win_w - 48) panel.w = l->win_w - 48;
+
+    fill_rounded_rect(ren, panel, 10, (SDL_Color){22, 25, 29, 245});
+    SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 180);
+    SDL_RenderDrawRect(ren, &panel);
+
+    draw_text(ren, font, "SpectraVisual", panel.x + 28, panel.y + 24, COL_TXT);
+    draw_text(ren, font, "Drop a spectrum file and a pred.cat file anywhere in this window.", panel.x + 28, panel.y + 62, COL_TXT_DIM);
+    draw_text(ren, font, "Or launch from Terminal:", panel.x + 28, panel.y + 100, COL_TXT_DIM);
+    draw_text(ren, font, "spectravisual spectrum.txt pred.cat", panel.x + 48, panel.y + 126, COL_ACCENT);
+    draw_text(ren, font, "Add --verbose only when you want terminal logs.", panel.x + 28, panel.y + 164, COL_TXT_DIM);
+    draw_text(ren, font, "Press H for shortcuts. Press X after loading to export the current view.", panel.x + 28, panel.y + 202, COL_TXT_DIM);
+
+    if (state->exp_path[0] || state->pred_path[0]) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "Spectrum: %s", state->exp_path[0] ? state->exp_path : "waiting...");
+        draw_text(ren, font, buf, panel.x + 28, panel.y + 238, state->exp_path[0] ? COL_TXT_DIM : COL_ACCENT);
+        snprintf(buf, sizeof(buf), "Prediction: %s", state->pred_path[0] ? state->pred_path : "waiting...");
+        draw_text(ren, font, buf, panel.x + 28, panel.y + 260, state->pred_path[0] ? COL_TXT_DIM : COL_ACCENT);
+    }
+}
+
+static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    (void)state;
+    SDL_Rect panel = {l->win_w / 2 - 330, 82, 660, 420};
+    if (panel.x < 24) panel.x = 24;
+    if (panel.w > l->win_w - 48) panel.w = l->win_w - 48;
+
+    fill_rounded_rect(ren, panel, 10, (SDL_Color){12, 14, 17, 238});
+    SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 190);
+    SDL_RenderDrawRect(ren, &panel);
+
+    int x = panel.x + 28;
+    int y = panel.y + 24;
+    draw_text(ren, font, "Shortcuts", x, y, COL_TXT);
+    y += 36;
+    draw_text(ren, font, "Mouse: left-drag zoom, right-drag peak pick, Option-left-drag prediction offset", x, y, COL_TXT_DIM); y += 28;
+    draw_text(ren, font, "A/S pan, Q/E zoom, Tab autoscale intensity, R reset view", x, y, COL_TXT_DIM); y += 28;
+    draw_text(ren, font, "Shift + W/Z or arrows scales predicted intensity", x, y, COL_TXT_DIM); y += 28;
+    draw_text(ren, font, "K/L move bar, G measure, H or ? help, X export BMP", x, y, COL_TXT_DIM); y += 28;
+    draw_text(ren, font, "N assignments, P peak finder, T rolling average, M broadening", x, y, COL_TXT_DIM); y += 28;
+    draw_text(ren, font, "C intensity cut, F frequency jump, Delete removes latest peak", x, y, COL_TXT_DIM); y += 42;
+    draw_text(ren, font, "Input fields", x, y, COL_TXT); y += 30;
+    draw_text(ren, font, "Enter confirms, Esc cancels, clicking elsewhere confirms and continues.", x, y, COL_TXT_DIM); y += 42;
+    draw_text(ren, font, "Export", x, y, COL_TXT); y += 30;
+    draw_text(ren, font, "X or Export saves spectravisual_export.bmp in the current directory.", x, y, COL_TXT_DIM);
 }
 
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {

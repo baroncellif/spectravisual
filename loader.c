@@ -221,6 +221,71 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
     return n;
 }
 
+int read_pred_cat_alloc(const char *fname, PredLine **out,
+                        double *xmin, double *xmax,
+                        double *global_max_int)
+{
+    FILE *f = fopen(fname, "r");
+    if (!f) return 0;
+
+    int cap = 16384;
+    int n = 0;
+    PredLine *arr = malloc(sizeof(PredLine) * cap);
+    if (!arr) {
+        fclose(f);
+        return 0;
+    }
+
+    char line[512];
+    *xmin =  1e99; *xmax = -1e99;
+    *global_max_int = -1.0;
+
+    while (fgets(line, sizeof(line), f)) {
+        if ((int)strlen(line) < 80) continue;
+        double freq = 0.0, err = 0.0, lgint = 0.0;
+        if (sscanf(line, "%lf %lf %lf", &freq, &err, &lgint) < 3) continue;
+
+        if (n >= cap) {
+            int new_cap = cap * 2;
+            PredLine *tmp = realloc(arr, sizeof(PredLine) * new_cap);
+            if (!tmp) break;
+            arr = tmp;
+            cap = new_cap;
+        }
+
+        PredLine pl;
+        memset(&pl, 0, sizeof(pl));
+        pl.freq_mhz = freq;
+        pl.lgint    = lgint;
+        pl.linear_int = pow(10.0, lgint); 
+
+        const int qn0 = 55;
+        pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
+        pl.M1u = parse_qn2(line + qn0 +  6); pl.M2u = parse_qn2(line + qn0 +  8); pl.M3u = parse_qn2(line + qn0 + 10);
+        pl.Jl  = parse_qn2(line + qn0 + 12); pl.Kal = parse_qn2(line + qn0 + 14); pl.Kcl = parse_qn2(line + qn0 + 16);
+        pl.M1l = parse_qn2(line + qn0 + 18); pl.M2l = parse_qn2(line + qn0 + 20); pl.M3l = parse_qn2(line + qn0 + 22);
+
+        pl.branch = branch_from_qn(pl.Ju, pl.Jl);
+        pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
+
+        arr[n++] = pl;
+        if (pl.freq_mhz < *xmin) *xmin = pl.freq_mhz;
+        if (pl.freq_mhz > *xmax) *xmax = pl.freq_mhz;
+        if (pl.linear_int > *global_max_int) *global_max_int = pl.linear_int;
+    }
+    fclose(f);
+
+    if (n == 0) {
+        free(arr);
+        *out = NULL;
+        return 0;
+    }
+
+    PredLine *shrunk = realloc(arr, sizeof(PredLine) * n);
+    *out = shrunk ? shrunk : arr;
+    return n;
+}
+
 int read_data(const char *fname, Point *pts, int maxpts,
               double *xmin, double *xmax, double *ymin, double *ymax)
 {
@@ -251,6 +316,66 @@ int read_data(const char *fname, Point *pts, int maxpts,
         }
     }
     fclose(f);
+    return n;
+}
+
+int read_data_alloc(const char *fname, Point **pts,
+                    double *xmin, double *xmax, double *ymin, double *ymax)
+{
+    FILE *f = fopen(fname, "r");
+    if (!f) return 0;
+    char line[512];
+    Separator sep = SEP_SPACE;
+    int detected = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        double a,b;
+        if (sscanf(line, "%lf", &a) != 1) continue;
+        if (parse_line(line, &a, &b, SEP_COMMA)) {sep = SEP_COMMA; detected = 1; break;}
+        if (parse_line(line, &a, &b, SEP_TAB))   {sep = SEP_TAB;   detected = 1; break;}
+        if (parse_line(line, &a, &b, SEP_SPACE)) {sep = SEP_SPACE; detected = 1; break;}
+    }
+    if (!detected) {
+        fclose(f);
+        *pts = NULL;
+        return 0;
+    }
+    rewind(f);
+
+    int cap = 65536;
+    int n = 0;
+    Point *arr = malloc(sizeof(Point) * cap);
+    if (!arr) {
+        fclose(f);
+        *pts = NULL;
+        return 0;
+    }
+
+    *xmin=1e99; *xmax=-1e99; *ymin=1e99; *ymax=-1e99;
+    while (fgets(line, sizeof(line), f)) {
+        double x,y;
+        if (!parse_line(line, &x, &y, sep)) continue;
+        if (n >= cap) {
+            int new_cap = cap * 2;
+            Point *tmp = realloc(arr, sizeof(Point) * new_cap);
+            if (!tmp) break;
+            arr = tmp;
+            cap = new_cap;
+        }
+        arr[n++] = (Point){x,y};
+        if (x < *xmin) *xmin=x; if (x > *xmax) *xmax=x;
+        if (y < *ymin) *ymin=y; if (y > *ymax) *ymax=y;
+    }
+    fclose(f);
+
+    if (n == 0) {
+        free(arr);
+        *pts = NULL;
+        return 0;
+    }
+
+    Point *shrunk = realloc(arr, sizeof(Point) * n);
+    *pts = shrunk ? shrunk : arr;
     return n;
 }
 

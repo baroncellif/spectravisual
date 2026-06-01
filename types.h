@@ -77,6 +77,15 @@ typedef struct {
     Point *smooth_pts;
     Point *current_pts; 
     int n_pts;
+    int data_loaded;
+    int verbose;
+    int show_help;
+    int pending_load;
+    int export_requested;
+    char exp_path[512];
+    char pred_path[512];
+    char error_message[512];
+    char status_message[512];
     
     PredLine *pred_lines;
     int n_pred;
