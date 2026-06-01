@@ -38,18 +38,38 @@ int main(int argc, char *argv[])
 
     // --- 2. STATE SETUP ---
     AppState state = {0};
-    state.raw_pts = malloc(sizeof(Point)*MAXPTS);
-    state.smooth_pts = malloc(sizeof(Point)*MAXPTS);
-    state.current_pts = state.raw_pts;
-    state.pred_lines = malloc(sizeof(PredLine)*MAXPTS);
-    
-    // NEW: Allocate LIN data
     state.lin_data = malloc(sizeof(double)*MAX_LIN_POINTS);
+    if (!state.lin_data) {
+        fprintf(stderr, "Not enough memory for assigned-frequency markers.\n");
+        return 1;
+    }
     
     // Load Data
     printf("Loading data...\n");
-    state.n_pred = read_pred_cat(argv[2], state.pred_lines, MAXPTS, &state.pxmin, &state.pxmax, &state.pred_global_max);
-    state.n_pts = read_data(argv[1], state.raw_pts, MAXPTS, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
+    state.n_pred = read_pred_cat_alloc(argv[2], &state.pred_lines, &state.pxmin, &state.pxmax, &state.pred_global_max);
+    state.n_pts = read_data_alloc(argv[1], &state.raw_pts, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
+    if (state.n_pred <= 0 || !state.pred_lines) {
+        fprintf(stderr, "Could not load predicted lines from %s\n", argv[2]);
+        free(state.raw_pts);
+        free(state.lin_data);
+        return 1;
+    }
+    if (state.n_pts <= 0 || !state.raw_pts) {
+        fprintf(stderr, "Could not load experimental spectrum from %s\n", argv[1]);
+        free(state.pred_lines);
+        free(state.lin_data);
+        return 1;
+    }
+    state.smooth_pts = malloc(sizeof(Point) * state.n_pts);
+    if (!state.smooth_pts) {
+        fprintf(stderr, "Not enough memory for smoothed spectrum.\n");
+        free(state.raw_pts);
+        free(state.pred_lines);
+        free(state.lin_data);
+        return 1;
+    }
+    state.current_pts = state.raw_pts;
+    printf("Loaded %d spectrum points and %d predicted lines.\n", state.n_pts, state.n_pred);
     load_existing_assignments("assignments.txt", state.assignments, &state.n_assignments);
     
     // Load optional assigned-frequency markers from config or assigned.lin.
