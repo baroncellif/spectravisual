@@ -683,6 +683,39 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
     int mx, my;
     SDL_GetMouseState(&mx, &my);
 
+    if (state->dragging_offset) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Offset %.4f MHz", state->exp_offset);
+        SDL_Rect badge = {l->exp_x + l->exp_w - 190, l->exp_y + 42, 180, 26};
+        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 24, 30, 225});
+        draw_text(ren, font, buf, badge.x + 10, badge.y + 5, COL_ACCENT);
+    }
+
+    if (state->selecting_left || state->selecting_right) {
+        double x0 = state->vxmin + (double)(state->sel_start.x - l->exp_x)/l->exp_w * (state->vxmax - state->vxmin);
+        double x1 = state->vxmin + (double)(state->sel_cur.x - l->exp_x)/l->exp_w * (state->vxmax - state->vxmin);
+        if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
+
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%s %.4f MHz", state->selecting_right ? "Peak search" : "Zoom", x1 - x0);
+        SDL_Rect badge = {state->sel_cur.x + 10, state->sel_cur.y - 34, 170, 26};
+        if (badge.x + badge.w > l->exp_x + l->exp_w) badge.x = state->sel_cur.x - badge.w - 10;
+        if (badge.y < l->exp_y) badge.y = l->exp_y + 8;
+        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 10, 12, 225});
+        draw_text(ren, font, buf, badge.x + 10, badge.y + 5, state->selecting_right ? (SDL_Color){245,210,75,255} : COL_ACCENT);
+    }
+
+    if (state->n_peaks > 0 && !state->selecting_right) {
+        Peak *last = &state->peaks[state->n_peaks - 1];
+        if (last->x >= state->vxmin && last->x <= state->vxmax) {
+            char buf[80];
+            snprintf(buf, sizeof(buf), "Last peak %.4f", last->x);
+            SDL_Rect badge = {l->exp_x + 10, l->exp_y + l->exp_h - 34, 155, 24};
+            fill_rounded_rect(ren, badge, 5, (SDL_Color){34, 30, 12, 190});
+            draw_text(ren, font, buf, badge.x + 9, badge.y + 4, (SDL_Color){245,210,75,255});
+        }
+    }
+
     // 1. Mouse Position Info
     if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
         double fx = (mx - l->exp_x) / (double)l->exp_w;
