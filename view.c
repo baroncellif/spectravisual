@@ -22,6 +22,22 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static int pred_line_is_selected(AppState *state, int idx);
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
+static double tick_step_for_pixels(double range, int pixels, int min_px);
+
+static double tick_step_for_pixels(double range, int pixels, int min_px) {
+    if (range <= 0 || pixels <= 0) return 1.0;
+    double max_ticks = pixels / (double)min_px;
+    if (max_ticks < 2.0) max_ticks = 2.0;
+
+    double target = range / max_ticks;
+    double base = pow(10.0, floor(log10(target)));
+    double frac = target / base;
+
+    if (frac <= 1.0) return base;
+    if (frac <= 2.0) return 2.0 * base;
+    if (frac <= 5.0) return 5.0 * base;
+    return 10.0 * base;
+}
 
 // --- MAIN RENDER ENTRY POINT ---
 void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
@@ -128,7 +144,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     
     // Draw X-Axis Ticks & Labels
     double xrange = state->vxmax - state->vxmin; 
-    double xstep = nice_tick(xrange);
+    double xstep = tick_step_for_pixels(xrange, l->exp_w, 90);
     double xstart = ceil(state->vxmin/xstep)*xstep;
     
     for(double x=xstart; x<=state->vxmax; x+=xstep) {
@@ -136,16 +152,18 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 5);
         
         char buf[32]; snprintf(buf,sizeof(buf),"%.3f", x);
-        draw_text(ren, font, buf, px - 20, l->exp_y + l->exp_h + 8, COL_TXT);
+        draw_text(ren, font, buf, px - 24, l->exp_y + l->exp_h + 8, COL_TXT);
     }
     
     // X-Axis Title
-    draw_text(ren, font, "Frequency / MHz", l->exp_x + l->exp_w/2 - 60, l->exp_y + l->exp_h + 28, COL_TXT);
+    if (l->gap >= 45 && l->exp_w > 360) {
+        draw_text(ren, font, "Frequency / MHz", l->exp_x + l->exp_w/2 - 60, l->exp_y + l->exp_h + 28, COL_TXT_DIM);
+    }
     
     // --- Y-Axis Ticks & Labels (NEW) ---
     double yrange = state->vymax - state->vymin;
     if(yrange > 0) {
-        double ystep = nice_tick(yrange);
+        double ystep = tick_step_for_pixels(yrange, l->exp_h, 34);
         double ystart = ceil(state->vymin/ystep)*ystep;
 
         for(double y=ystart; y<=state->vymax; y+=ystep) {
@@ -158,11 +176,15 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             // Draw Label (Scientific notation)
             char buf[32]; 
             snprintf(buf, sizeof(buf), "%.1e", y);
-            draw_text(ren, font, buf, l->exp_x - 65, py - 7, COL_TXT);
+            if (py > l->exp_y + 6 && py < l->exp_y + l->exp_h - 6) {
+                draw_text(ren, font, buf, l->exp_x - 65, py - 7, COL_TXT_DIM);
+            }
         }
     }
     // Y-Axis Title
-    draw_text_vertical(ren, font, "Intensity", l->exp_x - 75, l->exp_y + l->exp_h/2 + 30, COL_TXT);
+    if (l->exp_h > 160) {
+        draw_text_vertical(ren, font, "Intensity", l->exp_x - 75, l->exp_y + l->exp_h/2 + 30, COL_TXT_DIM);
+    }
 }
 
 // --- PREDICTION (PICKETT) ---
@@ -315,14 +337,14 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
 
     // Ticks
     double xrange = state->pvxmax - state->pvxmin;
-    double xstep = nice_tick(xrange);
+    double xstep = tick_step_for_pixels(xrange, l->pred_w, 90);
     double xstart = ceil(state->pvxmin/xstep)*xstep;
     for(double x=xstart; x<=state->pvxmax; x+=xstep) {
         int px = l->pred_x + (x - state->pvxmin)/xrange * l->pred_w;
         SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
         SDL_RenderDrawLine(ren, px, l->pred_y + l->pred_h, px, l->pred_y + l->pred_h + 4);
         char buf[32]; snprintf(buf,sizeof(buf),"%.3f",x);
-        draw_text(ren, font, buf, px - 20, l->pred_y + l->pred_h + 8, COL_TXT_DIM);
+        draw_text(ren, font, buf, px - 24, l->pred_y + l->pred_h + 8, COL_TXT_DIM);
     }
 }
 
@@ -585,12 +607,19 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
 
-    // 8. STATIC OFFSET CONTROL (Bottom Right)
-    int ox = l->pred_x + l->pred_w - 150;
-    int oy = l->pred_y + l->pred_h + 10;
-    
-    draw_text(ren, font, "Pred Offset:", ox - 100, oy + 5, COL_TXT_DIM);
-    SDL_Rect r_off = {ox, oy, 140, 28};
+    // 8. Prediction offset control
+    int ox = 580;
+    int oy = 5;
+
+    if (l->win_w > 760) {
+        draw_text(ren, font, "Pred Offset", ox - 88, oy + 5, COL_TXT_DIM);
+    }
+    SDL_Rect r_off = {ox, oy, 125, 26};
+    if (l->win_w < 740) {
+        r_off.x = l->win_w - 140;
+        if (r_off.x < 490) r_off.x = 490;
+    }
+    if (l->win_w <= r_off.x + r_off.w + 10) return;
     SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_off);
     
     if(state->input_state == INPUT_OFFSET) {

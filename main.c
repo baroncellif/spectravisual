@@ -14,49 +14,42 @@
 
 int main(int argc, char *argv[])
 {
-    setvbuf(stderr, NULL, _IONBF, 0);
-    setvbuf(stdout, NULL, _IONBF, 0);
-
     if (argc!=3) {
         fprintf(stderr,"Usage: %s exp.csv pred.cat\n", argv[0]);
         return 1;
     }
 
-    // --- 1. STATE SETUP / DATA LOAD ---
-    AppState state = {0};
-    state.lin_data = malloc(sizeof(double)*MAX_LIN_POINTS);
-    if (!state.lin_data) {
-        fprintf(stderr, "Not enough memory for assigned-frequency markers.\n");
-        return 1;
+    // --- 1. INITIALIZATION ---
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    if (TTF_Init() != 0) return 1;
+
+    SDL_Window *win = SDL_CreateWindow("Spectral Analysis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1200, 700, SDL_WINDOW_RESIZABLE);
+    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    
+    // Attempt Font Load
+    TTF_Font *font = TTF_OpenFont("/Users/filippobaroncelli/Library/Fonts/Aptos-Mono.ttf",14);
+    if (!font) {
+        printf("Custom font not found, trying system fonts...\n");
+        font = TTF_OpenFont("/System/Library/Fonts/Helvetica.ttc", 14); 
+        if(!font) font = TTF_OpenFont("arial.ttf", 14);
     }
+    if(!font) { fprintf(stderr, "No font found! Exiting.\n"); return 1; }
+
+    // --- 2. STATE SETUP ---
+    AppState state = {0};
+    state.raw_pts = malloc(sizeof(Point)*MAXPTS);
+    state.smooth_pts = malloc(sizeof(Point)*MAXPTS);
+    state.current_pts = state.raw_pts;
+    state.pred_lines = malloc(sizeof(PredLine)*MAXPTS);
+    
+    // NEW: Allocate LIN data
+    state.lin_data = malloc(sizeof(double)*MAX_LIN_POINTS);
     
     // Load Data
-    fprintf(stderr, "Loading spectrum: %s\n", argv[1]);
-    fprintf(stderr, "Loading predictions: %s\n", argv[2]);
-    state.n_pred = read_pred_cat_alloc(argv[2], &state.pred_lines, &state.pxmin, &state.pxmax, &state.pred_global_max);
-    state.n_pts = read_data_alloc(argv[1], &state.raw_pts, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
-    if (state.n_pred <= 0 || !state.pred_lines) {
-        fprintf(stderr, "Could not load predicted lines from %s\n", argv[2]);
-        free(state.raw_pts);
-        free(state.lin_data);
-        return 1;
-    }
-    if (state.n_pts <= 0 || !state.raw_pts) {
-        fprintf(stderr, "Could not load experimental spectrum from %s\n", argv[1]);
-        free(state.pred_lines);
-        free(state.lin_data);
-        return 1;
-    }
-    state.smooth_pts = malloc(sizeof(Point) * state.n_pts);
-    if (!state.smooth_pts) {
-        fprintf(stderr, "Not enough memory for smoothed spectrum.\n");
-        free(state.raw_pts);
-        free(state.pred_lines);
-        free(state.lin_data);
-        return 1;
-    }
-    state.current_pts = state.raw_pts;
-    fprintf(stderr, "Loaded %d spectrum points and %d predicted lines.\n", state.n_pts, state.n_pred);
+    printf("Loading data...\n");
+    state.n_pred = read_pred_cat(argv[2], state.pred_lines, MAXPTS, &state.pxmin, &state.pxmax, &state.pred_global_max);
+    state.n_pts = read_data(argv[1], state.raw_pts, MAXPTS, &state.xmin, &state.xmax, &state.ymin, &state.ymax);
     load_existing_assignments("assignments.txt", state.assignments, &state.n_assignments);
     
     // Load optional assigned-frequency markers from config or assigned.lin.
@@ -64,53 +57,6 @@ int main(int argc, char *argv[])
     if (find_assigned_frequency_file(assigned_freq_file, sizeof(assigned_freq_file))) {
         state.n_lin_data = read_assigned_frequencies(assigned_freq_file, state.lin_data, MAX_LIN_POINTS);
     }
-
-    // --- 2. SDL INITIALIZATION ---
-    fprintf(stderr, "Initializing SDL...\n");
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        return 1;
-    }
-    if (TTF_Init() != 0) {
-        fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Window *win = SDL_CreateWindow("Spectral Analysis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1200, 700, SDL_WINDOW_RESIZABLE);
-    if (!win) {
-        fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-        TTF_Quit();
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!ren) {
-        fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(win);
-        TTF_Quit();
-        SDL_Quit();
-        return 1;
-    }
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    
-    // Attempt Font Load
-    TTF_Font *font = TTF_OpenFont("/Users/filippobaroncelli/Library/Fonts/Aptos-Mono.ttf",14);
-    if (!font) {
-        fprintf(stderr, "Custom font not found, trying system fonts...\n");
-        font = TTF_OpenFont("/System/Library/Fonts/Helvetica.ttc", 14); 
-        if(!font) font = TTF_OpenFont("arial.ttf", 14);
-    }
-    if(!font) {
-        fprintf(stderr, "No font found: %s\n", TTF_GetError());
-        SDL_DestroyRenderer(ren);
-        SDL_DestroyWindow(win);
-        TTF_Quit();
-        SDL_Quit();
-        return 1;
-    }
-    fprintf(stderr, "Entering UI loop.\n");
 
     // Defaults
     state.vxmin = state.xmin; state.vxmax = state.xmax;
@@ -145,14 +91,18 @@ int main(int argc, char *argv[])
     while(running) {
         int w, h; SDL_GetWindowSize(win, &w, &h);
         layout.win_w = w; layout.win_h = h;
-        layout.plot_x = 80; layout.gap = 25;
+        layout.plot_x = (w < 760) ? 65 : 80;
+        layout.gap = 48;
         
-        int usable_h = h - 100;
+        int usable_h = h - 120;
+        if (usable_h < 220) usable_h = 220;
         layout.exp_h = usable_h * 0.6;
         layout.pred_h = usable_h * 0.4 - layout.gap;
+        if (layout.pred_h < 70) layout.pred_h = 70;
         
         layout.exp_x = layout.plot_x; layout.exp_y = 60;
-        layout.exp_w = w - 100;
+        layout.exp_w = w - layout.plot_x - 25;
+        if (layout.exp_w < 320) layout.exp_w = 320;
         
         layout.pred_x = layout.plot_x; layout.pred_y = layout.exp_y + layout.exp_h + layout.gap;
         layout.pred_w = layout.exp_w;

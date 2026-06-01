@@ -7,15 +7,10 @@
 int read_pred_cat(const char *fname, PredLine *out, int maxn,
                   double *xmin, double *xmax,
                   double *global_max_int);
-int read_pred_cat_alloc(const char *fname, PredLine **out,
-                        double *xmin, double *xmax,
-                        double *global_max_int);
 
 // Reads a standard X Y data file
 int read_data(const char *fname, Point *pts, int maxpts,
               double *xmin, double *xmax, double *ymin, double *ymax);
-int read_data_alloc(const char *fname, Point **pts,
-                    double *xmin, double *xmax, double *ymin, double *ymax);
 
 // Reads assigned line frequencies. The config file can contain a line such as
 // assigned_file=assigned.lin, or simply the filename on a non-comment line.

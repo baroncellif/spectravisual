@@ -283,7 +283,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_list = {{220, 5, 80, 26}, "", {0,0,0,0}, 0}; 
     Button btn_peak = {{310, 5, 80, 26}, "", {0,0,0,0}, 0};
     Button btn_roll = {{400, 5, 80, 26}, "", {0,0,0,0}, 0};
-    SDL_Rect r_off = {l->pred_x + l->pred_w - 150, l->pred_y + l->pred_h + 10, 140, 28};
+    SDL_Rect r_off = {580, 5, 125, 26};
+    if (l->win_w < 740) {
+        r_off.x = l->win_w - 140;
+        if (r_off.x < 490) r_off.x = 490;
+    }
+    int offset_control_visible = (l->win_w > r_off.x + r_off.w + 10);
 
     if (b->button == SDL_BUTTON_LEFT) {
         if (point_in_rect(mx, my, btn_bar.rect)) {
@@ -303,7 +308,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (point_in_rect(mx, my, btn_list.rect)) { s->win_as.visible = !s->win_as.visible; return; }
         if (point_in_rect(mx, my, btn_peak.rect)) { s->win_pf.visible = !s->win_pf.visible; return; }
         if (point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
-        if (point_in_rect(mx, my, r_off)) {
+        if (offset_control_visible && point_in_rect(mx, my, r_off)) {
             s->input_state = INPUT_OFFSET;
             SDL_StartTextInput();
             snprintf(s->text_input_buf, 32, "%.4f", s->exp_offset);
