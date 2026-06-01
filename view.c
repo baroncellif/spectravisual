@@ -530,9 +530,10 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         int wx = state->win_as.rect.x, wy = state->win_as.rect.y;
         int ty = wy + 60;
         
-        draw_text(ren, font, "  Quantum numbers                          Exp Freq ", wx+20, ty, COL_TXT_DIM);
-        SDL_SetRenderDrawColor(ren, 100,100,100,255); 
-        SDL_RenderDrawLine(ren, wx+20, ty+25, wx+580, ty+25);
+        SDL_Rect table_head = {wx + 14, ty - 6, state->win_as.rect.w - 28, 28};
+        fill_rounded_rect(ren, table_head, 5, (SDL_Color){18, 21, 25, 220});
+        draw_text(ren, font, "Quantum numbers", wx+24, ty, COL_TXT_DIM);
+        draw_text(ren, font, "Exp Freq", wx+455, ty, COL_TXT_DIM);
         ty += 30;
         
         int visible_rows = 13;
@@ -546,9 +547,11 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         for(int k=start_idx; k<end_idx; k++) {
             PredLine p = state->assignments[k].pred;
             char row[256];
+            SDL_Rect row_bg = {wx + 14, ty - 2, state->win_as.rect.w - 28, 19};
             if (k == state->selected_assignment) {
-                SDL_Rect row_bg = {wx + 15, ty - 2, state->win_as.rect.w - 30, 18};
-                SDL_SetRenderDrawColor(ren, 0, 120, 120, 180);
+                fill_rounded_rect(ren, row_bg, 4, (SDL_Color){0, 120, 135, 190});
+            } else if ((k - start_idx) % 2 == 0) {
+                SDL_SetRenderDrawColor(ren, 30, 34, 40, 130);
                 SDL_RenderFillRect(ren, &row_bg);
             }
             snprintf(row, sizeof(row), "  %2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %9.3f ",

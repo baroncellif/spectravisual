@@ -3,11 +3,11 @@
 #include <stdio.h>
 
 // --- COLORS (The one you liked + Minimalist accents) ---
-const SDL_Color WIN_BG          = {35, 35, 40, 245};    // The preferred dark grey
-const SDL_Color BORDER_GLOW     = {50, 180, 220, 255};  // Cyan Glow (Active)
-const SDL_Color BORDER_IDLE     = {60, 60, 70, 255};    // Subtle grey border
-const SDL_Color TXT_BRIGHT      = {230, 245, 255, 255}; // Bright text
-const SDL_Color TXT_DIM         = {160, 165, 170, 255}; // Dim text
+const SDL_Color WIN_BG          = {24, 27, 32, 246};
+const SDL_Color BORDER_GLOW     = {64, 190, 215, 255};
+const SDL_Color BORDER_IDLE     = {70, 78, 88, 255};
+const SDL_Color TXT_BRIGHT      = {232, 238, 245, 255};
+const SDL_Color TXT_DIM         = {145, 153, 164, 255};
 
 // --- UTILS ---
 
@@ -105,19 +105,20 @@ void draw_text_vertical(SDL_Renderer *ren, TTF_Font *font, const char *txt, int 
 void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win) {
     if(!win->visible) return;
     
-    // 1. Shadow (Soft & Rounded)
-    SDL_Rect shadow = {win->rect.x + 3, win->rect.y + 3, win->rect.w, win->rect.h};
-    fill_rounded_rect(ren, shadow, 10, (SDL_Color){0, 0, 0, 60});
+    SDL_Rect shadow = {win->rect.x + 5, win->rect.y + 6, win->rect.w, win->rect.h};
+    fill_rounded_rect(ren, shadow, 9, (SDL_Color){0, 0, 0, 80});
 
-    // 2. Main Body (Preferred Dark Grey)
-    fill_rounded_rect(ren, win->rect, 10, WIN_BG);
+    fill_rounded_rect(ren, win->rect, 9, WIN_BG);
+    SDL_SetRenderDrawColor(ren, BORDER_IDLE.r, BORDER_IDLE.g, BORDER_IDLE.b, 160);
+    SDL_RenderDrawRect(ren, &win->rect);
 
-    // 3. Header Text
+    SDL_Rect header = {win->rect.x, win->rect.y, win->rect.w, 34};
+    fill_rounded_rect(ren, header, 9, (SDL_Color){31, 35, 41, 245});
+
     draw_text(ren, font, win->title, win->rect.x + 15, win->rect.y + 8, TXT_BRIGHT);
 
-    // 4. Accent Line (Cyan)
-    SDL_SetRenderDrawColor(ren, BORDER_GLOW.r, BORDER_GLOW.g, BORDER_GLOW.b, 200);
-    SDL_RenderDrawLine(ren, win->rect.x + 10, win->rect.y + 32, win->rect.x + win->rect.w - 10, win->rect.y + 32);
+    SDL_SetRenderDrawColor(ren, BORDER_GLOW.r, BORDER_GLOW.g, BORDER_GLOW.b, 190);
+    SDL_RenderDrawLine(ren, win->rect.x + 12, win->rect.y + 33, win->rect.x + win->rect.w - 12, win->rect.y + 33);
 
     // 5. Close Button (Circular)
     int cx = win->rect.x + win->rect.w - 20;
@@ -129,7 +130,7 @@ void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *w
     int hover = (distSq <= r*r);
 
     SDL_Rect close_r = {cx-r+1, cy-r+1, r*2-2, r*2-2};
-    SDL_Color c_col = hover ? (SDL_Color){220, 60, 60, 255} : (SDL_Color){60, 60, 65, 255};
+    SDL_Color c_col = hover ? (SDL_Color){210, 72, 76, 255} : (SDL_Color){48, 54, 63, 255};
     fill_rounded_rect(ren, close_r, 8, c_col); 
     
     draw_text(ren, font, "x", cx - 3, cy - 8, TXT_BRIGHT);
