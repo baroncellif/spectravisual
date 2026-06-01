@@ -47,11 +47,19 @@ typedef struct {
     char title[64];
 } DraggableWindow;
 
-typedef struct { 
-    SDL_Rect rect;     
-    char label[32];    
-    SDL_Color color;   
-    int is_toggle;     
+// Visual style for a toolbar/window button (matches the redesign mockup).
+typedef enum {
+    BTN_NORMAL = 0,   // transparent idle, dim text, subtle hover
+    BTN_DANGER,       // red accent (destructive actions)
+    BTN_PRIMARY       // cyan accent (primary actions)
+} ButtonStyle;
+
+typedef struct {
+    SDL_Rect rect;
+    char label[32];
+    SDL_Color color;
+    int is_toggle;
+    int style;         // ButtonStyle; 0 (BTN_NORMAL) by default
 } Button;
 
 // --- STATE ENUMS ---

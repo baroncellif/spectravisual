@@ -550,7 +550,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     int right_x = l->win_w - 18;
     Button btn_bar  = {{12,  by, 58, 28}, "| Bar",  {14, 58, 71, 255}, 1};
     Button btn_sync = {{76,  by, 70, 28}, "<> Sync", {14, 58, 71, 255}, 1};
-    Button btn_del  = {{156, by, 58, 28}, "x Del",  {70, 28, 30, 255}, 0}; 
+    Button btn_del  = {{156, by, 58, 28}, "x Del",  {70, 28, 30, 255}, 0, BTN_DANGER};
     Button btn_list = {{236, by, 64, 28}, "[] List", {30, 34, 48, 255}, 0}; 
     Button btn_peak = {{306, by, 68, 28}, "^ Peak", {30, 34, 48, 255}, 0};
     Button btn_roll = {{380, by, 62, 28}, "~ Avg",  {30, 34, 48, 255}, 0};
@@ -558,9 +558,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     Button btn_cut = {{552, by, 58, 28}, "-- Cut", {30, 34, 48, 255}, 0};
     Button btn_jump = {{616, by, 78, 28}, "-> Jump", {30, 34, 48, 255}, 0};
 
-    SDL_SetRenderDrawColor(ren, 65, 72, 82, 255);
-    SDL_RenderDrawLine(ren, 224, by + 1, 224, by + 27);
-    SDL_RenderDrawLine(ren, 540, by + 1, 540, by + 27);
+    SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
+    SDL_RenderDrawLine(ren, 224, by + 3, 224, by + 25);
+    SDL_RenderDrawLine(ren, 540, by + 3, 540, by + 25);
 
     draw_button(ren, font, &btn_bar, mx, my, m_down, state->bar_active);
     draw_button(ren, font, &btn_sync, mx, my, m_down, state->sync_active);
@@ -590,10 +590,10 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     if (l->win_w > 980) {
-        Button btn_export = {{right_x - 88, by, 82, 28}, "v Export", {26, 58, 70, 255}, 0};
+        Button btn_export = {{right_x - 88, by, 82, 28}, "v Export", {26, 58, 70, 255}, 0, BTN_PRIMARY};
         Button btn_help = {{right_x - 154, by, 60, 28}, "? Help", {30, 34, 48, 255}, 0};
-        SDL_SetRenderDrawColor(ren, 65, 72, 82, 255);
-        SDL_RenderDrawLine(ren, right_x - 166, by + 1, right_x - 166, by + 27);
+        SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
+        SDL_RenderDrawLine(ren, right_x - 166, by + 3, right_x - 166, by + 25);
         draw_button(ren, font, &btn_help, mx, my, m_down, state->show_help);
         draw_button(ren, font, &btn_export, mx, my, m_down, 0);
     }
@@ -678,9 +678,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         draw_text(ren, font, buf3, r_thr.x+5, r_thr.y+4, COL_TXT);
 
         // Buttons
-        Button btn_run = {{wx+50, wy+200, 200, 30}, "FIND PEAKS", {0, 150, 0, 255}, 0};
+        Button btn_run = {{wx+50, wy+200, 200, 30}, "FIND PEAKS", {0, 150, 0, 255}, 0, BTN_PRIMARY};
         draw_button(ren, font, &btn_run, mx, my, m_down, 0);
-        Button btn_exp = {{wx+50, wy+240, 200, 30}, "EXPORT LIST", {0, 100, 200, 255}, 0};
+        Button btn_exp = {{wx+50, wy+240, 200, 30}, "EXPORT LIST", {0, 100, 200, 255}, 0, BTN_PRIMARY};
         draw_button(ren, font, &btn_exp, mx, my, m_down, 0);
     }
 
@@ -727,9 +727,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             draw_text(ren, font, count, wx + state->win_as.rect.w - 115, wy + 360, COL_TXT_DIM);
         }
 
-        Button btn_save = {{wx+10, wy+360, 100, 30}, "Save All", {0, 100, 200, 255}, 0};
+        Button btn_save = {{wx+10, wy+360, 100, 30}, "Save All", {0, 100, 200, 255}, 0, BTN_PRIMARY};
         draw_button(ren, font, &btn_save, mx, my, m_down, 0);
-        Button btn_del_as = {{wx+120, wy+360, 110, 30}, "Delete", {170, 60, 60, 255}, 0};
+        Button btn_del_as = {{wx+120, wy+360, 110, 30}, "Delete", {170, 60, 60, 255}, 0, BTN_DANGER};
         draw_button(ren, font, &btn_del_as, mx, my, m_down, state->selected_assignment >= 0);
     }
     

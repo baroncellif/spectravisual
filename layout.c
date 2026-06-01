@@ -136,31 +136,66 @@ void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *w
     draw_text(ren, font, "x", cx - 3, cy - 8, TXT_BRIGHT);
 }
 
-// IMPROVED: Smooth Rounded Button
+// Flat, crisp button matching spectravisual_redesign.html.
+// Each visual state defines: a fill colour, a 1px border colour, and a text
+// colour. BTN_NORMAL is transparent when idle (just dim text) and only grows a
+// subtle filled background + border on hover. Active toggles and the
+// danger/primary styles use coloured fills with matching borders and text.
 void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my, int m_down, int active_state) {
-    
+
     int hover = point_in_rect(mx, my, btn->rect);
     int pressed = (hover && m_down);
 
-    SDL_Color base = btn->color; // Use the color defined in main.c
-    SDL_Color text_col = TXT_BRIGHT;
+    SDL_Color bg, border, text_col;
+    int has_bg = 1, has_border = 1;
 
-    // Interaction Colors
     if (btn->is_toggle && active_state) {
-        base = (SDL_Color){0, 160, 180, 255}; // Active Cyan
-    } else if (pressed) {
-        base.r = (Uint8)(base.r * 0.7);
-        base.g = (Uint8)(base.g * 0.7);
-        base.b = (Uint8)(base.b * 0.7);
-    } else if (hover) {
-        // Brighten
-        base.r = (Uint8)(base.r * 1.3 > 255 ? 255 : base.r * 1.3);
-        base.g = (Uint8)(base.g * 1.3 > 255 ? 255 : base.g * 1.3);
-        base.b = (Uint8)(base.b * 1.3 > 255 ? 255 : base.b * 1.3);
+        // Active toggle -> cyan accent (.btn-active)
+        bg       = (SDL_Color){14, 58, 71, 255};
+        border   = (SDL_Color){26, 85, 102, 255};
+        text_col = (SDL_Color){64, 190, 215, 255};
+        if (hover) bg = (SDL_Color){14, 64, 80, 255};
+    } else if (btn->style == BTN_DANGER) {
+        // Destructive action -> red accent (.btn-danger)
+        bg       = (SDL_Color){61, 26, 26, 255};
+        border   = (SDL_Color){90, 37, 37, 255};
+        text_col = (SDL_Color){248, 113, 113, 255};
+        if (hover) bg = (SDL_Color){74, 32, 32, 255};
+    } else if (btn->style == BTN_PRIMARY) {
+        // Primary action -> cyan accent (.btn-primary)
+        bg       = (SDL_Color){26, 58, 74, 255};
+        border   = (SDL_Color){37, 85, 101, 255};
+        text_col = (SDL_Color){64, 190, 215, 255};
+        if (hover) bg = (SDL_Color){30, 69, 85, 255};
+    } else {
+        // Normal: transparent idle, subtle filled hover (.btn / .btn:hover)
+        if (hover) {
+            bg       = (SDL_Color){30, 34, 48, 255};
+            border   = (SDL_Color){42, 48, 64, 255};
+            text_col = (SDL_Color){226, 232, 240, 255};
+        } else {
+            has_bg = 0;
+            has_border = 0;
+            text_col = (SDL_Color){156, 163, 175, 255};
+        }
     }
 
-    // Draw Smooth Rounded Body
-    fill_rounded_rect(ren, btn->rect, 5, base);
+    // Pressed: darken the fill slightly for tactile feedback.
+    if (pressed && has_bg) {
+        bg.r = (Uint8)(bg.r * 0.82);
+        bg.g = (Uint8)(bg.g * 0.82);
+        bg.b = (Uint8)(bg.b * 0.82);
+    }
+
+    // Draw the 1px rounded border by stacking the fill on a slightly larger
+    // border-coloured rounded rect.
+    if (has_border) {
+        fill_rounded_rect(ren, btn->rect, 5, border);
+        SDL_Rect inner = {btn->rect.x + 1, btn->rect.y + 1, btn->rect.w - 2, btn->rect.h - 2};
+        if (has_bg) fill_rounded_rect(ren, inner, 4, bg);
+    } else if (has_bg) {
+        fill_rounded_rect(ren, btn->rect, 5, bg);
+    }
 
     // Draw Text Centered
     if (font && btn->label[0]) {
@@ -169,7 +204,7 @@ void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my,
             int tx = btn->rect.x + (btn->rect.w - surf->w) / 2;
             int ty = btn->rect.y + (btn->rect.h - surf->h) / 2;
             if (pressed) { tx += 1; ty += 1; }
-            
+
             SDL_Rect dst = {tx, ty, surf->w, surf->h};
             SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, surf);
             SDL_RenderCopy(ren, tex, NULL, &dst);
