@@ -351,17 +351,6 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         SDL_RenderSetClipRect(ren, NULL);
     }
 
-    if (l->pred_w > 620) {
-        int lx = l->pred_x + l->pred_w - 230;
-        int ly = l->pred_y + 8;
-        SDL_Rect legend = {lx, ly, 220, 28};
-        fill_rounded_rect(ren, legend, 5, (SDL_Color){8, 10, 12, 175});
-        draw_text(ren, font, "R", lx + 10, ly + 6, (SDL_Color){255, 95, 95, 255});
-        draw_text(ren, font, "Q", lx + 45, ly + 6, (SDL_Color){255, 175, 75, 255});
-        draw_text(ren, font, "P", lx + 80, ly + 6, (SDL_Color){190, 80, 220, 255});
-        draw_text(ren, font, "a/b/c by color", lx + 120, ly + 6, COL_TXT_DIM);
-    }
-
     // Ticks
     double xrange = state->pvxmax - state->pvxmin;
     double xstep = tick_step_for_pixels(xrange, l->pred_w, 90);

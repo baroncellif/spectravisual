@@ -20,6 +20,7 @@ static void run_right_click_peak_find(AppState *s, double x0, double x1);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 static void delete_assignment(AppState *s, int idx);
 static void clamp_assignment_scroll(AppState *s);
+static void commit_text_input(AppState *s);
 
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
@@ -30,44 +31,28 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         if (state->input_state != INPUT_NONE) {
             if (e.type == SDL_TEXTINPUT) {
                 handle_text_input_event(state, e.text.text);
+                continue;
             } 
             else if (e.type == SDL_KEYDOWN) {
                 if (e.key.keysym.sym == SDLK_BACKSPACE) {
                     size_t len = strlen(state->text_input_buf);
                     if (len > 0) state->text_input_buf[len-1] = '\0';
+                    continue;
                 }
-                else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                    if (state->input_state == INPUT_GAMMA) state->lorentz_gamma = atof(state->text_input_buf);
-                    else if (state->input_state == INPUT_PF_SIG) state->pf_sig_pts = atoi(state->text_input_buf);
-                    else if (state->input_state == INPUT_PF_NOISE) state->pf_noise_pts = atoi(state->text_input_buf);
-                    else if (state->input_state == INPUT_PF_THRESH) state->pf_thresh = atof(state->text_input_buf);
-                    else if (state->input_state == INPUT_AVG_PTS) {
-                        state->rolling_avg_window = atoi(state->text_input_buf);
-                        if(state->rolling_avg_active) {
-                            apply_rolling_average(state->raw_pts, state->smooth_pts, state->n_pts, state->rolling_avg_window);
-                            state->current_pts = state->smooth_pts;
-                        }
-                    }
-                    // NEW: Commit Intensity Cut
-                    else if (state->input_state == INPUT_PRED_MIN) state->pred_min_log_int = atof(state->text_input_buf);
-                    else if (state->input_state == INPUT_PRED_MAX) state->pred_max_log_int = atof(state->text_input_buf);
-                    // NEW: Commit Frequency Jump
-                    else if (state->input_state == INPUT_JUMP_MIN) {
-                        state->vxmin = atof(state->text_input_buf);
-                        if(state->sync_active) state->pvxmin = state->vxmin;
-                    }
-                    else if (state->input_state == INPUT_JUMP_MAX) {
-                        state->vxmax = atof(state->text_input_buf);
-                        if(state->sync_active) state->pvxmax = state->vxmax;
-                    }
-                    else if (state->input_state == INPUT_OFFSET) {
-                        state->exp_offset = atof(state->text_input_buf);
-                    }
+                else if (e.key.keysym.sym == SDLK_ESCAPE) {
                     state->input_state = INPUT_NONE;
                     SDL_StopTextInput();
+                    continue;
                 }
+                else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                    commit_text_input(state);
+                    continue;
+                }
+                continue;
             }
-            continue; 
+            else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL) {
+                commit_text_input(state);
+            }
         }
 
         switch (e.type) {
@@ -549,6 +534,38 @@ static void clamp_assignment_scroll(AppState *s) {
     if (max_scroll < 0) max_scroll = 0;
     if (s->assignments_scroll < 0) s->assignments_scroll = 0;
     if (s->assignments_scroll > max_scroll) s->assignments_scroll = max_scroll;
+}
+
+static void commit_text_input(AppState *s) {
+    if (s->input_state == INPUT_NONE) return;
+
+    if (s->input_state == INPUT_GAMMA) s->lorentz_gamma = atof(s->text_input_buf);
+    else if (s->input_state == INPUT_PF_SIG) s->pf_sig_pts = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_PF_NOISE) s->pf_noise_pts = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_PF_THRESH) s->pf_thresh = atof(s->text_input_buf);
+    else if (s->input_state == INPUT_AVG_PTS) {
+        s->rolling_avg_window = atoi(s->text_input_buf);
+        if(s->rolling_avg_active) {
+            apply_rolling_average(s->raw_pts, s->smooth_pts, s->n_pts, s->rolling_avg_window);
+            s->current_pts = s->smooth_pts;
+        }
+    }
+    else if (s->input_state == INPUT_PRED_MIN) s->pred_min_log_int = atof(s->text_input_buf);
+    else if (s->input_state == INPUT_PRED_MAX) s->pred_max_log_int = atof(s->text_input_buf);
+    else if (s->input_state == INPUT_JUMP_MIN) {
+        s->vxmin = atof(s->text_input_buf);
+        if(s->sync_active) s->pvxmin = s->vxmin;
+    }
+    else if (s->input_state == INPUT_JUMP_MAX) {
+        s->vxmax = atof(s->text_input_buf);
+        if(s->sync_active) s->pvxmax = s->vxmax;
+    }
+    else if (s->input_state == INPUT_OFFSET) {
+        s->exp_offset = atof(s->text_input_buf);
+    }
+
+    s->input_state = INPUT_NONE;
+    SDL_StopTextInput();
 }
 
 // --- TEXT INPUT BUFFER ---
