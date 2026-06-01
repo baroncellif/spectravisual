@@ -91,16 +91,16 @@ int main(int argc, char *argv[])
     while(running) {
         int w, h; SDL_GetWindowSize(win, &w, &h);
         layout.win_w = w; layout.win_h = h;
-        layout.plot_x = (w < 760) ? 65 : 80;
-        layout.gap = 48;
+        layout.plot_x = (w < 760) ? 64 : 78;
+        layout.gap = 54;
         
-        int usable_h = h - 120;
+        int usable_h = h - 132;
         if (usable_h < 220) usable_h = 220;
         layout.exp_h = usable_h * 0.6;
         layout.pred_h = usable_h * 0.4 - layout.gap;
         if (layout.pred_h < 70) layout.pred_h = 70;
         
-        layout.exp_x = layout.plot_x; layout.exp_y = 60;
+        layout.exp_x = layout.plot_x; layout.exp_y = 72;
         layout.exp_w = w - layout.plot_x - 25;
         if (layout.exp_w < 320) layout.exp_w = 320;
         

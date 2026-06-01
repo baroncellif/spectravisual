@@ -277,18 +277,14 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     }
     // 2. Toolbar Buttons
     // (We reconstruct rects to match view.c)
-    Button btn_bar  = {{10,  5, 60, 26}, "", {0,0,0,0}, 0};
-    Button btn_sync = {{80,  5, 60, 26}, "", {0,0,0,0}, 0};
-    Button btn_del  = {{150, 5, 60, 26}, "", {0,0,0,0}, 0}; 
-    Button btn_list = {{220, 5, 80, 26}, "", {0,0,0,0}, 0}; 
-    Button btn_peak = {{310, 5, 80, 26}, "", {0,0,0,0}, 0};
-    Button btn_roll = {{400, 5, 80, 26}, "", {0,0,0,0}, 0};
-    SDL_Rect r_off = {580, 5, 125, 26};
-    if (l->win_w < 740) {
-        r_off.x = l->win_w - 140;
-        if (r_off.x < 490) r_off.x = 490;
-    }
-    int offset_control_visible = (l->win_w > r_off.x + r_off.w + 10);
+    Button btn_bar  = {{12,  10, 48, 28}, "", {0,0,0,0}, 0};
+    Button btn_sync = {{66,  10, 56, 28}, "", {0,0,0,0}, 0};
+    Button btn_del  = {{128, 10, 44, 28}, "", {0,0,0,0}, 0}; 
+    Button btn_list = {{182, 10, 58, 28}, "", {0,0,0,0}, 0}; 
+    Button btn_peak = {{246, 10, 58, 28}, "", {0,0,0,0}, 0};
+    Button btn_roll = {{310, 10, 52, 28}, "", {0,0,0,0}, 0};
+    SDL_Rect r_off = {l->win_w - 122 - 18, 10, 122, 28};
+    int offset_control_visible = (l->win_w > 560);
 
     if (b->button == SDL_BUTTON_LEFT) {
         if (point_in_rect(mx, my, btn_bar.rect)) {

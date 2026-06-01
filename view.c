@@ -6,14 +6,17 @@
 #include <string.h>
 
 // --- INTERNAL CONSTANTS & PALETTE ---
-static const SDL_Color COL_BG           = {20, 20, 20, 255};
-static const SDL_Color COL_GRID         = {255, 255, 255, 255};
-static const SDL_Color COL_TXT          = {255, 255, 255, 255};
-static const SDL_Color COL_TXT_DIM      = {180, 180, 180, 255};
-static const SDL_Color COL_ACCENT       = {0, 180, 220, 255}; // Cyan
-static const SDL_Color COL_SEL_BOX      = {0, 255, 255, 50};
-static const SDL_Color COL_INPUT_BG     = {10, 10, 15, 255};
-static const SDL_Color COL_INPUT_BORDER = {60, 60, 70, 255};
+static const SDL_Color COL_BG           = {15, 17, 20, 255};
+static const SDL_Color COL_PANEL        = {22, 25, 29, 255};
+static const SDL_Color COL_GRID         = {78, 84, 92, 120};
+static const SDL_Color COL_AXIS         = {190, 196, 204, 210};
+static const SDL_Color COL_TXT          = {232, 238, 245, 255};
+static const SDL_Color COL_TXT_DIM      = {145, 153, 164, 255};
+static const SDL_Color COL_ACCENT       = {64, 190, 215, 255};
+static const SDL_Color COL_SEL_BOX      = {64, 190, 215, 42};
+static const SDL_Color COL_INPUT_BG     = {10, 12, 15, 255};
+static const SDL_Color COL_INPUT_BORDER = {70, 78, 88, 255};
+static const SDL_Color COL_TOOLBAR      = {24, 27, 32, 255};
 
 // --- INTERNAL HELPERS PROTOTYPES ---
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
@@ -70,10 +73,12 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     // Clipping
     SDL_Rect clip = {l->exp_x, l->exp_y, l->exp_w, l->exp_h};
+    SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
+    SDL_RenderFillRect(ren, &clip);
     SDL_RenderSetClipRect(ren, &clip);
     
     // Draw Data Lines
-    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(ren, 228, 232, 236, 245);
     
     int start_idx = binary_search_lower(state->current_pts, state->n_pts, state->vxmin);
     int end_idx   = binary_search_upper(state->current_pts, state->n_pts, state->vxmax);
@@ -98,7 +103,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
     // Draw already-assigned experimental frequencies loaded from config/LIN.
     if (state->n_lin_data > 0) {
-        SDL_SetRenderDrawColor(ren, 120, 255, 140, 210);
+        SDL_SetRenderDrawColor(ren, 115, 225, 145, 180);
         int marker_top = l->exp_y + 4;
         int marker_bottom = l->exp_y + l->exp_h - 4;
 
@@ -119,7 +124,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (pkx < state->vxmin || pkx > state->vxmax) continue;
         
         int px = l->exp_x + (pkx - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-        SDL_SetRenderDrawColor(ren, 255, 255, 0, 255); // Yellow
+        SDL_SetRenderDrawColor(ren, 245, 210, 75, 255);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
         
         char label[64]; snprintf(label, sizeof(label), "%.3f", pkx);
@@ -130,7 +135,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     if(state->bar_active) {
         if(state->bar_x >= state->vxmin && state->bar_x <= state->vxmax) {
             int bx = l->exp_x + (state->bar_x - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-            SDL_SetRenderDrawColor(ren, 255, 0, 0, 255); 
+            SDL_SetRenderDrawColor(ren, 255, 95, 95, 230);
             SDL_RenderDrawLine(ren, bx, l->exp_y, bx, l->exp_y + l->exp_h);
         }
     }
@@ -139,8 +144,9 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     SDL_RenderSetClipRect(ren, NULL);
 
     // Draw Borders
-    SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 255);
+    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawRect(ren, &clip);
+    draw_text(ren, font, "Experimental", l->exp_x + 10, l->exp_y - 22, COL_TXT_DIM);
     
     // Draw X-Axis Ticks & Labels
     double xrange = state->vxmax - state->vxmin; 
@@ -149,6 +155,9 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     
     for(double x=xstart; x<=state->vxmax; x+=xstep) {
         int px = l->exp_x + (x - state->vxmin)/xrange * l->exp_w;
+        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
+        SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
+        SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 5);
         
         char buf[32]; snprintf(buf,sizeof(buf),"%.3f", x);
@@ -170,8 +179,10 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             int py = l->exp_y + (1.0 - (y - state->vymin)/yrange) * l->exp_h;
             
             // Draw Tick on left axis
-            SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+            SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
             SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x - 5, py);
+            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 70);
+            SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x + l->exp_w, py);
             
             // Draw Label (Scientific notation)
             char buf[32]; 
@@ -190,13 +201,16 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 // --- PREDICTION (PICKETT) ---
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     SDL_Rect pred_rect = {l->pred_x, l->pred_y, l->pred_w, l->pred_h};
+    SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
+    SDL_RenderFillRect(ren, &pred_rect);
     
     // Draw Border
-    SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 255);
+    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawRect(ren, &pred_rect);
+    draw_text(ren, font, "Prediction", l->pred_x + 10, l->pred_y - 22, COL_TXT_DIM);
 
     // Grid Lines for Pred
-    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawLine(ren, l->pred_x, l->pred_y + l->pred_h, l->pred_x + l->pred_w, l->pred_y + l->pred_h);
 
     if (state->n_pred > 0) {
@@ -237,7 +251,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
                 }
                 if (group_n + overflow_n > 1) {
-                    SDL_SetRenderDrawColor(ren, 255, 255, 255, 180);
+                    SDL_SetRenderDrawColor(ren, 235, 240, 245, 150);
                     SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
                     SDL_RenderFillRect(ren, &cluster_mark);
                 }
@@ -264,7 +278,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
             }
             if (group_n + overflow_n > 1) {
-                SDL_SetRenderDrawColor(ren, 255, 255, 255, 180);
+                    SDL_SetRenderDrawColor(ren, 235, 240, 245, 150);
                 SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
                 SDL_RenderFillRect(ren, &cluster_mark);
             }
@@ -310,14 +324,14 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         if(state->bar_active) {
             if(state->pbar_x >= state->pvxmin && state->pbar_x <= state->pvxmax) {
                 int bx = l->pred_x + (state->pbar_x - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
-                SDL_SetRenderDrawColor(ren, 255, 100, 0, 255); // Orange
+                SDL_SetRenderDrawColor(ren, 255, 150, 70, 230);
                 SDL_RenderDrawLine(ren, bx, l->pred_y, bx, l->pred_y + l->pred_h);
             }
         }
 
         // Draw assigned-frequency dots in the prediction pane as a compact locator.
         if (state->n_lin_data > 0) {
-            SDL_SetRenderDrawColor(ren, 120, 255, 140, 220);
+            SDL_SetRenderDrawColor(ren, 115, 225, 145, 200);
             int marker_y = l->pred_y + l->pred_h - 5; 
             
             for (int i=0; i<state->n_lin_data; i++) {
@@ -341,7 +355,9 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
     double xstart = ceil(state->pvxmin/xstep)*xstep;
     for(double x=xstart; x<=state->pvxmax; x+=xstep) {
         int px = l->pred_x + (x - state->pvxmin)/xrange * l->pred_w;
-        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
+        SDL_RenderDrawLine(ren, px, l->pred_y, px, l->pred_y + l->pred_h);
+        SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->pred_y + l->pred_h, px, l->pred_y + l->pred_h + 4);
         char buf[32]; snprintf(buf,sizeof(buf),"%.3f",x);
         draw_text(ren, font, buf, px - 24, l->pred_y + l->pred_h + 8, COL_TXT_DIM);
@@ -372,13 +388,19 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     int mx, my; 
     int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
 
+    SDL_Rect toolbar = {0, 0, l->win_w, 48};
+    SDL_SetRenderDrawColor(ren, COL_TOOLBAR.r, COL_TOOLBAR.g, COL_TOOLBAR.b, COL_TOOLBAR.a);
+    SDL_RenderFillRect(ren, &toolbar);
+    SDL_SetRenderDrawColor(ren, 55, 61, 70, 255);
+    SDL_RenderDrawLine(ren, 0, 47, l->win_w, 47);
+
     // 1. TOOLBAR BUTTONS
-    Button btn_bar  = {{10,  5, 60, 26}, "Bar",  {60, 60, 70, 255}, 1};
-    Button btn_sync = {{80,  5, 60, 26}, "Sync", {60, 60, 70, 255}, 1};
-    Button btn_del  = {{150, 5, 60, 26}, "Del",  {180, 60, 60, 255}, 0}; 
-    Button btn_list = {{220, 5, 80, 26}, "List", {80, 60, 100, 255}, 0}; 
-    Button btn_peak = {{310, 5, 80, 26}, "Peak", {80, 60, 100, 255}, 0};
-    Button btn_roll = {{400, 5, 80, 26}, "Avg",  {80, 60, 100, 255}, 0};
+    Button btn_bar  = {{12,  10, 48, 28}, "Bar",  {48, 54, 63, 255}, 1};
+    Button btn_sync = {{66,  10, 56, 28}, "Sync", {48, 54, 63, 255}, 1};
+    Button btn_del  = {{128, 10, 44, 28}, "Del",  {130, 55, 58, 255}, 0}; 
+    Button btn_list = {{182, 10, 58, 28}, "List", {58, 62, 78, 255}, 0}; 
+    Button btn_peak = {{246, 10, 58, 28}, "Peak", {58, 62, 78, 255}, 0};
+    Button btn_roll = {{310, 10, 52, 28}, "Avg",  {58, 62, 78, 255}, 0};
 
     draw_button(ren, font, &btn_bar, mx, my, m_down, state->bar_active);
     draw_button(ren, font, &btn_sync, mx, my, m_down, state->sync_active);
@@ -386,6 +408,25 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     draw_button(ren, font, &btn_list, mx, my, m_down, state->win_as.visible);
     draw_button(ren, font, &btn_peak, mx, my, m_down, state->win_pf.visible);
     draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
+
+    if (l->win_w > 560) {
+        int input_w = 122;
+        int label_w = (l->win_w > 760) ? 88 : 0;
+        SDL_Rect r_off = {l->win_w - input_w - 18, 10, input_w, 28};
+        if (label_w > 0) {
+            draw_text(ren, font, "Pred Offset", r_off.x - label_w, r_off.y + 6, COL_TXT_DIM);
+        }
+
+        fill_rounded_rect(ren, r_off, 5, COL_INPUT_BG);
+        SDL_Color border = (state->input_state == INPUT_OFFSET) ? COL_ACCENT : COL_INPUT_BORDER;
+        SDL_SetRenderDrawColor(ren, border.r, border.g, border.b, border.a);
+        SDL_RenderDrawRect(ren, &r_off);
+
+        char buf[32];
+        if(state->input_state == INPUT_OFFSET) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+        else snprintf(buf, sizeof(buf), "%.4f", state->exp_offset);
+        draw_text(ren, font, buf, r_off.x + 7, r_off.y + 5, COL_TXT);
+    }
 
     // 2. BROADENING WINDOW
     draw_draggable_window(ren, font, &state->win_br);
@@ -607,62 +648,42 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
 
-    // 8. Prediction offset control
-    int ox = 580;
-    int oy = 5;
-
-    if (l->win_w > 760) {
-        draw_text(ren, font, "Pred Offset", ox - 88, oy + 5, COL_TXT_DIM);
-    }
-    SDL_Rect r_off = {ox, oy, 125, 26};
-    if (l->win_w < 740) {
-        r_off.x = l->win_w - 140;
-        if (r_off.x < 490) r_off.x = 490;
-    }
-    if (l->win_w <= r_off.x + r_off.w + 10) return;
-    SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_off);
-    
-    if(state->input_state == INPUT_OFFSET) {
-        SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255); SDL_RenderDrawRect(ren, &r_off);
-        char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf); draw_text(ren, font, buf, r_off.x+5, r_off.y+4, COL_TXT);
-    } else {
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255); SDL_RenderDrawRect(ren, &r_off);
-        char buf[32]; snprintf(buf, 32, "%.4f", state->exp_offset); draw_text(ren, font, buf, r_off.x+5, r_off.y+4, COL_TXT);
-    }
 }
 
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     int mx, my;
     SDL_GetMouseState(&mx, &my);
 
-    // 1. Mouse Position Info (Top Right)
+    // 1. Mouse Position Info
     if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
         double fx = (mx - l->exp_x) / (double)l->exp_w;
         double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
         double cx = state->vxmin + fx * (state->vxmax - state->vxmin);
         double cy = state->vymin + fy * (state->vymax - state->vymin);
         
-        char c1[64], c2[64];
-        snprintf(c1, sizeof(c1), "f=%.3f MHz", cx); 
-        snprintf(c2, sizeof(c2), "I=%.2e", cy);
-        
-        draw_text(ren, font, c1, l->win_w - 220, 10, COL_TXT);
-        draw_text(ren, font, c2, l->win_w - 220, 30, COL_TXT);
+        char c[128];
+        snprintf(c, sizeof(c), "f %.3f MHz   I %.2e", cx, cy);
+
+        SDL_Rect badge = {l->exp_x + 10, l->exp_y + 10, 230, 26};
+        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 10, 12, 205});
+        draw_text(ren, font, c, badge.x + 8, badge.y + 5, COL_TXT_DIM);
     }
 
     // 2. Measure Tool Overlay
     if (state->measure_active) {
-        draw_text(ren, font, "[MEASURE MODE]", l->exp_x + 10, l->exp_y + 10, (SDL_Color){255, 0, 255, 255});
+        SDL_Rect badge = {l->exp_x + l->exp_w - 155, l->exp_y + 10, 145, 26};
+        fill_rounded_rect(ren, badge, 5, (SDL_Color){55, 20, 75, 220});
+        draw_text(ren, font, "MEASURE", badge.x + 12, badge.y + 5, (SDL_Color){245, 185, 255, 255});
         if (state->measure_phase == 1) {
             int px1 = l->exp_x + (state->measure_x1 - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-            SDL_SetRenderDrawColor(ren, 255, 0, 255, 200);
+            SDL_SetRenderDrawColor(ren, 225, 100, 245, 210);
             SDL_RenderDrawLine(ren, px1, l->exp_y, px1, l->exp_y + l->exp_h);
             SDL_RenderDrawLine(ren, px1, my, mx, my);
             if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
                 double curr_freq = state->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (state->vxmax - state->vxmin);
                 double dist = fabs(curr_freq - state->measure_x1);
                 char buf[64]; snprintf(buf, 64, "%.4f MHz", dist);
-                draw_text(ren, font, buf, mx + 10, my - 20, (SDL_Color){255, 0, 255, 255});
+                draw_text(ren, font, buf, mx + 10, my - 20, (SDL_Color){245, 185, 255, 255});
             }
         }
     }
@@ -670,8 +691,10 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
     // 3. Selection Info
     if(state->n_selected > 0) {
         char title[64];
-        snprintf(title, sizeof(title), "Selected predicted lines: %d", state->n_selected);
-        draw_text(ren, font, title, l->pred_x + 10, l->pred_y + 10, (SDL_Color){0,255,0,255});
+        snprintf(title, sizeof(title), "Selected lines: %d", state->n_selected);
+        SDL_Rect panel = {l->pred_x + 10, l->pred_y + 10, 395, 34 + (state->n_selected < 4 ? state->n_selected : 4) * 18};
+        fill_rounded_rect(ren, panel, 5, (SDL_Color){8, 18, 12, 210});
+        draw_text(ren, font, title, panel.x + 10, panel.y + 7, (SDL_Color){105,235,145,255});
 
         int show_n = state->n_selected < 4 ? state->n_selected : 4;
         for (int row_i = 0; row_i < show_n; row_i++) {
@@ -681,7 +704,7 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
                      p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
                      p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
                      p->freq_mhz);
-            draw_text(ren, font, row, l->pred_x + 10, l->pred_y + 30 + row_i * 18, (SDL_Color){80,255,120,255});
+            draw_text(ren, font, row, panel.x + 10, panel.y + 28 + row_i * 18, (SDL_Color){115,235,150,255});
         }
     }
     
@@ -710,7 +733,9 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         if(closest_idx >= 0 && closest_dist < freq_tolerance && state->n_selected == 0) {
             char htitle[64];
             snprintf(htitle, sizeof(htitle), "Near bar: %d line%s", hover_n, hover_n == 1 ? "" : "s");
-            draw_text(ren, font, htitle, l->pred_x + 10, l->pred_y + 10, (SDL_Color){255,165,0,255});
+            SDL_Rect panel = {l->pred_x + 10, l->pred_y + 10, 395, 34 + hover_n * 18};
+            fill_rounded_rect(ren, panel, 5, (SDL_Color){28, 17, 8, 210});
+            draw_text(ren, font, htitle, panel.x + 10, panel.y + 7, (SDL_Color){245,175,80,255});
             for (int row_i = 0; row_i < hover_n; row_i++) {
                 PredLine *p = &state->pred_lines[hover_idx[row_i]];
                 char h1[160];
@@ -718,7 +743,7 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
                     p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
                     p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
                     p->freq_mhz);
-                draw_text(ren, font, h1, l->pred_x + 10, l->pred_y + 30 + row_i * 18, (SDL_Color){255,190,80,255});
+                draw_text(ren, font, h1, panel.x + 10, panel.y + 28 + row_i * 18, (SDL_Color){245,190,105,255});
             }
         }
     }
