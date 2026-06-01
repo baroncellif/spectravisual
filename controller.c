@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define ABS(x) ((x)<0?-(x):(x))
+#define UI_TOOLBAR_Y 28
 
 // --- INTERNAL HELPERS ---
 static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key);
@@ -273,20 +274,23 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     }
     // 2. Toolbar Buttons
     // (We reconstruct rects to match view.c)
-    Button btn_bar  = {{12,  10, 48, 28}, "", {0,0,0,0}, 0};
-    Button btn_sync = {{66,  10, 56, 28}, "", {0,0,0,0}, 0};
-    Button btn_del  = {{132, 10, 44, 28}, "", {0,0,0,0}, 0}; 
-    Button btn_list = {{198, 10, 58, 28}, "", {0,0,0,0}, 0}; 
-    Button btn_peak = {{262, 10, 58, 28}, "", {0,0,0,0}, 0};
-    Button btn_roll = {{326, 10, 52, 28}, "", {0,0,0,0}, 0};
-    Button btn_broad = {{392, 10, 66, 28}, "", {0,0,0,0}, 0};
-    Button btn_cut = {{464, 10, 48, 28}, "", {0,0,0,0}, 0};
-    Button btn_jump = {{518, 10, 58, 28}, "", {0,0,0,0}, 0};
-    SDL_Rect r_off = {l->win_w - 122 - 18, 10, 122, 28};
-    Button btn_help = {{l->win_w - 310, 10, 54, 28}, "", {0,0,0,0}, 0};
-    Button btn_export = {{l->win_w - 250, 10, 68, 28}, "", {0,0,0,0}, 0};
-    int aux_controls_visible = (l->win_w > 920);
-    int offset_control_visible = (l->win_w > 800);
+    int by = UI_TOOLBAR_Y + 10;
+    int right_x = l->win_w - 18;
+    Button btn_bar  = {{12,  by, 58, 28}, "", {0,0,0,0}, 0};
+    Button btn_sync = {{76,  by, 70, 28}, "", {0,0,0,0}, 0};
+    Button btn_del  = {{156, by, 58, 28}, "", {0,0,0,0}, 0}; 
+    Button btn_list = {{236, by, 64, 28}, "", {0,0,0,0}, 0}; 
+    Button btn_peak = {{306, by, 68, 28}, "", {0,0,0,0}, 0};
+    Button btn_roll = {{380, by, 62, 28}, "", {0,0,0,0}, 0};
+    Button btn_broad = {{448, by, 82, 28}, "", {0,0,0,0}, 0};
+    Button btn_cut = {{552, by, 58, 28}, "", {0,0,0,0}, 0};
+    Button btn_jump = {{616, by, 78, 28}, "", {0,0,0,0}, 0};
+    SDL_Rect r_off = {right_x - 122, by, 122, 28};
+    right_x = r_off.x - 64;
+    Button btn_export = {{right_x - 88, by, 82, 28}, "", {0,0,0,0}, 0};
+    Button btn_help = {{right_x - 154, by, 60, 28}, "", {0,0,0,0}, 0};
+    int aux_controls_visible = (l->win_w > 980);
+    int offset_control_visible = (l->win_w > 900);
 
     if (!s->data_loaded && b->button == SDL_BUTTON_LEFT) {
         if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) s->show_help = !s->show_help;
@@ -310,10 +314,10 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
         if (point_in_rect(mx, my, btn_list.rect)) { s->win_as.visible = !s->win_as.visible; return; }
         if (point_in_rect(mx, my, btn_peak.rect)) { s->win_pf.visible = !s->win_pf.visible; return; }
-        if (l->win_w > 390 && point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
-        if (l->win_w > 475 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
-        if (l->win_w > 530 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
-        if (l->win_w > 600 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
+        if (l->win_w > 450 && point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
+        if (l->win_w > 540 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
+        if (l->win_w > 620 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
+        if (l->win_w > 700 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) { s->show_help = !s->show_help; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_export.rect)) { if (s->data_loaded) s->export_requested = 1; return; }
         if (offset_control_visible && point_in_rect(mx, my, r_off)) {

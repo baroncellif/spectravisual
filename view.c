@@ -16,7 +16,14 @@ static const SDL_Color COL_ACCENT       = {64, 190, 215, 255};
 static const SDL_Color COL_SEL_BOX      = {64, 190, 215, 42};
 static const SDL_Color COL_INPUT_BG     = {10, 12, 15, 255};
 static const SDL_Color COL_INPUT_BORDER = {70, 78, 88, 255};
-static const SDL_Color COL_TOOLBAR      = {24, 27, 32, 255};
+
+#define UI_TITLE_H 28
+#define UI_TOOLBAR_Y 28
+#define UI_TOOLBAR_H 48
+#define UI_STATUS_Y 76
+#define UI_STATUS_H 26
+#define UI_PANEL_HEADER_H 26
+#define UI_INFO_H 30
 
 // --- INTERNAL HELPERS PROTOTYPES ---
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
@@ -25,6 +32,10 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_info_bar(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static const char *short_path(const char *path);
 static int pred_line_is_selected(AppState *state, int idx);
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
 static double tick_step_for_pixels(double range, int pixels, int min_px);
@@ -50,6 +61,8 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     SDL_SetRenderDrawColor(ren, COL_BG.r, COL_BG.g, COL_BG.b, 255);
     SDL_RenderClear(ren);
 
+    draw_top_chrome(ren, font, state, l);
+
     // 2. Draw Graphs / Start Screen
     if (state->data_loaded) {
         draw_spectrum_view(ren, font, state, l);
@@ -68,6 +81,8 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     }
 
     // 4. UI Elements (Windows, Buttons, Cursor Info)
+    draw_panel_headers(ren, font, state, l);
+    draw_info_bar(ren, font, state, l);
     draw_ui_overlays(ren, font, state, l);
     if (state->data_loaded) draw_cursor_overlay(ren, font, state, l);
     if (state->show_help) draw_help_overlay(ren, font, state, l);
@@ -157,7 +172,6 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     // Draw Borders
     SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawRect(ren, &clip);
-    draw_text(ren, font, "Experimental", l->exp_x + 10, l->exp_y - 22, COL_TXT_DIM);
     
     // Draw X-Axis Ticks & Labels
     double xrange = state->vxmax - state->vxmin; 
@@ -218,7 +232,6 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
     // Draw Border
     SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawRect(ren, &pred_rect);
-    draw_text(ren, font, "Prediction", l->pred_x + 10, l->pred_y - 22, COL_TXT_DIM);
 
     // Grid Lines for Pred
     SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
@@ -380,6 +393,138 @@ static int pred_line_is_selected(AppState *state, int idx) {
     return 0;
 }
 
+static const char *short_path(const char *path) {
+    const char *slash;
+    if (!path || !*path) return "-";
+    slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    SDL_Rect title = {0, 0, l->win_w, UI_TITLE_H};
+    SDL_Rect toolbar = {0, UI_TOOLBAR_Y, l->win_w, UI_TOOLBAR_H};
+    SDL_Rect status = {0, UI_STATUS_Y, l->win_w, UI_STATUS_H};
+    char buf[256];
+
+    SDL_SetRenderDrawColor(ren, 15, 17, 21, 255);
+    SDL_RenderFillRect(ren, &title);
+    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
+    SDL_RenderDrawLine(ren, 0, UI_TITLE_H - 1, l->win_w, UI_TITLE_H - 1);
+
+    draw_text(ren, font, "SpectraVisual", 14, 6, COL_TXT);
+    snprintf(buf, sizeof(buf), "%s - %s", short_path(state->exp_path), short_path(state->pred_path));
+    if (l->win_w > 720) draw_text(ren, font, buf, 154, 6, COL_TXT_DIM);
+
+    SDL_SetRenderDrawColor(ren, 19, 22, 28, 255);
+    SDL_RenderFillRect(ren, &toolbar);
+    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
+    SDL_RenderDrawLine(ren, 0, UI_TOOLBAR_Y + UI_TOOLBAR_H - 1, l->win_w, UI_TOOLBAR_Y + UI_TOOLBAR_H - 1);
+
+    SDL_SetRenderDrawColor(ren, 13, 15, 19, 255);
+    SDL_RenderFillRect(ren, &status);
+    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
+    SDL_RenderDrawLine(ren, 0, UI_STATUS_Y + UI_STATUS_H - 1, l->win_w, UI_STATUS_Y + UI_STATUS_H - 1);
+
+    fill_rounded_rect(ren, (SDL_Rect){14, UI_STATUS_Y + 10, 6, 6}, 3,
+                      state->data_loaded ? (SDL_Color){34, 197, 94, 255} : (SDL_Color){248, 187, 68, 255});
+    if (state->error_message[0]) {
+        draw_text(ren, font, state->error_message, 30, UI_STATUS_Y + 5, (SDL_Color){255, 170, 175, 255});
+    } else if (state->data_loaded) {
+        snprintf(buf, sizeof(buf), "Loaded %d pts - %d lines - %d assignments",
+                 state->n_pts, state->n_pred, state->n_assignments);
+        draw_text(ren, font, buf, 30, UI_STATUS_Y + 5, COL_TXT_DIM);
+    } else if (state->status_message[0]) {
+        draw_text(ren, font, state->status_message, 30, UI_STATUS_Y + 5, COL_TXT_DIM);
+    } else {
+        draw_text(ren, font, "Drop a spectrum file and a .cat file, or launch with both paths from Terminal.", 30, UI_STATUS_Y + 5, COL_TXT_DIM);
+    }
+
+    if (state->data_loaded && l->win_w > 1120) {
+        snprintf(buf, sizeof(buf), "View %.3f - %.3f MHz", state->vxmin, state->vxmax);
+        draw_text(ren, font, buf, l->win_w - 420, UI_STATUS_Y + 5, COL_TXT_DIM);
+        snprintf(buf, sizeof(buf), "File %s", short_path(state->exp_path));
+        draw_text(ren, font, buf, l->win_w - 185, UI_STATUS_Y + 5, COL_TXT_DIM);
+    }
+}
+
+static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    char buf[128];
+    SDL_Rect exp_head = {l->exp_x, l->exp_y - UI_PANEL_HEADER_H, l->exp_w, UI_PANEL_HEADER_H};
+    SDL_Rect pred_head = {l->pred_x, l->pred_y - UI_PANEL_HEADER_H, l->pred_w, UI_PANEL_HEADER_H};
+
+    fill_rounded_rect(ren, exp_head, 0, (SDL_Color){15, 18, 24, 255});
+    fill_rounded_rect(ren, pred_head, 0, (SDL_Color){15, 18, 24, 255});
+    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
+    SDL_RenderDrawLine(ren, exp_head.x, exp_head.y + exp_head.h - 1, exp_head.x + exp_head.w, exp_head.y + exp_head.h - 1);
+    SDL_RenderDrawLine(ren, pred_head.x, pred_head.y + pred_head.h - 1, pred_head.x + pred_head.w, pred_head.y + pred_head.h - 1);
+
+    draw_text(ren, font, "EXPERIMENTAL SPECTRUM", exp_head.x + 14, exp_head.y + 5, (SDL_Color){100, 110, 126, 255});
+    if (state->data_loaded && exp_head.w > 780) {
+        snprintf(buf, sizeof(buf), "x %.2f - %.2f MHz", state->vxmin, state->vxmax);
+        draw_text(ren, font, buf, exp_head.x + exp_head.w - 210, exp_head.y + 5, COL_TXT_DIM);
+    }
+    if (state->data_loaded && exp_head.w > 1120) {
+        snprintf(buf, sizeof(buf), "y %.1e - %.1e", state->vymin, state->vymax);
+        draw_text(ren, font, buf, exp_head.x + exp_head.w - 390, exp_head.y + 5, COL_TXT_DIM);
+    }
+
+    draw_text(ren, font, "PREDICTION", pred_head.x + 14, pred_head.y + 5, (SDL_Color){100, 110, 126, 255});
+    if (state->data_loaded && pred_head.w > 760) {
+        snprintf(buf, sizeof(buf), "%d lines   %s", state->n_pred, state->sync_active ? "synced" : "free");
+        draw_text(ren, font, buf, pred_head.x + 120, pred_head.y + 5, COL_TXT_DIM);
+    }
+    if (state->data_loaded && pred_head.w > 920) {
+        snprintf(buf, sizeof(buf), "int %.1f - %.1f log", state->pred_min_log_int, state->pred_max_log_int);
+        draw_text(ren, font, buf, pred_head.x + pred_head.w - 175, pred_head.y + 5, COL_TXT_DIM);
+    }
+}
+
+static void draw_info_bar(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    SDL_Rect info = {0, l->win_h - UI_INFO_H, l->win_w, UI_INFO_H};
+    char buf[128];
+    int mx, my;
+
+    SDL_SetRenderDrawColor(ren, 11, 13, 16, 255);
+    SDL_RenderFillRect(ren, &info);
+    SDL_SetRenderDrawColor(ren, 26, 30, 40, 255);
+    SDL_RenderDrawLine(ren, 0, info.y, l->win_w, info.y);
+
+    SDL_GetMouseState(&mx, &my);
+    if (state->data_loaded && point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
+        double fx = (mx - l->exp_x) / (double)l->exp_w;
+        double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
+        double cx = state->vxmin + fx * (state->vxmax - state->vxmin);
+        double cy = state->vymin + fy * (state->vymax - state->vymin);
+        snprintf(buf, sizeof(buf), "Cursor %.4f MHz", cx);
+        draw_text(ren, font, buf, 14, info.y + 7, COL_ACCENT);
+        snprintf(buf, sizeof(buf), "Int %.2e", cy);
+        draw_text(ren, font, buf, 190, info.y + 7, COL_TXT_DIM);
+    } else {
+        draw_text(ren, font, "Cursor -", 14, info.y + 7, COL_TXT_DIM);
+        draw_text(ren, font, "Int -", 190, info.y + 7, COL_TXT_DIM);
+    }
+
+    if (state->bar_active && state->data_loaded) {
+        snprintf(buf, sizeof(buf), "Bar %.4f MHz", state->bar_x);
+        draw_text(ren, font, buf, 320, info.y + 7, (SDL_Color){251, 191, 36, 255});
+    } else {
+        draw_text(ren, font, "Bar off", 320, info.y + 7, COL_TXT_DIM);
+    }
+
+    if (l->win_w > 760) {
+        snprintf(buf, sizeof(buf), "Peaks found: %d", state->n_peaks);
+        draw_text(ren, font, buf, l->win_w - 350, info.y + 7, COL_TXT_DIM);
+    }
+    if (l->win_w > 900) {
+        snprintf(buf, sizeof(buf), "Assignments: %d", state->n_assignments);
+        draw_text(ren, font, buf, l->win_w - 230, info.y + 7, COL_ACCENT);
+    }
+    if (state->data_loaded && l->win_w > 1080) {
+        snprintf(buf, sizeof(buf), "Zoom %.1f MHz", state->vxmax - state->vxmin);
+        draw_text(ren, font, buf, l->win_w - 105, info.y + 7, COL_TXT_DIM);
+    }
+}
+
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1) {
     SDL_Color c = color_for_pred(state->pred_lines[idx].branch, state->pred_lines[idx].mu);
     if (pred_line_is_selected(state, idx)) {
@@ -399,45 +544,39 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     int mx, my; 
     int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-
-    SDL_Rect toolbar = {0, 0, l->win_w, 48};
-    SDL_SetRenderDrawColor(ren, COL_TOOLBAR.r, COL_TOOLBAR.g, COL_TOOLBAR.b, COL_TOOLBAR.a);
-    SDL_RenderFillRect(ren, &toolbar);
-    SDL_SetRenderDrawColor(ren, 55, 61, 70, 255);
-    SDL_RenderDrawLine(ren, 0, 47, l->win_w, 47);
+    int by = UI_TOOLBAR_Y + 10;
 
     // 1. TOOLBAR BUTTONS
-    Button btn_bar  = {{12,  10, 48, 28}, "Bar",  {48, 54, 63, 255}, 1};
-    Button btn_sync = {{66,  10, 56, 28}, "Sync", {48, 54, 63, 255}, 1};
-    Button btn_del  = {{132, 10, 44, 28}, "Del",  {130, 55, 58, 255}, 0}; 
-    Button btn_list = {{198, 10, 58, 28}, "List", {58, 62, 78, 255}, 0}; 
-    Button btn_peak = {{262, 10, 58, 28}, "Peak", {58, 62, 78, 255}, 0};
-    Button btn_roll = {{326, 10, 52, 28}, "Avg",  {58, 62, 78, 255}, 0};
-    Button btn_broad = {{392, 10, 66, 28}, "Broad", {58, 62, 78, 255}, 0};
-    Button btn_cut = {{464, 10, 48, 28}, "Cut", {58, 62, 78, 255}, 0};
-    Button btn_jump = {{518, 10, 58, 28}, "Jump", {58, 62, 78, 255}, 0};
+    int right_x = l->win_w - 18;
+    Button btn_bar  = {{12,  by, 58, 28}, "| Bar",  {14, 58, 71, 255}, 1};
+    Button btn_sync = {{76,  by, 70, 28}, "<> Sync", {14, 58, 71, 255}, 1};
+    Button btn_del  = {{156, by, 58, 28}, "x Del",  {70, 28, 30, 255}, 0}; 
+    Button btn_list = {{236, by, 64, 28}, "[] List", {30, 34, 48, 255}, 0}; 
+    Button btn_peak = {{306, by, 68, 28}, "^ Peak", {30, 34, 48, 255}, 0};
+    Button btn_roll = {{380, by, 62, 28}, "~ Avg",  {30, 34, 48, 255}, 0};
+    Button btn_broad = {{448, by, 82, 28}, "() Broad", {30, 34, 48, 255}, 0};
+    Button btn_cut = {{552, by, 58, 28}, "-- Cut", {30, 34, 48, 255}, 0};
+    Button btn_jump = {{616, by, 78, 28}, "-> Jump", {30, 34, 48, 255}, 0};
 
     SDL_SetRenderDrawColor(ren, 65, 72, 82, 255);
-    SDL_RenderDrawLine(ren, 186, 11, 186, 37);
-    SDL_RenderDrawLine(ren, 382, 11, 382, 37);
+    SDL_RenderDrawLine(ren, 224, by + 1, 224, by + 27);
+    SDL_RenderDrawLine(ren, 540, by + 1, 540, by + 27);
 
     draw_button(ren, font, &btn_bar, mx, my, m_down, state->bar_active);
     draw_button(ren, font, &btn_sync, mx, my, m_down, state->sync_active);
     draw_button(ren, font, &btn_del, mx, my, m_down, 0);
     draw_button(ren, font, &btn_list, mx, my, m_down, state->win_as.visible);
     draw_button(ren, font, &btn_peak, mx, my, m_down, state->win_pf.visible);
-    if (l->win_w > 390) draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
-    if (l->win_w > 475) draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
-    if (l->win_w > 530) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
-    if (l->win_w > 600) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
+    if (l->win_w > 450) draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
+    if (l->win_w > 540) draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
+    if (l->win_w > 620) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
+    if (l->win_w > 700) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
 
-    if (l->win_w > 800) {
+    if (l->win_w > 900) {
         int input_w = 122;
-        int label_w = (l->win_w > 760) ? 88 : 0;
-        SDL_Rect r_off = {l->win_w - input_w - 18, 10, input_w, 28};
-        if (label_w > 0) {
-            draw_text(ren, font, "Pred Offset", r_off.x - label_w, r_off.y + 6, COL_TXT_DIM);
-        }
+        SDL_Rect r_off = {right_x - input_w, by, input_w, 28};
+        right_x = r_off.x - 64;
+        draw_text(ren, font, "Offset", r_off.x - 56, r_off.y + 6, COL_TXT_DIM);
 
         fill_rounded_rect(ren, r_off, 5, COL_INPUT_BG);
         SDL_Color border = (state->input_state == INPUT_OFFSET) ? COL_ACCENT : COL_INPUT_BORDER;
@@ -450,19 +589,13 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         draw_text(ren, font, buf, r_off.x + 7, r_off.y + 5, COL_TXT);
     }
 
-    if (l->win_w > 920) {
-        Button btn_help = {{l->win_w - 310, 10, 54, 28}, "Help", {58, 62, 78, 255}, 0};
-        Button btn_export = {{l->win_w - 250, 10, 68, 28}, "Export", {58, 62, 78, 255}, 0};
+    if (l->win_w > 980) {
+        Button btn_export = {{right_x - 88, by, 82, 28}, "v Export", {26, 58, 70, 255}, 0};
+        Button btn_help = {{right_x - 154, by, 60, 28}, "? Help", {30, 34, 48, 255}, 0};
+        SDL_SetRenderDrawColor(ren, 65, 72, 82, 255);
+        SDL_RenderDrawLine(ren, right_x - 166, by + 1, right_x - 166, by + 27);
         draw_button(ren, font, &btn_help, mx, my, m_down, state->show_help);
         draw_button(ren, font, &btn_export, mx, my, m_down, 0);
-    }
-
-    if (state->error_message[0]) {
-        SDL_Rect err = {l->plot_x, 51, l->win_w - l->plot_x - 20, 24};
-        fill_rounded_rect(ren, err, 5, (SDL_Color){70, 20, 24, 220});
-        draw_text(ren, font, state->error_message, err.x + 10, err.y + 4, (SDL_Color){255, 170, 175, 255});
-    } else if (state->status_message[0] && l->win_w > 760) {
-        draw_text(ren, font, state->status_message, l->plot_x, 53, COL_TXT_DIM);
     }
 
     // 2. BROADENING WINDOW

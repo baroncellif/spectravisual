@@ -41,6 +41,7 @@ all: $(TARGET)
 # Link the object files into the executable
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET) $(SDL_LDFLAGS) $(LDFLAGS)
+	codesign --force --sign - $(TARGET)
 	@echo "Build successful! Run with: ./$(TARGET) exp.csv pred.cat"
 
 # Compile source files into object files

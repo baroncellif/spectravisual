@@ -162,14 +162,6 @@ void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my,
     // Draw Smooth Rounded Body
     fill_rounded_rect(ren, btn->rect, 5, base);
 
-    // Optional: Glow Border if Active
-    if (btn->is_toggle && active_state) {
-        SDL_Rect border = {btn->rect.x-1, btn->rect.y-1, btn->rect.w+2, btn->rect.h+2};
-        // Simple rect for border is usually fine for small glowing effects
-        SDL_SetRenderDrawColor(ren, 200, 255, 255, 50);
-        SDL_RenderDrawRect(ren, &border);
-    }
-
     // Draw Text Centered
     if (font && btn->label[0]) {
         SDL_Surface *surf = TTF_RenderUTF8_Blended(font, btn->label, text_col);
