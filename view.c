@@ -397,10 +397,17 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     // 1. TOOLBAR BUTTONS
     Button btn_bar  = {{12,  10, 48, 28}, "Bar",  {48, 54, 63, 255}, 1};
     Button btn_sync = {{66,  10, 56, 28}, "Sync", {48, 54, 63, 255}, 1};
-    Button btn_del  = {{128, 10, 44, 28}, "Del",  {130, 55, 58, 255}, 0}; 
-    Button btn_list = {{182, 10, 58, 28}, "List", {58, 62, 78, 255}, 0}; 
-    Button btn_peak = {{246, 10, 58, 28}, "Peak", {58, 62, 78, 255}, 0};
-    Button btn_roll = {{310, 10, 52, 28}, "Avg",  {58, 62, 78, 255}, 0};
+    Button btn_del  = {{132, 10, 44, 28}, "Del",  {130, 55, 58, 255}, 0}; 
+    Button btn_list = {{198, 10, 58, 28}, "List", {58, 62, 78, 255}, 0}; 
+    Button btn_peak = {{262, 10, 58, 28}, "Peak", {58, 62, 78, 255}, 0};
+    Button btn_roll = {{326, 10, 52, 28}, "Avg",  {58, 62, 78, 255}, 0};
+    Button btn_broad = {{392, 10, 66, 28}, "Broad", {58, 62, 78, 255}, 0};
+    Button btn_cut = {{464, 10, 48, 28}, "Cut", {58, 62, 78, 255}, 0};
+    Button btn_jump = {{518, 10, 58, 28}, "Jump", {58, 62, 78, 255}, 0};
+
+    SDL_SetRenderDrawColor(ren, 65, 72, 82, 255);
+    SDL_RenderDrawLine(ren, 186, 11, 186, 37);
+    SDL_RenderDrawLine(ren, 382, 11, 382, 37);
 
     draw_button(ren, font, &btn_bar, mx, my, m_down, state->bar_active);
     draw_button(ren, font, &btn_sync, mx, my, m_down, state->sync_active);
@@ -408,8 +415,11 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     draw_button(ren, font, &btn_list, mx, my, m_down, state->win_as.visible);
     draw_button(ren, font, &btn_peak, mx, my, m_down, state->win_pf.visible);
     draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
+    draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
+    draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
+    draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
 
-    if (l->win_w > 560) {
+    if (l->win_w > 730) {
         int input_w = 122;
         int label_w = (l->win_w > 760) ? 88 : 0;
         SDL_Rect r_off = {l->win_w - input_w - 18, 10, input_w, 28};
