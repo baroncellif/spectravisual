@@ -351,7 +351,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         SDL_RenderSetClipRect(ren, NULL);
     }
 
-    if (l->pred_w > 520) {
+    if (l->pred_w > 620) {
         int lx = l->pred_x + l->pred_w - 230;
         int ly = l->pred_y + 8;
         SDL_Rect legend = {lx, ly, 220, 28};
@@ -430,12 +430,12 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     draw_button(ren, font, &btn_del, mx, my, m_down, 0);
     draw_button(ren, font, &btn_list, mx, my, m_down, state->win_as.visible);
     draw_button(ren, font, &btn_peak, mx, my, m_down, state->win_pf.visible);
-    draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
-    draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
-    draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
-    draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
+    if (l->win_w > 390) draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
+    if (l->win_w > 475) draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
+    if (l->win_w > 530) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
+    if (l->win_w > 600) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
 
-    if (l->win_w > 730) {
+    if (l->win_w > 800) {
         int input_w = 122;
         int label_w = (l->win_w > 760) ? 88 : 0;
         SDL_Rect r_off = {l->win_w - input_w - 18, 10, input_w, 28};

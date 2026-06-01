@@ -287,7 +287,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_cut = {{464, 10, 48, 28}, "", {0,0,0,0}, 0};
     Button btn_jump = {{518, 10, 58, 28}, "", {0,0,0,0}, 0};
     SDL_Rect r_off = {l->win_w - 122 - 18, 10, 122, 28};
-    int offset_control_visible = (l->win_w > 730);
+    int offset_control_visible = (l->win_w > 800);
 
     if (b->button == SDL_BUTTON_LEFT) {
         if (point_in_rect(mx, my, btn_bar.rect)) {
@@ -306,10 +306,10 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
         if (point_in_rect(mx, my, btn_list.rect)) { s->win_as.visible = !s->win_as.visible; return; }
         if (point_in_rect(mx, my, btn_peak.rect)) { s->win_pf.visible = !s->win_pf.visible; return; }
-        if (point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
-        if (point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
-        if (point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
-        if (point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
+        if (l->win_w > 390 && point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
+        if (l->win_w > 475 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
+        if (l->win_w > 530 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
+        if (l->win_w > 600 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
         if (offset_control_visible && point_in_rect(mx, my, r_off)) {
             s->input_state = INPUT_OFFSET;
             SDL_StartTextInput();
