@@ -255,9 +255,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
                 }
                 if (group_n + overflow_n > 1) {
-                    SDL_SetRenderDrawColor(ren, 235, 240, 245, 150);
-                    SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
-                    SDL_RenderFillRect(ren, &cluster_mark);
+                    SDL_Rect cluster_mark = {group_sx - 4, l->pred_y + 5, 9, 5};
+                    fill_rounded_rect(ren, cluster_mark, 2, (SDL_Color){235, 240, 245, 145});
                 }
                 group_n = 0;
                 overflow_n = 0;
@@ -282,9 +281,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
             }
             if (group_n + overflow_n > 1) {
-                    SDL_SetRenderDrawColor(ren, 235, 240, 245, 150);
-                SDL_Rect cluster_mark = {group_sx - 3, l->pred_y + 3, 7, 4};
-                SDL_RenderFillRect(ren, &cluster_mark);
+                    SDL_Rect cluster_mark = {group_sx - 4, l->pred_y + 5, 9, 5};
+                    fill_rounded_rect(ren, cluster_mark, 2, (SDL_Color){235, 240, 245, 145});
             }
         }
 
@@ -353,6 +351,17 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         SDL_RenderSetClipRect(ren, NULL);
     }
 
+    if (l->pred_w > 520) {
+        int lx = l->pred_x + l->pred_w - 230;
+        int ly = l->pred_y + 8;
+        SDL_Rect legend = {lx, ly, 220, 28};
+        fill_rounded_rect(ren, legend, 5, (SDL_Color){8, 10, 12, 175});
+        draw_text(ren, font, "R", lx + 10, ly + 6, (SDL_Color){255, 95, 95, 255});
+        draw_text(ren, font, "Q", lx + 45, ly + 6, (SDL_Color){255, 175, 75, 255});
+        draw_text(ren, font, "P", lx + 80, ly + 6, (SDL_Color){190, 80, 220, 255});
+        draw_text(ren, font, "a/b/c by color", lx + 120, ly + 6, COL_TXT_DIM);
+    }
+
     // Ticks
     double xrange = state->pvxmax - state->pvxmin;
     double xstep = tick_step_for_pixels(xrange, l->pred_w, 90);
@@ -378,11 +387,14 @@ static int pred_line_is_selected(AppState *state, int idx) {
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1) {
     SDL_Color c = color_for_pred(state->pred_lines[idx].branch, state->pred_lines[idx].mu);
     if (pred_line_is_selected(state, idx)) {
-        SDL_SetRenderDrawColor(ren, 0, 255, 0, 255);
+        SDL_SetRenderDrawColor(ren, 105, 255, 150, 120);
+        SDL_RenderDrawLine(ren, sx - 2, l->pred_y + l->pred_h, sx - 2, sy1);
+        SDL_RenderDrawLine(ren, sx + 2, l->pred_y + l->pred_h, sx + 2, sy1);
+        SDL_SetRenderDrawColor(ren, 105, 255, 150, 255);
         SDL_RenderDrawLine(ren, sx - 1, l->pred_y + l->pred_h, sx - 1, sy1);
         SDL_RenderDrawLine(ren, sx + 1, l->pred_y + l->pred_h, sx + 1, sy1);
     } else {
-        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 210);
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 195);
     }
     SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
 }
