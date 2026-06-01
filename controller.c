@@ -60,6 +60,9 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
                         state->vxmax = atof(state->text_input_buf);
                         if(state->sync_active) state->pvxmax = state->vxmax;
                     }
+                    else if (state->input_state == INPUT_OFFSET) {
+                        state->exp_offset = atof(state->text_input_buf);
+                    }
                     state->input_state = INPUT_NONE;
                     SDL_StopTextInput();
                 }
@@ -280,6 +283,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_list = {{220, 5, 80, 26}, "", {0,0,0,0}, 0}; 
     Button btn_peak = {{310, 5, 80, 26}, "", {0,0,0,0}, 0};
     Button btn_roll = {{400, 5, 80, 26}, "", {0,0,0,0}, 0};
+    SDL_Rect r_off = {l->pred_x + l->pred_w - 150, l->pred_y + l->pred_h + 10, 140, 28};
 
     if (b->button == SDL_BUTTON_LEFT) {
         if (point_in_rect(mx, my, btn_bar.rect)) {
@@ -299,6 +303,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (point_in_rect(mx, my, btn_list.rect)) { s->win_as.visible = !s->win_as.visible; return; }
         if (point_in_rect(mx, my, btn_peak.rect)) { s->win_pf.visible = !s->win_pf.visible; return; }
         if (point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
+        if (point_in_rect(mx, my, r_off)) {
+            s->input_state = INPUT_OFFSET;
+            SDL_StartTextInput();
+            snprintf(s->text_input_buf, 32, "%.4f", s->exp_offset);
+            return;
+        }
     }
 
     // 3. Canvas Interactions
@@ -306,7 +316,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     SDL_Rect r_pred = {l->pred_x, l->pred_y, l->pred_w, l->pred_h};
 
     // --- NEW: Measure Tool Logic ---
-    if (s->measure_active && point_in_rect(mx, my, r_exp) && b->button == SDL_BUTTON_LEFT) {
+    if (s->measure_active && !(SDL_GetModState() & KMOD_ALT) && point_in_rect(mx, my, r_exp) && b->button == SDL_BUTTON_LEFT) {
         double freq = s->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (s->vxmax - s->vxmin);
         
         if (s->measure_phase == 0) {
@@ -321,10 +331,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     }    
 
     if (point_in_rect(mx, my, r_exp)) {
-        // Alt-Key check for Offset Drag (Future feature, placeholder logic)
-        // if (SDL_GetModState() & KMOD_ALT) { ... } else ...
-        
         if (b->button == SDL_BUTTON_LEFT) {
+            if (SDL_GetModState() & KMOD_ALT) {
+                s->dragging_offset = 1;
+                s->drag_last_x = mx;
+                return;
+            }
             s->selecting_left = 1;
             s->sel_start = (SDL_Point){mx, my};
             s->sel_cur = s->sel_start;
@@ -344,13 +356,14 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             double freq_per_pixel = (s->pvxmax - s->pvxmin) / l->pred_w;
             double tolerance = 5.0 * freq_per_pixel; 
             double click_freq = s->pvxmin + ((double)(mx - l->pred_x) / l->pred_w) * (s->pvxmax - s->pvxmin);
+            double raw_click_freq = click_freq - s->exp_offset;
 
             for(int i=0; i < s->n_pred; i++) {
             // FILTER: Ignore lines outside the cut range
                 if (s->pred_lines[i].lgint < s->pred_min_log_int || 
                     s->pred_lines[i].lgint > s->pred_max_log_int) continue;
 
-                if(fabs(s->pred_lines[i].freq_mhz - click_freq) < tolerance) {
+                if(fabs(s->pred_lines[i].freq_mhz - raw_click_freq) < tolerance) {
                     if(s->n_selected < MAX_SELECTED) {
                         // Avoid duplicates
                         int dup = 0;
@@ -369,6 +382,12 @@ static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m)
         s->drag_target->rect.x = m->x - s->drag_offset.x;
         s->drag_target->rect.y = m->y - s->drag_offset.y;
     } 
+    else if (s->dragging_offset) {
+        if (l->exp_w <= 0) return;
+        double freq_per_pixel = (s->vxmax - s->vxmin) / (double)l->exp_w;
+        s->exp_offset += (m->x - s->drag_last_x) * freq_per_pixel;
+        s->drag_last_x = m->x;
+    }
     else if (s->selecting_left || s->selecting_right) {
         s->sel_cur.x = m->x;
         s->sel_cur.y = m->y;
@@ -391,6 +410,11 @@ static void handle_mouse_wheel(AppState *s, SDL_MouseWheelEvent *w) {
 // --- MOUSE UP (Action Completion) ---
 static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     s->drag_target = NULL;
+    if (b->button == SDL_BUTTON_LEFT && s->dragging_offset) {
+        s->dragging_offset = 0;
+        printf("Prediction offset: %.4f MHz\n", s->exp_offset);
+        return;
+    }
 
     // A. Left Click Drag (Zoom)
     if (b->button == SDL_BUTTON_LEFT && s->selecting_left) {
@@ -398,10 +422,6 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (ABS(s->sel_cur.x - s->sel_start.x) > 5) {
             double x0 = s->vxmin + (double)(s->sel_start.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin);
             double x1 = s->vxmin + (double)(s->sel_cur.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin);
-            
-            // Apply Offset correction to ensure we zoom into the visual area
-            // Note: The logic in main.c didn't account for offset during zoom calculation because offset wasn't there.
-            // But since the mouse click is on visual pixels, we just map pixels to frequency range directly.
             
             if (x1 < x0) { double t=x0; x0=x1; x1=t; }
             s->vxmin = x0; 
@@ -422,8 +442,7 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         double x1 = s->vxmin + (double)(s->sel_cur.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin);
         if (x1 < x0) { double t=x0; x0=x1; x1=t; }
         
-        // We must subtract the visual offset to find the raw data index
-        run_right_click_peak_find(s, x0 - s->exp_offset, x1 - s->exp_offset);
+        run_right_click_peak_find(s, x0, x1);
     }
 }
 
@@ -465,7 +484,6 @@ static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1)
             py = y2 - 0.25 * (y1 - y3) * dx;
         }
         
-        // Store Peak (Visual X will be px + exp_offset when drawn)
         s->peaks[s->n_peaks].x = px; 
         s->peaks[s->n_peaks].y = py;
         s->n_peaks++;
@@ -590,8 +608,8 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     switch(sym) {
         // Y-Axis Auto Scale
         case SDLK_TAB: {
-            int istart = binary_search_lower(s->current_pts, s->n_pts, s->vxmin - s->exp_offset);
-            int iend = binary_search_upper(s->current_pts, s->n_pts, s->vxmax - s->exp_offset);
+            int istart = binary_search_lower(s->current_pts, s->n_pts, s->vxmin);
+            int iend = binary_search_upper(s->current_pts, s->n_pts, s->vxmax);
             if(istart < 0) istart = 0; if(iend >= s->n_pts) iend = s->n_pts - 1;
             
             double miny=1e99, maxy=-1e99;

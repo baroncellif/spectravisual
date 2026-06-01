@@ -59,20 +59,16 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     // Draw Data Lines
     SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
     
-    // We search the raw arrays using the view limits minus the offset
-    double effective_min = state->vxmin - state->exp_offset;
-    double effective_max = state->vxmax - state->exp_offset;
-
-    int start_idx = binary_search_lower(state->current_pts, state->n_pts, effective_min);
-    int end_idx   = binary_search_upper(state->current_pts, state->n_pts, effective_max);
+    int start_idx = binary_search_lower(state->current_pts, state->n_pts, state->vxmin);
+    int end_idx   = binary_search_upper(state->current_pts, state->n_pts, state->vxmax);
     
     // Safety clamp
     if (start_idx < 1) start_idx = 1; 
     if (end_idx >= state->n_pts) end_idx = state->n_pts - 1;
 
     for(int i = start_idx; i <= end_idx; i++) {
-         double x1_val = state->current_pts[i-1].x + state->exp_offset;
-         double x2_val = state->current_pts[i].x   + state->exp_offset;
+         double x1_val = state->current_pts[i-1].x;
+         double x2_val = state->current_pts[i].x;
          
          int px1 = l->exp_x + (x1_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
          int px2 = l->exp_x + (x2_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
@@ -91,7 +87,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         int marker_bottom = l->exp_y + l->exp_h - 4;
 
         for (int i = 0; i < state->n_lin_data; i++) {
-            double f = state->lin_data[i] + state->exp_offset;
+            double f = state->lin_data[i];
             if (f < state->vxmin || f > state->vxmax) continue;
 
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
@@ -103,7 +99,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     
     // Draw Found Peaks
     for (int ip = 0; ip < state->n_peaks; ip++) {
-        double pkx = state->peaks[ip].x + state->exp_offset;
+        double pkx = state->peaks[ip].x;
         if (pkx < state->vxmin || pkx > state->vxmax) continue;
         
         int px = l->exp_x + (pkx - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
@@ -184,9 +180,10 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
     if (state->n_pred > 0) {
         SDL_RenderSetClipRect(ren, &pred_rect);
         
-        // Range filtering
-        int p_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin);
-        int p_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax);
+        // Range filtering in raw prediction coordinates. exp_offset is displayed
+        // as a visual shift applied to predictions.
+        int p_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - state->exp_offset);
+        int p_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax - state->exp_offset);
         if(p_start < 0) p_start = 0; 
         if(p_end >= state->n_pred) p_end = state->n_pred - 1;
 
@@ -205,7 +202,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             double h_ratio = (state->pred_lines[i].linear_int / state->pred_global_max) * state->pred_scale;
             if(h_ratio > 1.0) h_ratio = 1.0;
 
-            int sx = l->pred_x + (state->pred_lines[i].freq_mhz - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
+            double shifted_freq = state->pred_lines[i].freq_mhz + state->exp_offset;
+            int sx = l->pred_x + (shifted_freq - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
             int sy1 = l->pred_y + l->pred_h - (int)(h_ratio * (l->pred_h - 10));
 
             if (group_n > 0 && sx != group_sx) {
@@ -258,17 +256,18 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             double cutoff = 50.0 * state->lorentz_gamma;
             
             // Optimization: Only calc lines near visible window + cutoff
-            int p_calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - cutoff);
-            int p_calc_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax + cutoff);
+            int p_calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - state->exp_offset - cutoff);
+            int p_calc_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax - state->exp_offset + cutoff);
             if(p_calc_start < 0) p_calc_start=0; 
             if(p_calc_end >= state->n_pred) p_calc_end=state->n_pred-1;
 
             for(int i=0; i<steps; i++) {
                 double f = state->pvxmin + (double)i/l->pred_w * (state->pvxmax - state->pvxmin);
+                double raw_f = f - state->exp_offset;
                 double intensity_sum = 0;
                 
                 for(int k=p_calc_start; k<=p_calc_end; k++) {
-                    double dist = f - state->pred_lines[k].freq_mhz;
+                    double dist = raw_f - state->pred_lines[k].freq_mhz;
                     if(fabs(dist) > cutoff) continue; 
                     if (state->pred_lines[k].lgint < state->pred_min_log_int) continue;
                     if (state->pred_lines[k].lgint > state->pred_max_log_int) continue;
@@ -590,7 +589,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     int ox = l->pred_x + l->pred_w - 150;
     int oy = l->pred_y + l->pred_h + 10;
     
-    draw_text(ren, font, "Offset (MHz):", ox - 100, oy + 5, COL_TXT_DIM);
+    draw_text(ren, font, "Pred Offset:", ox - 100, oy + 5, COL_TXT_DIM);
     SDL_Rect r_off = {ox, oy, 140, 28};
     SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_off);
     
@@ -659,8 +658,8 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
     
     // 4. Hover Info
     if(state->bar_active) {
-        int p_hover_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pbar_x - 1.0);
-        int p_hover_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pbar_x + 1.0);
+        int p_hover_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pbar_x - state->exp_offset - 1.0);
+        int p_hover_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pbar_x - state->exp_offset + 1.0);
         if(p_hover_start < 0) p_hover_start = 0; 
         if(p_hover_end >= state->n_pred) p_hover_end = state->n_pred - 1;
 
@@ -674,7 +673,7 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
             if (state->pred_lines[i].lgint < state->pred_min_log_int || 
                 state->pred_lines[i].lgint > state->pred_max_log_int) continue;
 
-            double d = fabs(state->pred_lines[i].freq_mhz - state->pbar_x);
+            double d = fabs(state->pred_lines[i].freq_mhz + state->exp_offset - state->pbar_x);
             if(d < closest_dist) { closest_dist = d; closest_idx = i; }
             if (d < freq_tolerance && hover_n < 4) hover_idx[hover_n++] = i;
         }
