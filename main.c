@@ -25,7 +25,7 @@ static void init_app_defaults(AppState *state) {
 
     state->win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};
     state->win_br = (DraggableWindow){{150, 150, 300, 200}, 0, "BROADENING"};
-    state->win_as = (DraggableWindow){{200, 200, 600, 400}, 0, "ASSIGNMENTS"};
+    state->win_as = (DraggableWindow){{200, 200, 440, 400}, 0, "ASSIGNMENTS"};
     state->win_avg = (DraggableWindow){{250, 150, 300, 200}, 0, "ROLLING AVG"};
     state->win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
     state->win_jump = (DraggableWindow){{400, 300, 250, 140}, 0, "FREQ JUMP"};
@@ -202,9 +202,12 @@ int main(int argc, char *argv[])
         if (layout.pred_h < 70) layout.pred_h = 70;
 
         layout.exp_x = layout.plot_x; layout.exp_y = 96;
-        layout.exp_w = w - layout.plot_x - 25;
+
+        // Dock/animate the tool sidebars and shrink the plot to fit beside them.
+        update_sidebars(&state, &layout);
+        layout.exp_w = layout.plot_right - layout.exp_x;
         if (layout.exp_w < 240) layout.exp_w = 240;
-        
+
         layout.pred_x = layout.plot_x; layout.pred_y = layout.exp_y + layout.exp_h + layout.gap;
         layout.pred_w = layout.exp_w;
 

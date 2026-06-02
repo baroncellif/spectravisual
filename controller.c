@@ -16,7 +16,7 @@ static void handle_text_input_event(AppState *s, char *text);
 static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
-static void handle_mouse_wheel(AppState *s, SDL_MouseWheelEvent *w);
+static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 static void delete_assignment(AppState *s, int idx);
@@ -71,7 +71,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
             case SDL_MOUSEBUTTONDOWN: handle_mouse_down(state, l, &e.button); break;
             case SDL_MOUSEBUTTONUP:   handle_mouse_up(state, l, &e.button); break;
             case SDL_MOUSEMOTION:     handle_mouse_motion(state, l, &e.motion); break;
-            case SDL_MOUSEWHEEL:      handle_mouse_wheel(state, &e.wheel); break;
+            case SDL_MOUSEWHEEL:      handle_mouse_wheel(state, l, &e.wheel); break;
             case SDL_KEYDOWN:         handle_keydown(state, l, &e.key); break;
         }
     }
@@ -413,17 +413,24 @@ static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m)
     }
 }
 
-static void handle_mouse_wheel(AppState *s, SDL_MouseWheelEvent *w) {
-    if (!s->win_as.visible) return;
+static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w) {
+    if (w->y == 0) return;
 
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    if (!point_in_rect(mx, my, s->win_as.rect)) return;
 
-    int step = (w->y > 0) ? -3 : 3;
-    if (w->y == 0) return;
-    s->assignments_scroll += step;
-    clamp_assignment_scroll(s);
+    // Over the assignments table -> scroll that list.
+    if (s->win_as.visible && point_in_rect(mx, my, s->win_as.rect)) {
+        s->assignments_scroll += (w->y > 0) ? -3 : 3;
+        clamp_assignment_scroll(s);
+        return;
+    }
+
+    // Anywhere over the docked panel column -> scroll the sidebar stack.
+    // (clamping happens in update_sidebars, which knows the content height)
+    if (mx > l->plot_right) {
+        s->sidebar_scroll += (w->y > 0) ? -45.0 : 45.0;
+    }
 }
 
 // --- MOUSE UP (Action Completion) ---

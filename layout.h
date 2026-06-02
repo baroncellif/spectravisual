@@ -19,4 +19,11 @@ void draw_text_vertical(SDL_Renderer *ren, TTF_Font *font, const char *txt, int 
 void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win);
 void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mouse_x, int mouse_y, int mouse_down, int active_state);
 
+// --- SIDEBAR DOCKING ---
+// Animates the tool panels and docks the visible ones to the right edge as a
+// stack of floating "glass" cards. Sets each window's rect/clip and fills in
+// l->plot_right so the spectrum can be shrunk to make room. Call once per frame
+// BEFORE event handling so hit-testing uses the up-to-date panel rects.
+void update_sidebars(AppState *s, Layout *l);
+
 #endif

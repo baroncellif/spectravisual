@@ -42,9 +42,11 @@ typedef struct {
 // --- UI STRUCTURES ---
 
 typedef struct {
-    SDL_Rect rect;
-    int visible;
+    SDL_Rect rect;          // full on-screen geometry (x,y recomputed each frame when docked)
+    int visible;            // user intent: panel requested open
     char title[64];
+    float anim;             // 0..1 open progress (eased for slide-in / push animation)
+    SDL_Rect clip;          // visible (animated) sub-rect used to clip content while sliding
 } DraggableWindow;
 
 // Visual style for a toolbar/window button (matches the redesign mockup).
@@ -138,6 +140,8 @@ typedef struct {
     int selected_assignment;
     int assignments_scroll;
 
+    double sidebar_scroll;   // vertical scroll offset of the docked panel stack
+
     // Windows
     DraggableWindow win_pf;
     DraggableWindow win_br;
@@ -178,6 +182,7 @@ typedef struct {
     int exp_x, exp_y, exp_w, exp_h;
     int pred_x, pred_y, pred_w, pred_h;
     int plot_x, gap;
+    int plot_right;   // right edge available to the plot (shrinks when sidebars are open)
 } Layout;
 
 #endif

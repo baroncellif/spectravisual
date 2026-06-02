@@ -589,8 +589,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     // 2. BROADENING WINDOW
-    draw_draggable_window(ren, font, &state->win_br);
-    if(state->win_br.visible) {
+    if(state->win_br.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_br.clip);
+        draw_draggable_window(ren, font, &state->win_br);
         int wx = state->win_br.rect.x, wy = state->win_br.rect.y;
         draw_text(ren, font, "Gamma (MHz):", wx+20, wy+65, COL_TXT_DIM);
 
@@ -614,8 +615,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     // 3. ROLLING AVG WINDOW
-    draw_draggable_window(ren, font, &state->win_avg);
-    if(state->win_avg.visible) {
+    if(state->win_avg.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_avg.clip);
+        draw_draggable_window(ren, font, &state->win_avg);
         int wx = state->win_avg.rect.x, wy = state->win_avg.rect.y;
         draw_text(ren, font, "Window (pts):", wx+20, wy+65, COL_TXT_DIM);
 
@@ -638,8 +640,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     // 4. PEAK FINDER WINDOW
-    draw_draggable_window(ren, font, &state->win_pf);
-    if(state->win_pf.visible) {
+    if(state->win_pf.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_pf.clip);
+        draw_draggable_window(ren, font, &state->win_pf);
         int wx = state->win_pf.rect.x, wy = state->win_pf.rect.y;
         SDL_Rect r_sig = {wx+190, wy+50, 80, 26};
         SDL_Rect r_noi = {wx+190, wy+90, 80, 26};
@@ -675,15 +678,16 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     // 5. ASSIGNMENT WINDOW
-    draw_draggable_window(ren, font, &state->win_as);
-    if(state->win_as.visible) {
+    if(state->win_as.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_as.clip);
+        draw_draggable_window(ren, font, &state->win_as);
         int wx = state->win_as.rect.x, wy = state->win_as.rect.y;
         int ty = wy + 60;
         
         SDL_Rect table_head = {wx + 14, ty - 6, state->win_as.rect.w - 28, 28};
         fill_rounded_rect(ren, table_head, 5, (SDL_Color){18, 21, 25, 220});
         draw_text(ren, font, "Quantum numbers", wx+24, ty, COL_TXT_DIM);
-        draw_text(ren, font, "Exp Freq", wx+455, ty, COL_TXT_DIM);
+        draw_text(ren, font, "Exp Freq", wx+300, ty, COL_TXT_DIM);
         ty += 30;
         
         int visible_rows = 13;
@@ -724,8 +728,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
     
     // NEW: 6. INTENSITY CUT WINDOW (Triggered by 'C')
-    draw_draggable_window(ren, font, &state->win_cut);
-    if(state->win_cut.visible) {
+    if(state->win_cut.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_cut.clip);
+        draw_draggable_window(ren, font, &state->win_cut);
         int wx = state->win_cut.rect.x, wy = state->win_cut.rect.y;
         
         // Labels
@@ -768,8 +773,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
     // --- 7. FREQ JUMP WINDOW (Triggered by 'F') ---
-    draw_draggable_window(ren, font, &state->win_jump);
-    if(state->win_jump.visible) {
+    if(state->win_jump.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_jump.clip);
+        draw_draggable_window(ren, font, &state->win_jump);
         int wx = state->win_jump.rect.x, wy = state->win_jump.rect.y;
         
         draw_text(ren, font, "Start Freq:", wx+20, wy+55, COL_TXT_DIM);
@@ -811,6 +817,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
 
+    SDL_RenderSetClipRect(ren, NULL);
 }
 
 static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {

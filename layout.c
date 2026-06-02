@@ -101,39 +101,143 @@ void draw_text_vertical(SDL_Renderer *ren, TTF_Font *font, const char *txt, int 
     SDL_DestroyTexture(tex);
 }
 
-// IMPROVED: Smooth Rounded Window
-void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win) {
-    if(!win->visible) return;
-    
-    SDL_Rect shadow = {win->rect.x + 5, win->rect.y + 6, win->rect.w, win->rect.h};
-    fill_rounded_rect(ren, shadow, 9, (SDL_Color){0, 0, 0, 80});
+// Smooth ease (smoothstep) used for panel slide-in / push animation.
+double ui_smoothstep(double a) {
+    if (a < 0.0) a = 0.0;
+    if (a > 1.0) a = 1.0;
+    return a * a * (3.0 - 2.0 * a);
+}
 
-    fill_rounded_rect(ren, win->rect, 9, WIN_BG);
-    SDL_SetRenderDrawColor(ren, BORDER_IDLE.r, BORDER_IDLE.g, BORDER_IDLE.b, 160);
+// Dock the tool panels to the right edge as a vertical stack of floating glass
+// cards. Each visible window animates a 0..1 "open" value; the open ones are
+// right-aligned and stacked top-to-bottom, reflowing as neighbours open/close,
+// and the spectrum is given the remaining width via l->plot_right.
+void update_sidebars(AppState *s, Layout *l) {
+    const int TOP          = l->exp_y;   // align panel tops with the plot
+    const int RIGHT_MARGIN = 18;
+    const int GAP          = 12;
+    const float SPEED      = 0.22f;      // per-frame approach toward target
+
+    DraggableWindow *panels[] = {
+        &s->win_as, &s->win_pf, &s->win_avg,
+        &s->win_br, &s->win_cut, &s->win_jump
+    };
+    int N = (int)(sizeof(panels) / sizeof(panels[0]));
+
+    int vp_bottom = l->win_h - 34;        // viewport ends above the info bar
+    if (vp_bottom < TOP + 60) vp_bottom = TOP + 60;
+    int view_h = vp_bottom - TOP;
+
+    // Pass 1: advance animations, measure the stacked height and widest panel.
+    double e_arr[8];
+    double total = 0.0, max_push = 0.0;
+    int any = 0;
+    for (int i = 0; i < N; i++) {
+        DraggableWindow *p = panels[i];
+
+        double target = p->visible ? 1.0 : 0.0;
+        p->anim += (float)((target - p->anim) * SPEED);
+        if (target > 0.5 && p->anim > 0.999f) p->anim = 1.0f;
+        if (target < 0.5 && p->anim < 0.001f) p->anim = 0.0f;
+
+        double e = ui_smoothstep(p->anim);
+        e_arr[i] = e;
+        if (e < 0.01) continue;
+        any = 1;
+        total += (p->rect.h + GAP) * e;
+        double push = p->rect.w * e;
+        if (push > max_push) max_push = push;
+    }
+    if (any && total >= GAP) total -= GAP;    // drop the trailing gap
+
+    // Clamp the scroll offset to the available range.
+    double max_scroll = total - view_h;
+    if (max_scroll < 0) max_scroll = 0;
+    if (s->sidebar_scroll < 0) s->sidebar_scroll = 0;
+    if (s->sidebar_scroll > max_scroll) s->sidebar_scroll = max_scroll;
+
+    // Pass 2: place the cards, clipped to the scrollable viewport.
+    double y = (double)TOP - s->sidebar_scroll;
+    for (int i = 0; i < N; i++) {
+        DraggableWindow *p = panels[i];
+        double e = e_arr[i];
+        if (e < 0.01) {                       // fully closed: park off-screen
+            p->rect.x = l->win_w + 80;
+            p->rect.y = TOP;
+            p->clip = (SDL_Rect){0, 0, 0, 0};
+            continue;
+        }
+
+        int w = p->rect.w, h = p->rect.h;
+        p->rect.x = l->win_w - RIGHT_MARGIN - w;   // right-aligned, full width
+        p->rect.y = (int)y;
+
+        int vis_w = (int)(w * e);             // animated slice (reveals from right)
+        int cy = (int)y, ch = h;
+        if (cy < TOP)        { ch -= (TOP - cy); cy = TOP; }   // clip above viewport
+        if (cy + ch > vp_bottom) ch = vp_bottom - cy;          // clip below viewport
+        if (ch < 0) ch = 0;
+        p->clip = (SDL_Rect){ l->win_w - RIGHT_MARGIN - vis_w, cy, vis_w, ch };
+
+        y += (h + GAP) * e;                   // stack downward, animated
+    }
+
+    l->plot_right = any ? (l->win_w - RIGHT_MARGIN - (int)max_push - GAP)
+                        : (l->win_w - 25);
+}
+
+// IMPROVED: Floating "glass" panel — translucent body, rounded corners, soft
+// shadow and a subtle top highlight. Opacity follows win->anim so it fades while
+// it slides in. Geometry of the header / close button is unchanged so the
+// existing hit-testing in controller.c still lines up.
+void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win) {
+    double a = ui_smoothstep(win->anim);
+    if (a <= 0.01) return;
+
+    const int RAD = 14;
+    Uint8 A = (Uint8)(a * 255.0);
+
+    // Soft drop shadow.
+    SDL_Rect shadow = {win->rect.x + 6, win->rect.y + 8, win->rect.w, win->rect.h};
+    fill_rounded_rect(ren, shadow, RAD, (SDL_Color){0, 0, 0, (Uint8)(70 * a)});
+
+    // Translucent glass body.
+    fill_rounded_rect(ren, win->rect, RAD, (SDL_Color){26, 30, 38, (Uint8)(208 * a)});
+
+    // Top highlight band (fake light catching the glass edge).
+    SDL_Rect hi = {win->rect.x + RAD, win->rect.y + 1, win->rect.w - 2 * RAD, 1};
+    SDL_SetRenderDrawColor(ren, 255, 255, 255, (Uint8)(28 * a));
+    SDL_RenderFillRect(ren, &hi);
+
+    // Outer border.
+    SDL_SetRenderDrawColor(ren, BORDER_IDLE.r, BORDER_IDLE.g, BORDER_IDLE.b, (Uint8)(150 * a));
     SDL_RenderDrawRect(ren, &win->rect);
 
+    // Header strip + title.
     SDL_Rect header = {win->rect.x, win->rect.y, win->rect.w, 34};
-    fill_rounded_rect(ren, header, 9, (SDL_Color){31, 35, 41, 245});
+    fill_rounded_rect(ren, header, RAD, (SDL_Color){34, 39, 49, (Uint8)(220 * a)});
 
-    draw_text(ren, font, win->title, win->rect.x + 15, win->rect.y + 8, TXT_BRIGHT);
+    SDL_Color title_c = TXT_BRIGHT; title_c.a = A;
+    draw_text(ren, font, win->title, win->rect.x + 16, win->rect.y + 8, title_c);
 
-    SDL_SetRenderDrawColor(ren, BORDER_GLOW.r, BORDER_GLOW.g, BORDER_GLOW.b, 190);
-    SDL_RenderDrawLine(ren, win->rect.x + 12, win->rect.y + 33, win->rect.x + win->rect.w - 12, win->rect.y + 33);
+    SDL_SetRenderDrawColor(ren, BORDER_GLOW.r, BORDER_GLOW.g, BORDER_GLOW.b, (Uint8)(180 * a));
+    SDL_RenderDrawLine(ren, win->rect.x + 14, win->rect.y + 33, win->rect.x + win->rect.w - 14, win->rect.y + 33);
 
-    // 5. Close Button (Circular)
+    // Close button (circular).
     int cx = win->rect.x + win->rect.w - 20;
     int cy = win->rect.y + 15;
     int r = 10;
-    
-    int mx, my; SDL_GetMouseState(&mx, &my);
-    int distSq = (mx-cx)*(mx-cx) + (my-cy)*(my-cy);
-    int hover = (distSq <= r*r);
 
-    SDL_Rect close_r = {cx-r+1, cy-r+1, r*2-2, r*2-2};
-    SDL_Color c_col = hover ? (SDL_Color){210, 72, 76, 255} : (SDL_Color){48, 54, 63, 255};
-    fill_rounded_rect(ren, close_r, 8, c_col); 
-    
-    draw_text(ren, font, "x", cx - 3, cy - 8, TXT_BRIGHT);
+    int mx, my; SDL_GetMouseState(&mx, &my);
+    int distSq = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
+    int hover = (distSq <= r * r);
+
+    SDL_Rect close_r = {cx - r + 1, cy - r + 1, r * 2 - 2, r * 2 - 2};
+    SDL_Color c_col = hover ? (SDL_Color){210, 72, 76, A} : (SDL_Color){52, 58, 68, A};
+    fill_rounded_rect(ren, close_r, 8, c_col);
+
+    SDL_Color x_c = TXT_BRIGHT; x_c.a = A;
+    draw_text(ren, font, "x", cx - 3, cy - 8, x_c);
 }
 
 // Lazily-loaded icon font. The default UI font (Helvetica) lacks arrow/symbol
