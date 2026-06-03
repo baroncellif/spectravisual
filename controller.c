@@ -731,8 +731,10 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     switch(sym) {
         // Y-Axis Auto Scale
         case SDLK_TAB: {
-            int istart = binary_search_lower(s->current_pts, s->n_pts, s->vxmin);
-            int iend = binary_search_upper(s->current_pts, s->n_pts, s->vxmax);
+            // The spectrum is displayed shifted by exp_offset, so the visible
+            // window in TRUE data coords is [vxmin - offset, vxmax - offset].
+            int istart = binary_search_lower(s->current_pts, s->n_pts, s->vxmin - s->exp_offset);
+            int iend = binary_search_upper(s->current_pts, s->n_pts, s->vxmax - s->exp_offset);
             if(istart < 0) istart = 0; if(iend >= s->n_pts) iend = s->n_pts - 1;
             
             double miny=1e99, maxy=-1e99;
