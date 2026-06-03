@@ -373,8 +373,9 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
     // --- NEW: Measure Tool Logic ---
     if (s->measure_active && !(SDL_GetModState() & KMOD_ALT) && point_in_rect(mx, my, r_exp) && b->button == SDL_BUTTON_LEFT) {
-        double freq = s->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (s->vxmax - s->vxmin);
-        
+        // Use the TRUE (un-offset) frequency: the spectrum is only shifted visually.
+        double freq = s->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (s->vxmax - s->vxmin) - s->exp_offset;
+
         if (s->measure_phase == 0) {
             s->measure_x1 = freq;
             s->measure_phase = 1; // Waiting for second click
@@ -412,7 +413,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             double freq_per_pixel = (s->pvxmax - s->pvxmin) / l->pred_w;
             double tolerance = 5.0 * freq_per_pixel; 
             double click_freq = s->pvxmin + ((double)(mx - l->pred_x) / l->pred_w) * (s->pvxmax - s->pvxmin);
-            double raw_click_freq = click_freq - s->exp_offset;
+            double raw_click_freq = click_freq;   // predictions live at their true freq now
 
             for(int i=0; i < s->n_pred; i++) {
             // Ignore lines hidden by the intensity cut or the active filters
@@ -500,10 +501,12 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     // B. Right Click Drag (Peak Find)
     if (b->button == SDL_BUTTON_RIGHT && s->selecting_right) {
         s->selecting_right = 0;
-        double x0 = s->vxmin + (double)(s->sel_start.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin);
-        double x1 = s->vxmin + (double)(s->sel_cur.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin);
+        // Convert the screen selection to TRUE data coords (subtract the visual
+        // offset) so the peak is found and stored at its original frequency.
+        double x0 = s->vxmin + (double)(s->sel_start.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin) - s->exp_offset;
+        double x1 = s->vxmin + (double)(s->sel_cur.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin) - s->exp_offset;
         if (x1 < x0) { double t=x0; x0=x1; x1=t; }
-        
+
         run_right_click_peak_find(s, x0, x1);
     }
 }
