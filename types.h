@@ -78,7 +78,17 @@ typedef enum {
     INPUT_PRED_MAX,
     INPUT_JUMP_MIN,
     INPUT_JUMP_MAX,
-    INPUT_OFFSET
+    INPUT_OFFSET,
+    // Quantum-number / branch filter inputs
+    INPUT_FILT_JMIN,
+    INPUT_FILT_JMAX,
+    INPUT_FILT_KAMIN,
+    INPUT_FILT_KAMAX,
+    INPUT_FILT_KCMIN,
+    INPUT_FILT_KCMAX,
+    INPUT_FILT_DJ,
+    INPUT_FILT_DKA,
+    INPUT_FILT_DKC
 } InputState;
 
 // --- MASTER APP STATE ---
@@ -147,8 +157,9 @@ typedef struct {
     DraggableWindow win_br;
     DraggableWindow win_as;
     DraggableWindow win_avg;
-    DraggableWindow win_cut;  
-    DraggableWindow win_jump; 
+    DraggableWindow win_cut;
+    DraggableWindow win_jump;
+    DraggableWindow win_filt;
 
     DraggableWindow *drag_target;
     SDL_Point drag_offset;
@@ -167,8 +178,19 @@ typedef struct {
     int drag_last_x;     
     
     // Intensity Cut Variables
-    double pred_min_log_int;    
-    double pred_max_log_int;    
+    double pred_min_log_int;
+    double pred_max_log_int;
+
+    // --- Quantum-number / branch filter ---
+    int filter_active;        // master enable for the QN/branch filter
+    int filt_mu[3];           // allow dipole type [0]=a [1]=b [2]=c (1 = show)
+    int filt_br[3];           // allow branch      [0]=P [1]=Q [2]=R (1 = show)
+    int filt_use_range;       // enable J/Ka/Kc min-max range gating (upper state)
+    int filt_j_min,  filt_j_max;
+    int filt_ka_min, filt_ka_max;
+    int filt_kc_min, filt_kc_max;
+    int filt_use_delta;       // enable Delta J/Ka/Kc gating (upper - lower)
+    int filt_dj, filt_dka, filt_dkc;
 
     // Measure Tool State
     int measure_active;

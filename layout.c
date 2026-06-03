@@ -37,6 +37,43 @@ SDL_Color color_for_pred(char branch, char mu) {
     return (SDL_Color){180,180,180,255};
 }
 
+// Returns 1 if predicted line `idx` passes the active filters. The intensity
+// cut always applies; the dipole/branch and quantum-number gates only apply
+// when filter_active is set.
+int pred_passes_filter(const AppState *s, int idx) {
+    const PredLine *p = &s->pred_lines[idx];
+
+    // Intensity cut (always on).
+    if (p->lgint < s->pred_min_log_int) return 0;
+    if (p->lgint > s->pred_max_log_int) return 0;
+
+    if (!s->filter_active) return 1;
+
+    // Dipole type (mu = a/b/c).
+    int mui = (p->mu == 'a') ? 0 : (p->mu == 'b') ? 1 : (p->mu == 'c') ? 2 : -1;
+    if (mui >= 0 && !s->filt_mu[mui]) return 0;
+
+    // Branch (P/Q/R).
+    int bri = (p->branch == 'P') ? 0 : (p->branch == 'Q') ? 1 : (p->branch == 'R') ? 2 : -1;
+    if (bri >= 0 && !s->filt_br[bri]) return 0;
+
+    // Upper-state quantum-number ranges.
+    if (s->filt_use_range) {
+        if (p->Ju  < s->filt_j_min  || p->Ju  > s->filt_j_max)  return 0;
+        if (p->Kau < s->filt_ka_min || p->Kau > s->filt_ka_max) return 0;
+        if (p->Kcu < s->filt_kc_min || p->Kcu > s->filt_kc_max) return 0;
+    }
+
+    // Quantum-number jumps (upper - lower).
+    if (s->filt_use_delta) {
+        if ((p->Ju  - p->Jl)  != s->filt_dj)  return 0;
+        if ((p->Kau - p->Kal) != s->filt_dka) return 0;
+        if ((p->Kcu - p->Kcl) != s->filt_dkc) return 0;
+    }
+
+    return 1;
+}
+
 // --- HELPER: Anti-Aliased Rounded Rect ---
 // This makes the corners look smooth, not jagged.
 void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c) {
@@ -120,7 +157,7 @@ void update_sidebars(AppState *s, Layout *l) {
 
     DraggableWindow *panels[] = {
         &s->win_as, &s->win_pf, &s->win_avg,
-        &s->win_br, &s->win_cut, &s->win_jump
+        &s->win_br, &s->win_cut, &s->win_jump, &s->win_filt
     };
     int N = (int)(sizeof(panels) / sizeof(panels[0]));
 

@@ -23,12 +23,24 @@ static void init_app_defaults(AppState *state) {
     state->pred_max_log_int = 0.0;
     state->selected_assignment = -1;
 
+    // Quantum-number / branch filter defaults: inactive, everything allowed.
+    state->filter_active = 0;
+    state->filt_mu[0] = state->filt_mu[1] = state->filt_mu[2] = 1;
+    state->filt_br[0] = state->filt_br[1] = state->filt_br[2] = 1;
+    state->filt_use_range = 0;
+    state->filt_j_min = 0;   state->filt_j_max = 200;
+    state->filt_ka_min = 0;  state->filt_ka_max = 200;
+    state->filt_kc_min = 0;  state->filt_kc_max = 200;
+    state->filt_use_delta = 0;
+    state->filt_dj = 1;  state->filt_dka = 0;  state->filt_dkc = 1;
+
     state->win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};
     state->win_br = (DraggableWindow){{150, 150, 300, 200}, 0, "BROADENING"};
     state->win_as = (DraggableWindow){{200, 200, 440, 400}, 0, "ASSIGNMENTS"};
     state->win_avg = (DraggableWindow){{250, 150, 300, 200}, 0, "ROLLING AVG"};
     state->win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
     state->win_jump = (DraggableWindow){{400, 300, 250, 140}, 0, "FREQ JUMP"};
+    state->win_filt = (DraggableWindow){{300, 120, 260, 402}, 0, "FILTER"};
 }
 
 static void free_dataset(AppState *state) {

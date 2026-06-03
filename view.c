@@ -256,8 +256,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         int overflow_n = 0;
 
         for (int i=p_start; i<=p_end; i++) {
-            if (state->pred_lines[i].lgint < state->pred_min_log_int) continue;
-            if (state->pred_lines[i].lgint > state->pred_max_log_int) continue;
+            if (!pred_passes_filter(state, i)) continue;
 
             double h_ratio = (state->pred_lines[i].linear_int / state->pred_global_max) * state->pred_scale;
             if(h_ratio > 1.0) h_ratio = 1.0;
@@ -326,9 +325,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 
                 for(int k=p_calc_start; k<=p_calc_end; k++) {
                     double dist = raw_f - state->pred_lines[k].freq_mhz;
-                    if(fabs(dist) > cutoff) continue; 
-                    if (state->pred_lines[k].lgint < state->pred_min_log_int) continue;
-                    if (state->pred_lines[k].lgint > state->pred_max_log_int) continue;
+                    if(fabs(dist) > cutoff) continue;
+                    if (!pred_passes_filter(state, k)) continue;
                     double L = (state->lorentz_gamma * state->lorentz_gamma) / (dist*dist + state->lorentz_gamma*state->lorentz_gamma);
                     intensity_sum += state->pred_lines[k].linear_int * L;
                 }
@@ -530,6 +528,22 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
     SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
 }
 
+// Small integer input field used by the FILTER panel. Shows the live edit
+// buffer (with caret) when focused, otherwise the stored value.
+static void draw_int_field(SDL_Renderer *ren, TTF_Font *font, AppState *state,
+                           SDL_Rect r, InputState which, int value) {
+    SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+    SDL_RenderFillRect(ren, &r);
+    int focus = (state->input_state == which);
+    SDL_Color b = focus ? COL_ACCENT : COL_INPUT_BORDER;
+    SDL_SetRenderDrawColor(ren, b.r, b.g, b.b, 255);
+    SDL_RenderDrawRect(ren, &r);
+    char buf[32];
+    if (focus) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+    else       snprintf(buf, sizeof(buf), "%d", value);
+    draw_text(ren, font, buf, r.x + 5, r.y + 4, COL_TXT);
+}
+
 // --- UI OVERLAYS (Buttons & Windows) ---
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     int mx, my; 
@@ -547,6 +561,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     Button btn_broad = {{448, by, 82, 24}, "Broad", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x88\xA7"}; // wedge
     Button btn_cut = {{552, by, 58, 24}, "Cut",   {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xE2\x86\x94"}; // leftright
     Button btn_jump = {{616, by, 78, 24}, "Jump",  {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x86\x92"}; // right
+    Button btn_filt = {{700, by, 72, 24}, "Filter", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x96\xBD"}; // down triangle
 
     SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
     SDL_RenderDrawLine(ren, 224, by + 4, 224, by + 20);
@@ -561,6 +576,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     if (l->win_w > 540) draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
     if (l->win_w > 620) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
     if (l->win_w > 700) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
+    if (l->win_w > 790) draw_button(ren, font, &btn_filt, mx, my, m_down, state->win_filt.visible || state->filter_active);
 
     if (l->win_w > 900) {
         int input_w = 122;
@@ -817,6 +833,65 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
     }
 
+    // --- 8. FILTER WINDOW (Triggered by 'B') ---
+    if(state->win_filt.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_filt.clip);
+        draw_draggable_window(ren, font, &state->win_filt);
+        int wx = state->win_filt.rect.x, wy = state->win_filt.rect.y;
+
+        // Master enable
+        Button btn_master = {{wx+15, wy+44, 230, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_master.label, 32, state->filter_active ? "FILTER: ON" : "FILTER: OFF");
+        draw_button(ren, font, &btn_master, mx, my, m_down, state->filter_active);
+
+        // Dipole (mu) toggles
+        draw_text(ren, font, "Dipole (mu)", wx+20, wy+80, COL_TXT_DIM);
+        const char *mu_lbl[3] = {"a", "b", "c"};
+        for (int i = 0; i < 3; i++) {
+            Button bm = {{wx+15+i*80, wy+98, 70, 26}, "", {60,60,70,255}, 1};
+            snprintf(bm.label, 32, "mu %s", mu_lbl[i]);
+            draw_button(ren, font, &bm, mx, my, m_down, state->filt_mu[i]);
+        }
+
+        // Branch toggles
+        draw_text(ren, font, "Branch", wx+20, wy+134, COL_TXT_DIM);
+        const char *br_lbl[3] = {"P", "Q", "R"};
+        for (int i = 0; i < 3; i++) {
+            Button bb = {{wx+15+i*80, wy+152, 70, 26}, "", {60,60,70,255}, 1};
+            snprintf(bb.label, 32, "%s", br_lbl[i]);
+            draw_button(ren, font, &bb, mx, my, m_down, state->filt_br[i]);
+        }
+
+        // Quantum-number range gate
+        Button btn_range = {{wx+15, wy+190, 230, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_range.label, 32, state->filt_use_range ? "RANGE: ON" : "RANGE: OFF");
+        draw_button(ren, font, &btn_range, mx, my, m_down, state->filt_use_range);
+
+        draw_text(ren, font, "min", wx+128, wy+220, COL_TXT_DIM);
+        draw_text(ren, font, "max", wx+198, wy+220, COL_TXT_DIM);
+        draw_text(ren, font, "J",  wx+25, wy+240, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+236, 55, 24}, INPUT_FILT_JMIN,  state->filt_j_min);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+236, 55, 24}, INPUT_FILT_JMAX,  state->filt_j_max);
+        draw_text(ren, font, "Ka", wx+25, wy+270, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+266, 55, 24}, INPUT_FILT_KAMIN, state->filt_ka_min);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+266, 55, 24}, INPUT_FILT_KAMAX, state->filt_ka_max);
+        draw_text(ren, font, "Kc", wx+25, wy+300, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+296, 55, 24}, INPUT_FILT_KCMIN, state->filt_kc_min);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+296, 55, 24}, INPUT_FILT_KCMAX, state->filt_kc_max);
+
+        // Quantum-number jump (delta) gate
+        Button btn_delta = {{wx+15, wy+332, 230, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_delta.label, 32, state->filt_use_delta ? "DELTA: ON" : "DELTA: OFF");
+        draw_button(ren, font, &btn_delta, mx, my, m_down, state->filt_use_delta);
+
+        draw_text(ren, font, "dJ",  wx+18,  wy+368, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+44,  wy+364, 36, 24}, INPUT_FILT_DJ,  state->filt_dj);
+        draw_text(ren, font, "dKa", wx+90,  wy+368, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+124, wy+364, 36, 24}, INPUT_FILT_DKA, state->filt_dka);
+        draw_text(ren, font, "dKc", wx+170, wy+368, COL_TXT_DIM);
+        draw_int_field(ren, font, state, (SDL_Rect){wx+204, wy+364, 36, 24}, INPUT_FILT_DKC, state->filt_dkc);
+    }
+
     SDL_RenderSetClipRect(ren, NULL);
 }
 
@@ -864,7 +939,7 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
     draw_text(ren, font, "Shift + W/Z or arrows scales predicted intensity", x, y, COL_TXT_DIM); y += 28;
     draw_text(ren, font, "K/L move bar, G measure, H or ? help, X export BMP", x, y, COL_TXT_DIM); y += 28;
     draw_text(ren, font, "N assignments, P peak finder, T rolling average, M broadening", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "C intensity cut, F frequency jump, Delete removes latest peak", x, y, COL_TXT_DIM); y += 42;
+    draw_text(ren, font, "C intensity cut, F frequency jump, B filter, Delete removes latest peak", x, y, COL_TXT_DIM); y += 42;
     draw_text(ren, font, "Input fields", x, y, COL_TXT); y += 30;
     draw_text(ren, font, "Enter confirms, Esc cancels, clicking elsewhere confirms and continues.", x, y, COL_TXT_DIM); y += 42;
     draw_text(ren, font, "Export", x, y, COL_TXT); y += 30;
@@ -975,9 +1050,8 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         double freq_tolerance = (state->pvxmax - state->pvxmin) * 0.01; 
 
         for(int i=p_hover_start; i<=p_hover_end; i++) {
-            // Check cut
-            if (state->pred_lines[i].lgint < state->pred_min_log_int || 
-                state->pred_lines[i].lgint > state->pred_max_log_int) continue;
+            // Check cut + active filters
+            if (!pred_passes_filter(state, i)) continue;
 
             double d = fabs(state->pred_lines[i].freq_mhz + state->exp_offset - state->pbar_x);
             if(d < closest_dist) { closest_dist = d; closest_idx = i; }

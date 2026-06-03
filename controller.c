@@ -125,7 +125,42 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         else if (point_in_rect(mx, my, r_end)) { s->input_state = INPUT_JUMP_MAX; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->vxmax); }
         return;
     }
-    
+
+    // FILTER Window (quantum-number / branch gating)
+    if (s->win_filt.visible && point_in_rect(mx, my, s->win_filt.rect)) {
+        handled = 1;
+        int wx = s->win_filt.rect.x, wy = s->win_filt.rect.y;
+        if (my < wy + 30) {
+            if (mx > wx + s->win_filt.rect.w - 30) s->win_filt.visible = 0;
+            else { s->drag_target = &s->win_filt; s->drag_offset.x = mx - wx; s->drag_offset.y = my - wy; }
+            return;
+        }
+        // Master enable
+        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 230, 26})) { s->filter_active = !s->filter_active; return; }
+        // Dipole (mu) toggles
+        for (int i = 0; i < 3; i++)
+            if (point_in_rect(mx, my, (SDL_Rect){wx+15+i*80, wy+98, 70, 26})) { s->filt_mu[i] = !s->filt_mu[i]; return; }
+        // Branch toggles
+        for (int i = 0; i < 3; i++)
+            if (point_in_rect(mx, my, (SDL_Rect){wx+15+i*80, wy+152, 70, 26})) { s->filt_br[i] = !s->filt_br[i]; return; }
+        // Range gate
+        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+190, 230, 26})) { s->filt_use_range = !s->filt_use_range; return; }
+        // Range input fields (J / Ka / Kc, min / max)
+        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+236, 55, 24})) { s->input_state=INPUT_FILT_JMIN;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_j_min);  return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+236, 55, 24})) { s->input_state=INPUT_FILT_JMAX;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_j_max);  return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+266, 55, 24})) { s->input_state=INPUT_FILT_KAMIN; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_ka_min); return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+266, 55, 24})) { s->input_state=INPUT_FILT_KAMAX; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_ka_max); return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+296, 55, 24})) { s->input_state=INPUT_FILT_KCMIN; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_kc_min); return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+296, 55, 24})) { s->input_state=INPUT_FILT_KCMAX; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_kc_max); return; }
+        // Delta gate
+        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+332, 230, 26})) { s->filt_use_delta = !s->filt_use_delta; return; }
+        // Delta input fields (dJ / dKa / dKc)
+        if (point_in_rect(mx, my, (SDL_Rect){wx+44,  wy+364, 36, 24})) { s->input_state=INPUT_FILT_DJ;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dj);  return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+124, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKA; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dka); return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+204, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKC; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dkc); return; }
+        return;
+    }
+
     // A. Broadening Window
     if (s->win_br.visible && point_in_rect(mx, my, s->win_br.rect)) {
         handled = 1;
@@ -285,6 +320,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_broad = {{448, by, 82, 24}, "", {0,0,0,0}, 0};
     Button btn_cut = {{552, by, 58, 24}, "", {0,0,0,0}, 0};
     Button btn_jump = {{616, by, 78, 24}, "", {0,0,0,0}, 0};
+    Button btn_filt = {{700, by, 72, 24}, "", {0,0,0,0}, 0};
     SDL_Rect r_off = {right_x - 122, by, 122, 24};
     right_x = r_off.x - 64;
     Button btn_export = {{right_x - 88, by, 82, 24}, "", {0,0,0,0}, 0};
@@ -318,6 +354,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (l->win_w > 540 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
         if (l->win_w > 620 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
         if (l->win_w > 700 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
+        if (l->win_w > 790 && point_in_rect(mx, my, btn_filt.rect)) { s->win_filt.visible = !s->win_filt.visible; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) { s->show_help = !s->show_help; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_export.rect)) { if (s->data_loaded) s->export_requested = 1; return; }
         if (offset_control_visible && point_in_rect(mx, my, r_off)) {
@@ -378,9 +415,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             double raw_click_freq = click_freq - s->exp_offset;
 
             for(int i=0; i < s->n_pred; i++) {
-            // FILTER: Ignore lines outside the cut range
-                if (s->pred_lines[i].lgint < s->pred_min_log_int || 
-                    s->pred_lines[i].lgint > s->pred_max_log_int) continue;
+            // Ignore lines hidden by the intensity cut or the active filters
+                if (!pred_passes_filter(s, i)) continue;
 
                 if(fabs(s->pred_lines[i].freq_mhz - raw_click_freq) < tolerance) {
                     if(s->n_selected < MAX_SELECTED) {
@@ -598,6 +634,15 @@ static void commit_text_input(AppState *s) {
     else if (s->input_state == INPUT_OFFSET) {
         s->exp_offset = atof(s->text_input_buf);
     }
+    else if (s->input_state == INPUT_FILT_JMIN)  s->filt_j_min  = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_JMAX)  s->filt_j_max  = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_KAMIN) s->filt_ka_min = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_KAMAX) s->filt_ka_max = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_KCMIN) s->filt_kc_min = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_KCMAX) s->filt_kc_max = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_DJ)    s->filt_dj  = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_DKA)   s->filt_dka = atoi(s->text_input_buf);
+    else if (s->input_state == INPUT_FILT_DKC)   s->filt_dkc = atoi(s->text_input_buf);
 
     s->input_state = INPUT_NONE;
     SDL_StopTextInput();
@@ -666,6 +711,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     }
     if (sym == SDLK_c) s->win_cut.visible = !s->win_cut.visible;
     if (sym == SDLK_f) s->win_jump.visible = !s->win_jump.visible;
+    if (sym == SDLK_b) s->win_filt.visible = !s->win_filt.visible;
     
     // Navigation Calc
     double width_px = (double)l->exp_w;

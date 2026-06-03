@@ -26,4 +26,11 @@ void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mouse_x, in
 // BEFORE event handling so hit-testing uses the up-to-date panel rects.
 void update_sidebars(AppState *s, Layout *l);
 
+// --- PREDICTION FILTER ---
+// Returns 1 if predicted line `idx` should be shown/selectable, applying the
+// intensity cut plus (when filter_active) the dipole/branch and quantum-number
+// range / delta gates. Centralises the test used by the drawing and the
+// selection code.
+int pred_passes_filter(const AppState *s, int idx);
+
 #endif
