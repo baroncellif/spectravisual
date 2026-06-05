@@ -69,8 +69,9 @@ typedef struct {
 
 typedef enum { 
     INPUT_NONE, 
-    INPUT_GAMMA, 
-    INPUT_PF_SIG, 
+    INPUT_GAMMA,
+    INPUT_GAUSS,
+    INPUT_PF_SIG,
     INPUT_PF_NOISE, 
     INPUT_PF_THRESH,
     INPUT_AVG_PTS,
@@ -132,7 +133,9 @@ typedef struct {
     double pbar_x;
     
     int broadening_active;
-    double lorentz_gamma;
+    double lorentz_gamma;   // Lorentzian HWHM (MHz); 0 disables L component
+    double gauss_gamma;     // Gaussian HWHM (MHz); 0 disables G component
+                            // both >0 -> Voigt; only one -> pure L or G
 
     int rolling_avg_active;
     int rolling_avg_window;

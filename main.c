@@ -14,7 +14,8 @@
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
     state->sync_active = 1;
-    state->lorentz_gamma = 0.5;
+    state->lorentz_gamma = 0.0;
+    state->gauss_gamma = 0.0;
     state->pf_sig_pts = 5;
     state->pf_noise_pts = 50;
     state->pf_thresh = 3.0;
@@ -35,7 +36,7 @@ static void init_app_defaults(AppState *state) {
     state->filt_dj = 1;  state->filt_dka = 0;  state->filt_dkc = 1;
 
     state->win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};
-    state->win_br = (DraggableWindow){{150, 150, 300, 200}, 0, "BROADENING"};
+    state->win_br = (DraggableWindow){{150, 150, 300, 240}, 0, "BROADENING"};
     state->win_as = (DraggableWindow){{200, 200, 440, 400}, 0, "ASSIGNMENTS"};
     state->win_avg = (DraggableWindow){{250, 150, 300, 200}, 0, "ROLLING AVG"};
     state->win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
