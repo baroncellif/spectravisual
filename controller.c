@@ -175,6 +175,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         SDL_Rect r_ka  = {s->win_br.rect.x + 150, s->win_br.rect.y + 40, 125, 26};
         SDL_Rect r_f1  = {s->win_br.rect.x + 155, s->win_br.rect.y + 82, 75, 28}; // Lorentz / beta
         SDL_Rect r_f2  = {s->win_br.rect.x + 155, s->win_br.rect.y + 122, 75, 28}; // Gauss / ceros
+        SDL_Rect r_f3  = {s->win_br.rect.x + 155, s->win_br.rect.y + 162, 75, 28}; // intrinsic (Kaiser only)
         SDL_Rect r_tog = {s->win_br.rect.x + 50,  s->win_br.rect.y + 255, 200, 30};
 
         if (point_in_rect(mx, my, r_an)) {
@@ -200,6 +201,10 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 s->input_state = INPUT_KCEROS; SDL_StartTextInput();
                 snprintf(s->text_input_buf, 64, "%d", s->kaiser_ceros);
             }
+        }
+        else if (s->broaden_mode == 1 && point_in_rect(mx, my, r_f3)) {
+            s->input_state = INPUT_KINTR; SDL_StartTextInput();
+            snprintf(s->text_input_buf, 64, "%.3f", s->kaiser_intrinsic);
         }
         else if (point_in_rect(mx, my, r_tog)) {
             s->broadening_active = !s->broadening_active;
@@ -640,6 +645,7 @@ static void commit_text_input(AppState *s) {
     if (s->input_state == INPUT_GAUSS) s->gauss_gamma = atof(s->text_input_buf);
     if (s->input_state == INPUT_KBETA) s->kaiser_beta = atof(s->text_input_buf);
     if (s->input_state == INPUT_KCEROS) { int c = atoi(s->text_input_buf); s->kaiser_ceros = c > 0 ? c : 1; }
+    if (s->input_state == INPUT_KINTR) { double v = atof(s->text_input_buf); s->kaiser_intrinsic = v >= 0 ? v : 0; }
     else if (s->input_state == INPUT_PF_SIG) s->pf_sig_pts = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_PF_NOISE) s->pf_noise_pts = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_PF_THRESH) s->pf_thresh = atof(s->text_input_buf);

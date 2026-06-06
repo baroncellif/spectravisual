@@ -46,6 +46,7 @@ static double broaden_profile(double dist, double gl, double gg) {
 
 static double  g_kk_table[KAISER_NK];
 static double  g_kk_beta  = -1.0;   // cached params; rebuild when changed
+static double  g_kk_gg    = -1.0;   // intrinsic FWHM in resolution units
 static int     g_kk_built = 0;
 
 // Modified Bessel function I0(x) via power series (x stays small here).
@@ -59,16 +60,28 @@ static double bessel_i0(double x) {
     return sum;
 }
 
-// Build the normalized signed kernel table for the given beta.
-static void kaiser_build_kernel(double beta) {
-    if (g_kk_built && beta == g_kk_beta) return;
+// Build the normalized signed kernel table.
+//   beta = Kaiser parameter.
+//   gg   = intrinsic (molecular) line FWHM in fundamental-resolution units.
+//          It tapers the FID with a Gaussian decay exp(-(pi*GB*t)^2/4ln2),
+//          which both broadens the main lobe and fills the Kaiser sidelobes,
+//          exactly as a real decaying FID does.
+static void kaiser_build_kernel(double beta, double gg) {
+    if (g_kk_built && beta == g_kk_beta && gg == g_kk_gg) return;
     int M = KAISER_WINN;
     double i0b = bessel_i0(beta);
     static double w[KAISER_WINN];
     double wsum = 0.0;
+    double cen0 = 0.5 * (M - 1);
     for (int n = 0; n < M; n++) {
         double t = (2.0 * n - (M - 1)) / (double)(M - 1);     // -1..+1
         w[n] = bessel_i0(beta * sqrt(1.0 - t * t)) / i0b;     // kaiser(M, beta)
+        if (gg > 0.0) {
+            // time fraction from window centre: (n-cen)/(M-1) maps to t/T
+            double tf = (n - cen0) / (double)(M - 1);
+            double a  = M_PI * gg * tf;
+            w[n] *= exp(-(a * a) / (4.0 * 0.69314718056)); // Gaussian taper, FWHM=gg
+        }
         wsum += w[n];
     }
     double cen = 0.5 * (M - 1);
@@ -81,6 +94,7 @@ static void kaiser_build_kernel(double beta) {
         g_kk_table[i] = acc / wsum;
     }
     g_kk_beta = beta;
+    g_kk_gg = gg;
     g_kk_built = 1;
 }
 
@@ -417,7 +431,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
                 dnu = cer * df;                       // fundamental resolution (MHz)
                 if (dnu > 0.0) {
-                    kaiser_build_kernel(state->kaiser_beta);
+                    double gg = state->kaiser_intrinsic / dnu; // intrinsic FWHM in res units
+                    kaiser_build_kernel(state->kaiser_beta, gg);
                     cutoff = KAISER_RMAX * dnu;
                     draw_broad = 1;
                 }
@@ -797,16 +812,28 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             else snprintf(buf, sizeof(buf), "%d", state->kaiser_ceros);
             draw_text(ren, font, buf, r_cer.x + 5, r_cer.y + 5, COL_TXT);
 
+            // --- intrinsic (molecular) FWHM field ---
+            draw_text(ren, font, "intrinsic MHz:", wx+20, wy+167, COL_TXT_DIM);
+            SDL_Rect r_int = {wx+155, wy+162, 75, 28};
+            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+            SDL_RenderFillRect(ren, &r_int);
+            SDL_Color bi = (state->input_state == INPUT_KINTR) ? COL_ACCENT : COL_INPUT_BORDER;
+            SDL_SetRenderDrawColor(ren, bi.r, bi.g, bi.b, 255);
+            SDL_RenderDrawRect(ren, &r_int);
+            if (state->input_state == INPUT_KINTR) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+            else snprintf(buf, sizeof(buf), "%.3f", state->kaiser_intrinsic);
+            draw_text(ren, font, buf, r_int.x + 5, r_int.y + 5, COL_TXT);
+
             // --- Derived resolution readout (from spectrum bin) ---
             double df = spectrum_df(state);
             int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
             if (df > 0.0) {
                 snprintf(buf, sizeof(buf), "bin df = %.5g MHz", df);
-                draw_text(ren, font, buf, wx+20, wy+162, COL_TXT_DIM);
+                draw_text(ren, font, buf, wx+20, wy+202, COL_TXT_DIM);
                 snprintf(buf, sizeof(buf), "res = ceros*df = %.4g MHz", cer * df);
-                draw_text(ren, font, buf, wx+20, wy+182, COL_ACCENT);
+                draw_text(ren, font, buf, wx+20, wy+220, COL_ACCENT);
             } else {
-                draw_text(ren, font, "load a spectrum for the bin step", wx+20, wy+170, COL_TXT_DIM);
+                draw_text(ren, font, "load a spectrum for the bin step", wx+20, wy+205, COL_TXT_DIM);
             }
         }
 

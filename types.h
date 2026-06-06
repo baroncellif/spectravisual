@@ -73,6 +73,7 @@ typedef enum {
     INPUT_GAUSS,
     INPUT_KBETA,
     INPUT_KCEROS,
+    INPUT_KINTR,
     INPUT_PF_SIG,
     INPUT_PF_NOISE, 
     INPUT_PF_THRESH,
@@ -141,6 +142,7 @@ typedef struct {
                             // both >0 -> Voigt; only one -> pure L or G
     double kaiser_beta;     // Kaiser window parameter (= numpy kaiser alpha)
     int    kaiser_ceros;    // zero-pad factor used in the FFT (multifft 'ceros')
+    double kaiser_intrinsic;// molecular/intrinsic line FWHM (MHz), 0 = pure Kaiser
 
     int rolling_avg_active;
     int rolling_avg_window;

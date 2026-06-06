@@ -19,6 +19,7 @@ static void init_app_defaults(AppState *state) {
     state->gauss_gamma = 0.0;
     state->kaiser_beta = 1.0;
     state->kaiser_ceros = 6;
+    state->kaiser_intrinsic = 0.0;
     state->pf_sig_pts = 5;
     state->pf_noise_pts = 50;
     state->pf_thresh = 3.0;
