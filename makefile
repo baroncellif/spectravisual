@@ -57,4 +57,12 @@ clean:
 run: $(TARGET)
 	./$(TARGET) exp.csv pred.cat
 
-.PHONY: all clean run
+# Deploy the latest build to the parent liveplot/ (the PATH copy) and RE-SIGN it
+# there. A plain `cp` invalidates the ad-hoc signature -> macOS SIGKILLs it.
+# Use `make deploy` instead of copying by hand.
+deploy: $(TARGET)
+	cp $(TARGET) ../$(TARGET)
+	codesign --force --sign - ../$(TARGET)
+	@echo "Deployed + signed: ../$(TARGET)"
+
+.PHONY: all clean run deploy

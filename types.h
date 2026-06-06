@@ -71,6 +71,8 @@ typedef enum {
     INPUT_NONE, 
     INPUT_GAMMA,
     INPUT_GAUSS,
+    INPUT_KBETA,
+    INPUT_KCEROS,
     INPUT_PF_SIG,
     INPUT_PF_NOISE, 
     INPUT_PF_THRESH,
@@ -133,9 +135,12 @@ typedef struct {
     double pbar_x;
     
     int broadening_active;
+    int broaden_mode;       // 0 = analytic (L/G/V), 1 = Kaiser-FFT lineshape
     double lorentz_gamma;   // Lorentzian HWHM (MHz); 0 disables L component
     double gauss_gamma;     // Gaussian HWHM (MHz); 0 disables G component
                             // both >0 -> Voigt; only one -> pure L or G
+    double kaiser_beta;     // Kaiser window parameter (= numpy kaiser alpha)
+    int    kaiser_ceros;    // zero-pad factor used in the FFT (multifft 'ceros')
 
     int rolling_avg_active;
     int rolling_avg_window;

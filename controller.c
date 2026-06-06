@@ -171,17 +171,35 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             return;
         }
         // Content logic
-        SDL_Rect r_lor = {s->win_br.rect.x + 155, s->win_br.rect.y + 52, 75, 28};
-        SDL_Rect r_gau = {s->win_br.rect.x + 155, s->win_br.rect.y + 92, 75, 28};
-        SDL_Rect r_tog = {s->win_br.rect.x + 50,  s->win_br.rect.y + 170, 200, 30};
+        SDL_Rect r_an  = {s->win_br.rect.x + 15,  s->win_br.rect.y + 40, 125, 26};
+        SDL_Rect r_ka  = {s->win_br.rect.x + 150, s->win_br.rect.y + 40, 125, 26};
+        SDL_Rect r_f1  = {s->win_br.rect.x + 155, s->win_br.rect.y + 82, 75, 28}; // Lorentz / beta
+        SDL_Rect r_f2  = {s->win_br.rect.x + 155, s->win_br.rect.y + 122, 75, 28}; // Gauss / ceros
+        SDL_Rect r_tog = {s->win_br.rect.x + 50,  s->win_br.rect.y + 255, 200, 30};
 
-        if (point_in_rect(mx, my, r_lor)) {
-            s->input_state = INPUT_GAMMA; SDL_StartTextInput();
-            snprintf(s->text_input_buf, 64, "%.2f", s->lorentz_gamma);
+        if (point_in_rect(mx, my, r_an)) {
+            s->broaden_mode = 0; s->input_state = INPUT_NONE;
         }
-        else if (point_in_rect(mx, my, r_gau)) {
-            s->input_state = INPUT_GAUSS; SDL_StartTextInput();
-            snprintf(s->text_input_buf, 64, "%.2f", s->gauss_gamma);
+        else if (point_in_rect(mx, my, r_ka)) {
+            s->broaden_mode = 1; s->input_state = INPUT_NONE;
+        }
+        else if (point_in_rect(mx, my, r_f1)) {
+            if (s->broaden_mode == 0) {
+                s->input_state = INPUT_GAMMA; SDL_StartTextInput();
+                snprintf(s->text_input_buf, 64, "%.2f", s->lorentz_gamma);
+            } else {
+                s->input_state = INPUT_KBETA; SDL_StartTextInput();
+                snprintf(s->text_input_buf, 64, "%.2f", s->kaiser_beta);
+            }
+        }
+        else if (point_in_rect(mx, my, r_f2)) {
+            if (s->broaden_mode == 0) {
+                s->input_state = INPUT_GAUSS; SDL_StartTextInput();
+                snprintf(s->text_input_buf, 64, "%.2f", s->gauss_gamma);
+            } else {
+                s->input_state = INPUT_KCEROS; SDL_StartTextInput();
+                snprintf(s->text_input_buf, 64, "%d", s->kaiser_ceros);
+            }
         }
         else if (point_in_rect(mx, my, r_tog)) {
             s->broadening_active = !s->broadening_active;
@@ -620,6 +638,8 @@ static void commit_text_input(AppState *s) {
 
     if (s->input_state == INPUT_GAMMA) s->lorentz_gamma = atof(s->text_input_buf);
     if (s->input_state == INPUT_GAUSS) s->gauss_gamma = atof(s->text_input_buf);
+    if (s->input_state == INPUT_KBETA) s->kaiser_beta = atof(s->text_input_buf);
+    if (s->input_state == INPUT_KCEROS) { int c = atoi(s->text_input_buf); s->kaiser_ceros = c > 0 ? c : 1; }
     else if (s->input_state == INPUT_PF_SIG) s->pf_sig_pts = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_PF_NOISE) s->pf_noise_pts = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_PF_THRESH) s->pf_thresh = atof(s->text_input_buf);

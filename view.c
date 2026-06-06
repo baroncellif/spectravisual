@@ -27,6 +27,82 @@ static double broaden_profile(double dist, double gl, double gg) {
     return eta * L + (1.0 - eta) * G;
 }
 
+// ============================================================================
+//  Kaiser-FFT line profile.
+//  Reproduces the lineshape produced by the experimental pipeline
+//  (multifft.py):  FID -> x kaiser(N, beta) -> zero-pad(x ceros) -> |FFT|.
+//
+//  Key fact: in units of the spectrum bin, the lineshape depends ONLY on
+//  (beta, ceros), not on N.  The "fundamental resolution" is
+//      dnu = ceros * df_bin   (MHz)            [boxcar first-null spacing]
+//  and the offset coordinate is  r = dist / dnu.
+//  The kernel R(r) is the (real, symmetric) DTFT of the Kaiser window,
+//  normalized to R(0)=1.  It is signed so that close lines interfere
+//  coherently (matching |FFT| of an in-phase FID).
+// ============================================================================
+#define KAISER_RMAX   28.0    // kernel support, in fundamental-resolution units
+#define KAISER_NK     5601    // table samples over [-RMAX, RMAX]  (dr = 0.01)
+#define KAISER_WINN   4096    // window length used to evaluate the DTFT shape
+
+static double  g_kk_table[KAISER_NK];
+static double  g_kk_beta  = -1.0;   // cached params; rebuild when changed
+static int     g_kk_built = 0;
+
+// Modified Bessel function I0(x) via power series (x stays small here).
+static double bessel_i0(double x) {
+    double sum = 1.0, term = 1.0, hx = 0.5 * x;
+    for (int k = 1; k < 40; k++) {
+        term *= (hx / k) * (hx / k);
+        sum  += term;
+        if (term < 1e-14 * sum) break;
+    }
+    return sum;
+}
+
+// Build the normalized signed kernel table for the given beta.
+static void kaiser_build_kernel(double beta) {
+    if (g_kk_built && beta == g_kk_beta) return;
+    int M = KAISER_WINN;
+    double i0b = bessel_i0(beta);
+    static double w[KAISER_WINN];
+    double wsum = 0.0;
+    for (int n = 0; n < M; n++) {
+        double t = (2.0 * n - (M - 1)) / (double)(M - 1);     // -1..+1
+        w[n] = bessel_i0(beta * sqrt(1.0 - t * t)) / i0b;     // kaiser(M, beta)
+        wsum += w[n];
+    }
+    double cen = 0.5 * (M - 1);
+    for (int i = 0; i < KAISER_NK; i++) {
+        double r = -KAISER_RMAX + (2.0 * KAISER_RMAX) * i / (double)(KAISER_NK - 1);
+        // R(r) = sum_n w[n] cos(2*pi*r*(n-cen)/M) / wsum
+        double acc = 0.0;
+        double ang0 = 2.0 * M_PI * r / (double)M;
+        for (int n = 0; n < M; n++) acc += w[n] * cos(ang0 * (n - cen));
+        g_kk_table[i] = acc / wsum;
+    }
+    g_kk_beta = beta;
+    g_kk_built = 1;
+}
+
+// Evaluate the cached kernel at resolution-coordinate r (linear interp).
+static double kaiser_kernel(double r) {
+    double a = fabs(r);
+    if (a >= KAISER_RMAX) return 0.0;
+    double fidx = (r + KAISER_RMAX) / (2.0 * KAISER_RMAX) * (KAISER_NK - 1);
+    int i = (int)fidx;
+    if (i < 0) i = 0;
+    if (i >= KAISER_NK - 1) return g_kk_table[KAISER_NK - 1];
+    double frac = fidx - i;
+    return g_kk_table[i] * (1.0 - frac) + g_kk_table[i + 1] * frac;
+}
+
+// Spectrum frequency-bin step (MHz), read straight from the loaded trace.
+static double spectrum_df(const AppState *s) {
+    if (s->n_pts < 2) return 0.0;
+    double d = s->current_pts[1].x - s->current_pts[0].x;
+    return (d > 0.0) ? d : 0.0;
+}
+
 // --- INTERNAL CONSTANTS & PALETTE ---
 static const SDL_Color COL_BG           = {15, 17, 20, 255};
 static const SDL_Color COL_PANEL        = {22, 25, 29, 255};
@@ -330,37 +406,58 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             }
         }
 
-        // Broadening Simulation (Lorentz / Gauss / pseudo-Voigt)
-        double bw = fmax(state->lorentz_gamma, state->gauss_gamma);
-        if(state->broadening_active && bw > 0.0) {
+        // Broadening Simulation: mode 0 = analytic (L/G/V), mode 1 = Kaiser-FFT
+        int   kmode = (state->broaden_mode == 1);
+        double bw   = fmax(state->lorentz_gamma, state->gauss_gamma);
+        double dnu  = 0.0, cutoff = 0.0;
+        int draw_broad = 0;
+        if (state->broadening_active) {
+            if (kmode) {
+                double df = spectrum_df(state);
+                int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
+                dnu = cer * df;                       // fundamental resolution (MHz)
+                if (dnu > 0.0) {
+                    kaiser_build_kernel(state->kaiser_beta);
+                    cutoff = KAISER_RMAX * dnu;
+                    draw_broad = 1;
+                }
+            } else if (bw > 0.0) {
+                cutoff = 50.0 * bw;
+                draw_broad = 1;
+            }
+        }
+        if(draw_broad) {
             SDL_SetRenderDrawColor(ren, 0, 255, 255, 150); // Cyan transparent
             int steps = l->pred_w;
             double prev_y = -1;
-            double cutoff = 50.0 * bw;
 
             // Optimization: Only calc lines near visible window + cutoff
             int p_calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - cutoff);
             int p_calc_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax + cutoff);
-            if(p_calc_start < 0) p_calc_start=0; 
+            if(p_calc_start < 0) p_calc_start=0;
             if(p_calc_end >= state->n_pred) p_calc_end=state->n_pred-1;
 
             for(int i=0; i<steps; i++) {
                 double f = state->pvxmin + (double)i/l->pred_w * (state->pvxmax - state->pvxmin);
                 double raw_f = f;   // predictions are drawn at their true frequency now
-                double intensity_sum = 0;
-                
+                double intensity_sum = 0;  // analytic: incoherent; kaiser: coherent (signed)
+
                 for(int k=p_calc_start; k<=p_calc_end; k++) {
                     double dist = raw_f - state->pred_lines[k].freq_mhz;
                     if(fabs(dist) > cutoff) continue;
                     if (!pred_passes_filter(state, k)) continue;
-                    double V = broaden_profile(dist, state->lorentz_gamma, state->gauss_gamma);
-                    intensity_sum += state->pred_lines[k].linear_int * V;
+                    if (kmode)
+                        intensity_sum += state->pred_lines[k].linear_int * kaiser_kernel(dist / dnu);
+                    else
+                        intensity_sum += state->pred_lines[k].linear_int
+                                         * broaden_profile(dist, state->lorentz_gamma, state->gauss_gamma);
                 }
-                
-                double h_ratio = (intensity_sum / state->pred_global_max) * state->pred_scale; 
+                if (kmode) intensity_sum = fabs(intensity_sum); // |FFT| of in-phase FID
+
+                double h_ratio = (intensity_sum / state->pred_global_max) * state->pred_scale;
                 int py = l->pred_y + l->pred_h - (int)(h_ratio * (l->pred_h - 10));
                 if(py < l->pred_y) py = l->pred_y; // Clip top
-                
+
                 if(prev_y != -1) SDL_RenderDrawLine(ren, l->pred_x + i - 1, (int)prev_y, l->pred_x + i, py);
                 prev_y = py;
             }
@@ -637,39 +734,83 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         int wx = state->win_br.rect.x, wy = state->win_br.rect.y;
         char buf[64];
 
-        // --- Lorentzian HWHM field ---
-        draw_text(ren, font, "Lorentz (MHz):", wx+20, wy+57, COL_TXT_DIM);
-        SDL_Rect r_lor = {wx+155, wy+52, 75, 28};
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-        SDL_RenderFillRect(ren, &r_lor);
-        SDL_Color bl = (state->input_state == INPUT_GAMMA) ? COL_ACCENT : COL_INPUT_BORDER;
-        SDL_SetRenderDrawColor(ren, bl.r, bl.g, bl.b, 255);
-        SDL_RenderDrawRect(ren, &r_lor);
-        if (state->input_state == INPUT_GAMMA) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-        else snprintf(buf, sizeof(buf), "%.2f", state->lorentz_gamma);
-        draw_text(ren, font, buf, r_lor.x + 5, r_lor.y + 5, COL_TXT);
+        // --- Mode selector: Analytic (L/G/V) vs Kaiser-FFT lineshape ---
+        Button btn_an = {{wx+15,  wy+40, 125, 26}, "Analytic",   {30,34,48,255}, 0};
+        Button btn_ka = {{wx+150, wy+40, 125, 26}, "Kaiser FFT", {30,34,48,255}, 0};
+        draw_button(ren, font, &btn_an, mx, my, m_down, state->broaden_mode == 0);
+        draw_button(ren, font, &btn_ka, mx, my, m_down, state->broaden_mode == 1);
 
-        // --- Gaussian HWHM field ---
-        draw_text(ren, font, "Gauss (MHz):", wx+20, wy+97, COL_TXT_DIM);
-        SDL_Rect r_gau = {wx+155, wy+92, 75, 28};
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-        SDL_RenderFillRect(ren, &r_gau);
-        SDL_Color bg = (state->input_state == INPUT_GAUSS) ? COL_ACCENT : COL_INPUT_BORDER;
-        SDL_SetRenderDrawColor(ren, bg.r, bg.g, bg.b, 255);
-        SDL_RenderDrawRect(ren, &r_gau);
-        if (state->input_state == INPUT_GAUSS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-        else snprintf(buf, sizeof(buf), "%.2f", state->gauss_gamma);
-        draw_text(ren, font, buf, r_gau.x + 5, r_gau.y + 5, COL_TXT);
+        if (state->broaden_mode == 0) {
+            // --- Lorentzian HWHM field ---
+            draw_text(ren, font, "Lorentz (MHz):", wx+20, wy+87, COL_TXT_DIM);
+            SDL_Rect r_lor = {wx+155, wy+82, 75, 28};
+            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+            SDL_RenderFillRect(ren, &r_lor);
+            SDL_Color bl = (state->input_state == INPUT_GAMMA) ? COL_ACCENT : COL_INPUT_BORDER;
+            SDL_SetRenderDrawColor(ren, bl.r, bl.g, bl.b, 255);
+            SDL_RenderDrawRect(ren, &r_lor);
+            if (state->input_state == INPUT_GAMMA) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+            else snprintf(buf, sizeof(buf), "%.2f", state->lorentz_gamma);
+            draw_text(ren, font, buf, r_lor.x + 5, r_lor.y + 5, COL_TXT);
 
-        // --- Resulting shape indicator (derived from which widths are set) ---
-        const char *shape;
-        if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Shape: Voigt (L+G)";
-        else if (state->lorentz_gamma > 0.0)                        shape = "Shape: Lorentzian";
-        else if (state->gauss_gamma  > 0.0)                         shape = "Shape: Gaussian";
-        else                                                        shape = "Shape: -- (set a width)";
-        draw_text(ren, font, shape, wx+20, wy+132, COL_ACCENT);
+            // --- Gaussian HWHM field ---
+            draw_text(ren, font, "Gauss (MHz):", wx+20, wy+127, COL_TXT_DIM);
+            SDL_Rect r_gau = {wx+155, wy+122, 75, 28};
+            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+            SDL_RenderFillRect(ren, &r_gau);
+            SDL_Color bg = (state->input_state == INPUT_GAUSS) ? COL_ACCENT : COL_INPUT_BORDER;
+            SDL_SetRenderDrawColor(ren, bg.r, bg.g, bg.b, 255);
+            SDL_RenderDrawRect(ren, &r_gau);
+            if (state->input_state == INPUT_GAUSS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+            else snprintf(buf, sizeof(buf), "%.2f", state->gauss_gamma);
+            draw_text(ren, font, buf, r_gau.x + 5, r_gau.y + 5, COL_TXT);
 
-        Button btn_br_tog = {{wx+50, wy+170, 200, 30}, "", {60, 60, 70, 255}, 1};
+            // --- Resulting shape indicator (derived from which widths are set) ---
+            const char *shape;
+            if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Shape: Voigt (L+G)";
+            else if (state->lorentz_gamma > 0.0)                        shape = "Shape: Lorentzian";
+            else if (state->gauss_gamma  > 0.0)                         shape = "Shape: Gaussian";
+            else                                                        shape = "Shape: -- (set a width)";
+            draw_text(ren, font, shape, wx+20, wy+165, COL_ACCENT);
+        } else {
+            // --- Kaiser beta field ---
+            draw_text(ren, font, "Kaiser beta:", wx+20, wy+87, COL_TXT_DIM);
+            SDL_Rect r_beta = {wx+155, wy+82, 75, 28};
+            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+            SDL_RenderFillRect(ren, &r_beta);
+            SDL_Color bb = (state->input_state == INPUT_KBETA) ? COL_ACCENT : COL_INPUT_BORDER;
+            SDL_SetRenderDrawColor(ren, bb.r, bb.g, bb.b, 255);
+            SDL_RenderDrawRect(ren, &r_beta);
+            if (state->input_state == INPUT_KBETA) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+            else snprintf(buf, sizeof(buf), "%.2f", state->kaiser_beta);
+            draw_text(ren, font, buf, r_beta.x + 5, r_beta.y + 5, COL_TXT);
+
+            // --- ceros (zero-pad factor) field ---
+            draw_text(ren, font, "ceros:", wx+20, wy+127, COL_TXT_DIM);
+            SDL_Rect r_cer = {wx+155, wy+122, 75, 28};
+            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
+            SDL_RenderFillRect(ren, &r_cer);
+            SDL_Color bc = (state->input_state == INPUT_KCEROS) ? COL_ACCENT : COL_INPUT_BORDER;
+            SDL_SetRenderDrawColor(ren, bc.r, bc.g, bc.b, 255);
+            SDL_RenderDrawRect(ren, &r_cer);
+            if (state->input_state == INPUT_KCEROS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
+            else snprintf(buf, sizeof(buf), "%d", state->kaiser_ceros);
+            draw_text(ren, font, buf, r_cer.x + 5, r_cer.y + 5, COL_TXT);
+
+            // --- Derived resolution readout (from spectrum bin) ---
+            double df = spectrum_df(state);
+            int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
+            if (df > 0.0) {
+                snprintf(buf, sizeof(buf), "bin df = %.5g MHz", df);
+                draw_text(ren, font, buf, wx+20, wy+162, COL_TXT_DIM);
+                snprintf(buf, sizeof(buf), "res = ceros*df = %.4g MHz", cer * df);
+                draw_text(ren, font, buf, wx+20, wy+182, COL_ACCENT);
+            } else {
+                draw_text(ren, font, "load a spectrum for the bin step", wx+20, wy+170, COL_TXT_DIM);
+            }
+        }
+
+        Button btn_br_tog = {{wx+50, wy+255, 200, 30}, "", {60, 60, 70, 255}, 1};
         snprintf(btn_br_tog.label, 32, state->broadening_active ? "ENABLED" : "DISABLED");
         draw_button(ren, font, &btn_br_tog, mx, my, m_down, state->broadening_active);
     }
