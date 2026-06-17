@@ -344,14 +344,18 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             SDL_Rect box = {l->exp_x, ay, l->exp_w, ah};
             SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, 110);
             SDL_RenderDrawRect(ren, &box);
-            SDL_RenderDrawLine(ren, l->exp_x - 4, ay, l->exp_x, ay);
-            SDL_RenderDrawLine(ren, l->exp_x - 4, ay + ah, l->exp_x, ay + ah);
 
-            char vt[24], v0[24];
-            snprintf(vt, sizeof(vt), "%.3g", top_val);
-            snprintf(v0, sizeof(v0), "%.3g", sp->ymin);
-            draw_text(ren, font, vt, l->exp_x - 56, ay - 2, COL_TXT_DIM);
-            draw_text(ren, font, v0, l->exp_x - 56, ay + ah - 14, COL_TXT_DIM);
+            // Exactly 3 Y ticks (max / mid / min), drawn INSIDE the band so the
+            // labels of adjacent subplots never overlap.
+            double mid_val = 0.5 * (top_val + sp->ymin);
+            double tick_val[3] = { top_val, mid_val, sp->ymin };
+            int    tick_y[3]   = { ay + 7, ay + ah/2, ay + ah - 7 };
+            for (int t = 0; t < 3; t++) {
+                SDL_RenderDrawLine(ren, l->exp_x - 4, tick_y[t], l->exp_x, tick_y[t]);
+                char vb[24];
+                snprintf(vb, sizeof(vb), "%.3g", tick_val[t]);
+                draw_text(ren, font, vb, l->exp_x - 56, tick_y[t] - 6, COL_TXT_DIM);
+            }
             draw_text(ren, font, sp->name, l->exp_x + 8, ay + 3,
                       (s == state->active_spec) ? sp->color : COL_TXT_DIM);
             vj++;
@@ -385,8 +389,9 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     }
     
     // --- Y-Axis Ticks & Labels (NEW) ---
+    // In stack mode each subplot draws its own Y axis above, so skip the global one.
     double yrange = state->vymax - state->vymin;
-    if(yrange > 0) {
+    if(yrange > 0 && !state->multi_layout) {
         double ystep = tick_step_for_pixels(yrange, l->exp_h, 34);
         double ystart = ceil(state->vymin/ystep)*ystep;
 
