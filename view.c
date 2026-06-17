@@ -175,10 +175,11 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 
     draw_top_chrome(ren, font, state, l);
 
-    // 2. Draw Graphs / Start Screen
+    // 2. Draw Graphs / Start Screen. Only draw a pane if it has data, so an
+    // empty spectrum/prediction window isn't shown when only one was loaded.
     if (state->data_loaded) {
-        draw_spectrum_view(ren, font, state, l);
-        draw_prediction_view(ren, font, state, l);
+        if (state->n_spectra > 0) draw_spectrum_view(ren, font, state, l);
+        if (state->n_pred > 0)    draw_prediction_view(ren, font, state, l);
     } else {
         draw_onboarding(ren, font, state, l);
     }

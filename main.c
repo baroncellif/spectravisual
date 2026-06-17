@@ -324,18 +324,35 @@ int main(int argc, char *argv[])
         
         int usable_h = h - 160;
         if (usable_h < 220) usable_h = 220;
-        layout.exp_h = usable_h * 0.6;
-        layout.pred_h = usable_h * 0.4 - layout.gap;
-        if (layout.pred_h < 70) layout.pred_h = 70;
 
-        layout.exp_x = layout.plot_x; layout.exp_y = 96;
+        // Give the whole plot area to whichever pane is present: if there are no
+        // predictions (or no spectra), don't reserve an empty window for it.
+        int has_exp  = (state.n_spectra > 0);
+        int has_pred = (state.n_pred > 0);
+        if (has_exp && has_pred) {
+            layout.exp_h = usable_h * 0.6;
+            layout.pred_h = usable_h * 0.4 - layout.gap;
+            if (layout.pred_h < 70) layout.pred_h = 70;
+        } else if (has_pred && !has_exp) {
+            layout.exp_h = 0;
+            layout.pred_h = usable_h;
+        } else {   // only spectra, or nothing yet
+            layout.exp_h = usable_h;
+            layout.pred_h = 0;
+        }
+
+        layout.exp_x = layout.plot_x;
+        layout.exp_y = 96;
 
         // Dock/animate the tool sidebars and shrink the plot to fit beside them.
         update_sidebars(&state, &layout);
         layout.exp_w = layout.plot_right - layout.exp_x;
         if (layout.exp_w < 240) layout.exp_w = 240;
 
-        layout.pred_x = layout.plot_x; layout.pred_y = layout.exp_y + layout.exp_h + layout.gap;
+        layout.pred_x = layout.plot_x;
+        // Prediction pane: stacked below the spectrum when both exist, otherwise
+        // it takes the top (full) area.
+        layout.pred_y = has_exp ? (layout.exp_y + layout.exp_h + layout.gap) : layout.exp_y;
         layout.pred_w = layout.exp_w;
 
         handle_app_events(&state, &layout, &running);
