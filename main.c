@@ -73,35 +73,58 @@ static int load_dataset(AppState *state, const char *exp_path, const char *pred_
     Point *smooth = NULL;
     PredLine *pred = NULL;
     double *lin = NULL;
-    double xmin, xmax, ymin, ymax;
-    double pxmin, pxmax, pred_global_max;
+    double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
+    double pxmin = 0, pxmax = 0, pred_global_max = 0;
+    int n_pts = 0, n_pred = 0;
 
-    int n_pred = read_pred_cat_alloc(pred_path, &pred, &pxmin, &pxmax, &pred_global_max);
-    if (n_pred <= 0 || !pred) {
-        snprintf(state->error_message, sizeof(state->error_message),
-                 "Could not load predictions: %s", pred_path);
+    int want_exp  = (exp_path  && exp_path[0]);
+    int want_pred = (pred_path && pred_path[0]);
+    if (!want_exp && !want_pred) {
+        snprintf(state->error_message, sizeof(state->error_message), "No file to load.");
         return 0;
     }
 
-    int n_pts = read_data_alloc(exp_path, &raw, &xmin, &xmax, &ymin, &ymax);
-    if (n_pts <= 0 || !raw) {
-        snprintf(state->error_message, sizeof(state->error_message),
-                 "Could not load spectrum: %s", exp_path);
-        free(pred);
-        return 0;
+    if (want_pred) {
+        n_pred = read_pred_cat_alloc(pred_path, &pred, &pxmin, &pxmax, &pred_global_max);
+        if (n_pred <= 0 || !pred) {
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load predictions: %s", pred_path);
+            return 0;
+        }
     }
 
-    smooth = malloc(sizeof(Point) * n_pts);
+    if (want_exp) {
+        n_pts = read_data_alloc(exp_path, &raw, &xmin, &xmax, &ymin, &ymax);
+        if (n_pts <= 0 || !raw) {
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load spectrum: %s", exp_path);
+            free(pred);
+            return 0;
+        }
+        smooth = malloc(sizeof(Point) * n_pts);
+        if (!smooth) {
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Not enough memory for loaded dataset.");
+            free(raw);
+            free(pred);
+            return 0;
+        }
+    }
+
     lin = malloc(sizeof(double) * MAX_LIN_POINTS);
-    if (!smooth || !lin) {
+    if (!lin) {
         snprintf(state->error_message, sizeof(state->error_message),
                  "Not enough memory for loaded dataset.");
         free(raw);
         free(smooth);
         free(pred);
-        free(lin);
         return 0;
     }
+
+    // With only one source present, derive the missing axis range from the
+    // available data so the view still spans something sensible.
+    if (!want_exp)  { xmin = pxmin; xmax = pxmax; ymin = 0.0; ymax = 1.0; }
+    if (!want_pred) { pxmin = xmin; pxmax = xmax; }
 
     free_dataset(state);
     state->raw_pts = raw;
@@ -124,8 +147,8 @@ static int load_dataset(AppState *state, const char *exp_path, const char *pred_
     state->error_message[0] = '\0';
     snprintf(state->status_message, sizeof(state->status_message),
              "Loaded %d spectrum points and %d predicted lines.", n_pts, n_pred);
-    snprintf(state->exp_path, sizeof(state->exp_path), "%s", exp_path);
-    snprintf(state->pred_path, sizeof(state->pred_path), "%s", pred_path);
+    snprintf(state->exp_path, sizeof(state->exp_path), "%s", want_exp ? exp_path : "");
+    snprintf(state->pred_path, sizeof(state->pred_path), "%s", want_pred ? pred_path : "");
 
     load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
 
@@ -174,13 +197,18 @@ int main(int argc, char *argv[])
         freopen("/dev/null", "w", stdout);
     }
 
+    // Accept any mix of a spectrum file and/or a .cat prediction file, in any
+    // order. Files are classified by their .cat extension.
     const char *exp_arg = NULL;
     const char *pred_arg = NULL;
-    if (argc - argi == 2) {
-        exp_arg = argv[argi];
-        pred_arg = argv[argi + 1];
+    if (argc - argi >= 1 && argc - argi <= 2) {
+        for (int k = argi; k < argc; k++) {
+            int len = (int)strlen(argv[k]);
+            if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
+            else exp_arg = argv[k];
+        }
     } else if (argc - argi != 0) {
-        fprintf(stderr, "Usage: %s [--verbose] [spectrum.txt pred.cat]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--verbose] [spectrum.txt] [pred.cat]\n", argv[0]);
         return 1;
     }
 
@@ -199,7 +227,7 @@ int main(int argc, char *argv[])
     }
     if(!font) { fprintf(stderr, "No font found.\n"); return 1; }
 
-    if (exp_arg && pred_arg) {
+    if (exp_arg || pred_arg) {
         load_dataset(&state, exp_arg, pred_arg);
     }
     
@@ -231,7 +259,7 @@ int main(int argc, char *argv[])
         handle_app_events(&state, &layout, &running);
         if(state.pending_load) {
             state.pending_load = 0;
-            if (state.exp_path[0] && state.pred_path[0]) {
+            if (state.exp_path[0] || state.pred_path[0]) {
                 load_dataset(&state, state.exp_path, state.pred_path);
             }
         }

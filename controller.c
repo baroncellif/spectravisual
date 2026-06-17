@@ -62,9 +62,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
                 char *path = e.drop.file;
                 if (path_looks_like_cat(path)) snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
                 else snprintf(state->exp_path, sizeof(state->exp_path), "%s", path);
-                if (state->exp_path[0] && state->pred_path[0]) state->pending_load = 1;
-                else snprintf(state->status_message, sizeof(state->status_message),
-                              "Drop both a spectrum file and a .cat file.");
+                state->pending_load = 1;
                 SDL_free(path);
                 break;
             }
