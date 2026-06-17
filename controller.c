@@ -812,7 +812,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
             //    gain (vscale), so fit the GAIN of each visible spectrum to its
             //    windowed max (top of band = windowed max).
             //  - overlay-shared: fit the common vymin/vymax to all visible traces.
-            if (s->multi_layout || s->multi_ynorm) {
+            if (s->multi_ynorm) {
                 for (int k = 0; k < s->n_spectra; k++) {
                     Spectrum *S = &s->spectra[k];
                     if (!S->visible || S->n_pts < 1) continue;
@@ -901,18 +901,18 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
         }
 
         // Vertical Control / Pred Scale.
-        // In per-spectrum-scaled modes (stack, or overlay normalized) W/Z change
-        // the intensity GAIN: all visible spectra together by default, or only
-        // the active one when "individual intensity" is enabled in the panel.
-        // In overlay/shared they zoom the common vymax.
+        // Intensity depends only on shared/norm:
+        //  - norm   : change the per-spectrum GAIN (all together, or only the
+        //             active one when "individual intensity" is enabled).
+        //  - shared : zoom the common vymax (works in overlay and stacked).
         case SDLK_w:
             if(is_shift) s->pred_scale *= 1.1;
-            else if(s->multi_layout || s->multi_ynorm) scale_intensity(s, 1.1);
+            else if(s->multi_ynorm) scale_intensity(s, 1.1);
             else s->vymax -= pan_y;
             break;
         case SDLK_z:
             if(is_shift) s->pred_scale *= 0.9;
-            else if(s->multi_layout || s->multi_ynorm) scale_intensity(s, 0.9);
+            else if(s->multi_ynorm) scale_intensity(s, 0.9);
             else s->vymax += pan_y;
             break;
         case SDLK_UP:

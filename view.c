@@ -233,20 +233,16 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (area_h < 10) area_h = 10;
         // Vertical offset only makes sense in overlay; stack is true subplots.
         double voff_px = state->multi_layout ? 0.0 : sp->voffset * area_h;
-        // Per-spectrum gain applies only where the Y axis is per-spectrum
-        // (stack or overlay-normalized). In overlay-shared the common vymin/vymax
-        // controls intensity, so gain must be neutral (1) regardless of vscale.
-        int per_spec_y = (state->multi_layout || state->multi_ynorm);
+        // Y scale depends ONLY on shared/norm (overlay vs stack only changes the
+        // layout, not the scaling):
+        //   - norm   : each trace normalized to its own ymin/ymax (per-spectrum gain)
+        //   - shared : common zoomable vymin/vymax range for everyone
+        int per_spec_y = state->multi_ynorm;
         double gain = (per_spec_y && sp->vscale > 0.0) ? sp->vscale : 1.0;
 
-        // Reference Y range the trace is mapped against.
-        //  - stack: each spectrum gets its OWN Y axis (own ymin/ymax)
-        //  - overlay normalized: each trace scaled to its own ymin/ymax
-        //  - overlay shared: common zoomable vymin/vymax (fits all visible traces)
         double ymn, ymx;
-        if (state->multi_layout)       { ymn = sp->ymin; ymx = sp->ymax; }
-        else if (state->multi_ynorm)   { ymn = sp->ymin; ymx = sp->ymax; }
-        else                           { ymn = state->vymin; ymx = state->vymax; }
+        if (per_spec_y) { ymn = sp->ymin;     ymx = sp->ymax;     }
+        else            { ymn = state->vymin; ymx = state->vymax; }
         if (ymx <= ymn) ymx = ymn + 1.0;
 
         SDL_SetRenderDrawColor(ren, sp->color.r, sp->color.g, sp->color.b, sp->color.a);
@@ -342,8 +338,17 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             if (!sp->visible || sp->n_pts < 2) continue;
             int ay = l->exp_y + vj * band_h;
             int ah = band_h - STACK_GAP; if (ah < 10) ah = 10;
-            double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
-            double top_val = sp->ymin + (sp->ymax - sp->ymin) / gain;
+            // Range shown on this subplot's axis: norm = its own (gain-scaled),
+            // shared = the common vymin/vymax (same for every subplot).
+            double bmin, btop;
+            if (state->multi_ynorm) {
+                double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
+                bmin = sp->ymin;
+                btop = sp->ymin + (sp->ymax - sp->ymin) / gain;
+            } else {
+                bmin = state->vymin;
+                btop = state->vymax;
+            }
 
             SDL_Rect box = {l->exp_x, ay, l->exp_w, ah};
             SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, 110);
@@ -351,8 +356,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
             // Exactly 3 Y ticks (max / mid / min), drawn INSIDE the band so the
             // labels of adjacent subplots never overlap.
-            double mid_val = 0.5 * (top_val + sp->ymin);
-            double tick_val[3] = { top_val, mid_val, sp->ymin };
+            double mid_val = 0.5 * (btop + bmin);
+            double tick_val[3] = { btop, mid_val, bmin };
             int    tick_y[3]   = { ay + 7, ay + ah/2, ay + ah - 7 };
             for (int t = 0; t < 3; t++) {
                 SDL_RenderDrawLine(ren, l->exp_x - 4, tick_y[t], l->exp_x, tick_y[t]);
@@ -1246,7 +1251,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         else {
             int ty = wy + 128 + state->n_spectra*30;
             draw_text(ren, font, "- / + : shift a trace vertically", wx+18, ty, COL_TXT_DIM);
-            draw_text(ren, font, "W / Z : intensity (stack & Y:Norm)", wx+18, ty+16, COL_TXT_DIM);
+            draw_text(ren, font, "W / Z : intensity (Y:Norm gain / shared zoom)", wx+18, ty+16, COL_TXT_DIM);
         }
     }
 
