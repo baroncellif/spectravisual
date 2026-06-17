@@ -252,6 +252,11 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (start_idx < 1) start_idx = 1;
         if (end_idx >= sp->n_pts) end_idx = sp->n_pts - 1;
 
+        // In stack mode confine the trace to its own subplot band, so a peak that
+        // exceeds the band is clipped instead of overflowing into the one above.
+        if (state->multi_layout)
+            SDL_RenderSetClipRect(ren, &(SDL_Rect){l->exp_x, area_y, l->exp_w, area_h});
+
         for (int i = start_idx; i <= end_idx; i++) {
             double x1_val = sp->current_pts[i-1].x + sp->exp_offset;
             double x2_val = sp->current_pts[i].x   + sp->exp_offset;
@@ -263,6 +268,9 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             int py2 = area_y + (1.0 - f2) * area_h - voff_px;
             SDL_RenderDrawLine(ren, px1, py1, px2, py2);
         }
+
+        if (state->multi_layout)
+            SDL_RenderSetClipRect(ren, &clip);   // restore full-panel clip
 
         vi++;
     }
