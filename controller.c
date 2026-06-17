@@ -807,23 +807,39 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     switch(sym) {
         // Y-Axis Auto Scale
         case SDLK_TAB: {
-            // Y auto-scale (only affects overlay/shared, where vymin/vymax are used).
-            // Fit the common axis to ALL visible spectra in the current window, so
-            // it isn't clamped to just the first/active trace. Each spectrum is
-            // displayed shifted by its exp_offset.
-            double miny=1e99, maxy=-1e99;
-            for (int k = 0; k < s->n_spectra; k++) {
-                Spectrum *S = &s->spectra[k];
-                if (!S->visible || S->n_pts < 1) continue;
-                int istart = binary_search_lower(S->current_pts, S->n_pts, s->vxmin - S->exp_offset);
-                int iend   = binary_search_upper(S->current_pts, S->n_pts, s->vxmax - S->exp_offset);
-                if(istart < 0) istart = 0; if(iend >= S->n_pts) iend = S->n_pts - 1;
-                for(int i=istart; i<=iend; i++) {
-                    if(S->current_pts[i].y < miny) miny = S->current_pts[i].y;
-                    if(S->current_pts[i].y > maxy) maxy = S->current_pts[i].y;
+            // Y auto-scale, mode-aware:
+            //  - stack OR overlay-normalized: each subplot uses its own per-spectrum
+            //    gain (vscale), so fit the GAIN of each visible spectrum to its
+            //    windowed max (top of band = windowed max).
+            //  - overlay-shared: fit the common vymin/vymax to all visible traces.
+            if (s->multi_layout || s->multi_ynorm) {
+                for (int k = 0; k < s->n_spectra; k++) {
+                    Spectrum *S = &s->spectra[k];
+                    if (!S->visible || S->n_pts < 1) continue;
+                    int istart = binary_search_lower(S->current_pts, S->n_pts, s->vxmin - S->exp_offset);
+                    int iend   = binary_search_upper(S->current_pts, S->n_pts, s->vxmax - S->exp_offset);
+                    if(istart < 0) istart = 0; if(iend >= S->n_pts) iend = S->n_pts - 1;
+                    double wmax = -1e99;
+                    for(int i=istart; i<=iend; i++)
+                        if(S->current_pts[i].y > wmax) wmax = S->current_pts[i].y;
+                    double denom = wmax - S->ymin;
+                    if (denom > 0) S->vscale = (S->ymax - S->ymin) / denom;
                 }
+            } else {
+                double miny=1e99, maxy=-1e99;
+                for (int k = 0; k < s->n_spectra; k++) {
+                    Spectrum *S = &s->spectra[k];
+                    if (!S->visible || S->n_pts < 1) continue;
+                    int istart = binary_search_lower(S->current_pts, S->n_pts, s->vxmin - S->exp_offset);
+                    int iend   = binary_search_upper(S->current_pts, S->n_pts, s->vxmax - S->exp_offset);
+                    if(istart < 0) istart = 0; if(iend >= S->n_pts) iend = S->n_pts - 1;
+                    for(int i=istart; i<=iend; i++) {
+                        if(S->current_pts[i].y < miny) miny = S->current_pts[i].y;
+                        if(S->current_pts[i].y > maxy) maxy = S->current_pts[i].y;
+                    }
+                }
+                if(miny < maxy) { s->vymin = miny; s->vymax = maxy; }
             }
-            if(miny < maxy) { s->vymin = miny; s->vymax = maxy; }
             break;
         }
 
