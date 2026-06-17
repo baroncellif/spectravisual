@@ -46,19 +46,96 @@ static void init_app_defaults(AppState *state) {
     state->win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
     state->win_jump = (DraggableWindow){{400, 300, 250, 140}, 0, "FREQ JUMP"};
     state->win_filt = (DraggableWindow){{300, 120, 260, 402}, 0, "FILTER"};
+    state->win_spec = (DraggableWindow){{120, 120, 300, 360}, 0, "SPECTRA"};
+
+    state->n_spectra = 0;
+    state->active_spec = -1;
+    state->multi_layout = 0;   // overlay
+    state->multi_ynorm = 0;    // shared Y
+    state->pending_select = -1;
+    state->pending_remove = -1;
+}
+
+// Distinct colors auto-assigned to spectra as they are loaded.
+static const SDL_Color SPEC_PALETTE[MAX_SPECTRA] = {
+    {205, 214, 225, 235},  // light grey-blue (matches the original single-trace)
+    { 90, 200, 250, 235},  // cyan
+    {255, 170,  80, 235},  // orange
+    {130, 220, 130, 235},  // green
+    {235, 130, 200, 235},  // pink
+    {245, 220,  90, 235},  // yellow
+    {170, 150, 245, 235},  // violet
+    {240, 110, 110, 235},  // red
+};
+
+// Copy the active spectrum's fields into the legacy AppState fields the tools read.
+static void mirror_active(AppState *state) {
+    if (state->active_spec < 0 || state->active_spec >= state->n_spectra) {
+        state->raw_pts = NULL; state->smooth_pts = NULL; state->current_pts = NULL;
+        state->n_pts = 0; state->exp_offset = 0.0; state->rolling_avg_active = 0;
+        state->exp_path[0] = '\0';
+        return;
+    }
+    Spectrum *sp = &state->spectra[state->active_spec];
+    state->raw_pts = sp->raw_pts;
+    state->smooth_pts = sp->smooth_pts;
+    state->current_pts = sp->current_pts;
+    state->n_pts = sp->n_pts;
+    state->xmin = sp->xmin; state->xmax = sp->xmax;
+    state->ymin = sp->ymin; state->ymax = sp->ymax;
+    state->exp_offset = sp->exp_offset;
+    state->rolling_avg_active = sp->rolling_avg_active;
+    snprintf(state->exp_path, sizeof(state->exp_path), "%s", sp->path);
+}
+
+// Write back the mutable mirror fields into the active spectrum.
+static void commit_active(AppState *state) {
+    if (state->active_spec < 0 || state->active_spec >= state->n_spectra) return;
+    Spectrum *sp = &state->spectra[state->active_spec];
+    sp->current_pts = state->current_pts;
+    sp->exp_offset = state->exp_offset;
+    sp->rolling_avg_active = state->rolling_avg_active;
+}
+
+static void select_spectrum(AppState *state, int idx) {
+    if (idx < 0 || idx >= state->n_spectra) return;
+    commit_active(state);
+    state->active_spec = idx;
+    state->n_peaks = 0;        // peaks/selection belong to a single spectrum
+    state->n_selected = 0;
+    mirror_active(state);
+}
+
+static void ensure_aux_loaded(AppState *state) {
+    if (state->lin_data) return;
+    state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
+    if (!state->lin_data) return;
+    load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
+    char f[512];
+    if (find_assigned_frequency_file(f, sizeof(f)))
+        state->n_lin_data = read_assigned_frequencies(f, state->lin_data, MAX_LIN_POINTS);
+}
+
+static void spec_basename(const char *path, char *out, int n) {
+    const char *b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    snprintf(out, n, "%s", b);
 }
 
 static void free_dataset(AppState *state) {
-    free(state->raw_pts);
-    free(state->smooth_pts);
+    for (int i = 0; i < state->n_spectra; i++) {
+        free(state->spectra[i].raw_pts);
+        free(state->spectra[i].smooth_pts);
+    }
+    state->n_spectra = 0;
+    state->active_spec = -1;
     free(state->pred_lines);
     free(state->lin_data);
-
+    state->pred_lines = NULL;
+    state->lin_data = NULL;
     state->raw_pts = NULL;
     state->smooth_pts = NULL;
     state->current_pts = NULL;
-    state->pred_lines = NULL;
-    state->lin_data = NULL;
     state->n_pts = 0;
     state->n_pred = 0;
     state->n_lin_data = 0;
@@ -68,100 +145,109 @@ static void free_dataset(AppState *state) {
     state->data_loaded = 0;
 }
 
-static int load_dataset(AppState *state, const char *exp_path, const char *pred_path) {
-    Point *raw = NULL;
-    Point *smooth = NULL;
-    PredLine *pred = NULL;
-    double *lin = NULL;
-    double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
-    double pxmin = 0, pxmax = 0, pred_global_max = 0;
-    int n_pts = 0, n_pred = 0;
-
-    int want_exp  = (exp_path  && exp_path[0]);
-    int want_pred = (pred_path && pred_path[0]);
-    if (!want_exp && !want_pred) {
-        snprintf(state->error_message, sizeof(state->error_message), "No file to load.");
-        return 0;
-    }
-
-    if (want_pred) {
-        n_pred = read_pred_cat_alloc(pred_path, &pred, &pxmin, &pxmax, &pred_global_max);
-        if (n_pred <= 0 || !pred) {
-            snprintf(state->error_message, sizeof(state->error_message),
-                     "Could not load predictions: %s", pred_path);
-            return 0;
-        }
-    }
-
-    if (want_exp) {
-        n_pts = read_data_alloc(exp_path, &raw, &xmin, &xmax, &ymin, &ymax);
-        if (n_pts <= 0 || !raw) {
-            snprintf(state->error_message, sizeof(state->error_message),
-                     "Could not load spectrum: %s", exp_path);
-            free(pred);
-            return 0;
-        }
-        smooth = malloc(sizeof(Point) * n_pts);
-        if (!smooth) {
-            snprintf(state->error_message, sizeof(state->error_message),
-                     "Not enough memory for loaded dataset.");
-            free(raw);
-            free(pred);
-            return 0;
-        }
-    }
-
-    lin = malloc(sizeof(double) * MAX_LIN_POINTS);
-    if (!lin) {
+// Load an experimental spectrum and append it to the store (becomes active).
+static int add_spectrum(AppState *state, const char *path) {
+    if (state->n_spectra >= MAX_SPECTRA) {
         snprintf(state->error_message, sizeof(state->error_message),
-                 "Not enough memory for loaded dataset.");
+                 "Maximum of %d spectra already loaded.", MAX_SPECTRA);
+        return 0;
+    }
+    Point *raw = NULL;
+    double xmin, xmax, ymin, ymax;
+    int n = read_data_alloc(path, &raw, &xmin, &xmax, &ymin, &ymax);
+    if (n <= 0 || !raw) {
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "Could not load spectrum: %s", path);
+        return 0;
+    }
+    Point *smooth = malloc(sizeof(Point) * n);
+    if (!smooth) {
         free(raw);
-        free(smooth);
-        free(pred);
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "Not enough memory for loaded spectrum.");
         return 0;
     }
 
-    // With only one source present, derive the missing axis range from the
-    // available data so the view still spans something sensible.
-    if (!want_exp)  { xmin = pxmin; xmax = pxmax; ymin = 0.0; ymax = 1.0; }
-    if (!want_pred) { pxmin = xmin; pxmax = xmax; }
+    commit_active(state);   // preserve the previously active spectrum's edits
 
-    free_dataset(state);
-    state->raw_pts = raw;
-    state->smooth_pts = smooth;
-    state->current_pts = raw;
-    state->pred_lines = pred;
-    state->lin_data = lin;
-    state->n_pred = n_pred;
-    state->n_pts = n_pts;
-    state->xmin = xmin; state->xmax = xmax; state->ymin = ymin; state->ymax = ymax;
-    state->pxmin = pxmin; state->pxmax = pxmax;
-    state->pred_global_max = pred_global_max;
+    int idx = state->n_spectra++;
+    Spectrum *sp = &state->spectra[idx];
+    memset(sp, 0, sizeof(*sp));
+    sp->raw_pts = raw; sp->smooth_pts = smooth; sp->current_pts = raw; sp->n_pts = n;
+    sp->xmin = xmin; sp->xmax = xmax; sp->ymin = ymin; sp->ymax = ymax;
+    sp->visible = 1;
+    sp->vscale = 1.0;
+    sp->color = SPEC_PALETTE[idx % MAX_SPECTRA];
+    snprintf(sp->path, sizeof(sp->path), "%s", path);
+    spec_basename(path, sp->name, sizeof(sp->name));
 
-    state->vxmin = state->xmin; state->vxmax = state->xmax;
-    state->vymin = state->ymin; state->vymax = state->ymax;
-    state->pvxmin = state->xmin; state->pvxmax = state->xmax;
-    state->bar_x = (state->xmin + state->xmax) / 2.0;
-    state->pbar_x = state->bar_x;
+    int first = !state->data_loaded;
+    state->active_spec = idx;
+    state->n_peaks = 0; state->n_selected = 0;
+    mirror_active(state);
     state->data_loaded = 1;
-    state->error_message[0] = '\0';
+    ensure_aux_loaded(state);
+
+    if (first) {
+        state->vxmin = xmin; state->vxmax = xmax;
+        state->vymin = ymin; state->vymax = ymax;
+        state->pvxmin = xmin; state->pvxmax = xmax;
+        state->bar_x = (xmin + xmax) / 2.0; state->pbar_x = state->bar_x;
+        if (state->n_pred == 0) { state->pxmin = xmin; state->pxmax = xmax; }
+    }
     snprintf(state->status_message, sizeof(state->status_message),
-             "Loaded %d spectrum points and %d predicted lines.", n_pts, n_pred);
-    snprintf(state->exp_path, sizeof(state->exp_path), "%s", want_exp ? exp_path : "");
-    snprintf(state->pred_path, sizeof(state->pred_path), "%s", want_pred ? pred_path : "");
-
-    load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
-
-    char assigned_freq_file[512];
-    if (find_assigned_frequency_file(assigned_freq_file, sizeof(assigned_freq_file))) {
-        state->n_lin_data = read_assigned_frequencies(assigned_freq_file, state->lin_data, MAX_LIN_POINTS);
-    }
-
-    if (state->verbose) {
-        fprintf(stderr, "%s\n", state->status_message);
-    }
+             "Loaded spectrum '%s' (%d pts). %d spectra loaded.", sp->name, n, state->n_spectra);
+    state->error_message[0] = '\0';
+    if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
 }
+
+// Load (replace) the prediction set.
+static int set_predictions(AppState *state, const char *path) {
+    PredLine *pred = NULL;
+    double pxmin, pxmax, pgmax;
+    int n = read_pred_cat_alloc(path, &pred, &pxmin, &pxmax, &pgmax);
+    if (n <= 0 || !pred) {
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "Could not load predictions: %s", path);
+        return 0;
+    }
+    free(state->pred_lines);
+    state->pred_lines = pred;
+    state->n_pred = n;
+    state->pxmin = pxmin; state->pxmax = pxmax;
+    state->pred_global_max = pgmax;
+    snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
+
+    int first = !state->data_loaded;
+    state->data_loaded = 1;
+    ensure_aux_loaded(state);
+    if (first) {
+        state->xmin = pxmin; state->xmax = pxmax; state->ymin = 0.0; state->ymax = 1.0;
+        state->vxmin = pxmin; state->vxmax = pxmax; state->vymin = 0.0; state->vymax = 1.0;
+        state->pvxmin = pxmin; state->pvxmax = pxmax;
+        state->bar_x = (pxmin + pxmax) / 2.0; state->pbar_x = state->bar_x;
+    }
+    snprintf(state->status_message, sizeof(state->status_message),
+             "Loaded %d predicted lines.", n);
+    state->error_message[0] = '\0';
+    if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
+    return 1;
+}
+
+static void remove_spectrum(AppState *state, int idx) {
+    if (idx < 0 || idx >= state->n_spectra) return;
+    free(state->spectra[idx].raw_pts);
+    free(state->spectra[idx].smooth_pts);
+    for (int i = idx; i < state->n_spectra - 1; i++)
+        state->spectra[i] = state->spectra[i + 1];
+    state->n_spectra--;
+    if (state->active_spec >= state->n_spectra) state->active_spec = state->n_spectra - 1;
+    state->n_peaks = 0; state->n_selected = 0;
+    if (state->n_spectra == 0 && state->n_pred == 0) state->data_loaded = 0;
+    mirror_active(state);
+}
+
 
 static void save_screenshot(SDL_Renderer *ren, AppState *state) {
     int w = 0, h = 0;
@@ -197,19 +283,15 @@ int main(int argc, char *argv[])
         freopen("/dev/null", "w", stdout);
     }
 
-    // Accept any mix of a spectrum file and/or a .cat prediction file, in any
-    // order. Files are classified by their .cat extension.
-    const char *exp_arg = NULL;
+    // Accept any number of spectrum files and an optional .cat prediction file,
+    // in any order. Files are classified by their .cat extension.
+    const char *spec_args[MAX_SPECTRA];
+    int n_spec_args = 0;
     const char *pred_arg = NULL;
-    if (argc - argi >= 1 && argc - argi <= 2) {
-        for (int k = argi; k < argc; k++) {
-            int len = (int)strlen(argv[k]);
-            if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
-            else exp_arg = argv[k];
-        }
-    } else if (argc - argi != 0) {
-        fprintf(stderr, "Usage: %s [--verbose] [spectrum.txt] [pred.cat]\n", argv[0]);
-        return 1;
+    for (int k = argi; k < argc; k++) {
+        int len = (int)strlen(argv[k]);
+        if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
+        else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
@@ -227,9 +309,8 @@ int main(int argc, char *argv[])
     }
     if(!font) { fprintf(stderr, "No font found.\n"); return 1; }
 
-    if (exp_arg || pred_arg) {
-        load_dataset(&state, exp_arg, pred_arg);
-    }
+    if (pred_arg) set_predictions(&state, pred_arg);
+    for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
     
     int running = 1;
     Layout layout;
@@ -259,10 +340,15 @@ int main(int argc, char *argv[])
         handle_app_events(&state, &layout, &running);
         if(state.pending_load) {
             state.pending_load = 0;
-            if (state.exp_path[0] || state.pred_path[0]) {
-                load_dataset(&state, state.exp_path, state.pred_path);
-            }
+            if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); state.pending_pred_path[0] = '\0'; }
+            if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; }
         }
+        if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; }
+        if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; }
+
+        // Keep the active spectrum in sync with the mirror fields the tools edit.
+        commit_active(&state);
+
         if(state.data_loaded && state.sync_active) { state.pvxmin = state.vxmin; state.pvxmax = state.vxmax; }
 
         render_app(ren, font, &state, &layout);

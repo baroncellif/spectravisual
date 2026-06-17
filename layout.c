@@ -157,7 +157,7 @@ void update_sidebars(AppState *s, Layout *l) {
 
     DraggableWindow *panels[] = {
         &s->win_as, &s->win_pf, &s->win_avg,
-        &s->win_br, &s->win_cut, &s->win_jump, &s->win_filt
+        &s->win_br, &s->win_cut, &s->win_jump, &s->win_filt, &s->win_spec
     };
     int N = (int)(sizeof(panels) / sizeof(panels[0]));
 

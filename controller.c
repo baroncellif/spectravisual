@@ -60,8 +60,8 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         switch (e.type) {
             case SDL_DROPFILE: {
                 char *path = e.drop.file;
-                if (path_looks_like_cat(path)) snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
-                else snprintf(state->exp_path, sizeof(state->exp_path), "%s", path);
+                if (path_looks_like_cat(path)) snprintf(state->pending_pred_path, sizeof(state->pending_pred_path), "%s", path);
+                else snprintf(state->pending_spec_path, sizeof(state->pending_spec_path), "%s", path);
                 state->pending_load = 1;
                 SDL_free(path);
                 break;
@@ -156,6 +156,28 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (point_in_rect(mx, my, (SDL_Rect){wx+44,  wy+364, 36, 24})) { s->input_state=INPUT_FILT_DJ;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dj);  return; }
         if (point_in_rect(mx, my, (SDL_Rect){wx+124, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKA; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dka); return; }
         if (point_in_rect(mx, my, (SDL_Rect){wx+204, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKC; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dkc); return; }
+        return;
+    }
+
+    // SPECTRA Window (multi-spectrum management)
+    if (s->win_spec.visible && point_in_rect(mx, my, s->win_spec.rect)) {
+        handled = 1;
+        int wx = s->win_spec.rect.x, wy = s->win_spec.rect.y;
+        if (my < wy + 30) {
+            if (mx > wx + s->win_spec.rect.w - 30) s->win_spec.visible = 0;
+            else { s->drag_target = &s->win_spec; s->drag_offset.x = mx - wx; s->drag_offset.y = my - wy; }
+            return;
+        }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 130, 26})) { s->multi_layout = !s->multi_layout; return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+155, wy+44, 130, 26})) { s->multi_ynorm = !s->multi_ynorm; return; }
+        for (int i = 0; i < s->n_spectra; i++) {
+            int rowy = wy + 92 + i*30;
+            if (point_in_rect(mx, my, (SDL_Rect){wx+150, rowy, 24, 22})) { s->spectra[i].voffset -= 0.05; return; }
+            if (point_in_rect(mx, my, (SDL_Rect){wx+176, rowy, 24, 22})) { s->spectra[i].voffset += 0.05; return; }
+            if (point_in_rect(mx, my, (SDL_Rect){wx+204, rowy, 34, 22})) { s->spectra[i].visible = !s->spectra[i].visible; return; }
+            if (point_in_rect(mx, my, (SDL_Rect){wx+244, rowy, 26, 22})) { s->pending_remove = i; return; }
+            if (point_in_rect(mx, my, (SDL_Rect){wx+12, rowy, 134, 22})) { s->pending_select = i; return; }
+        }
         return;
     }
 
@@ -347,6 +369,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     Button btn_cut = {{552, by, 58, 24}, "", {0,0,0,0}, 0};
     Button btn_jump = {{616, by, 78, 24}, "", {0,0,0,0}, 0};
     Button btn_filt = {{700, by, 72, 24}, "", {0,0,0,0}, 0};
+    Button btn_spec = {{778, by, 72, 24}, "", {0,0,0,0}, 0};
     SDL_Rect r_off = {right_x - 122, by, 122, 24};
     right_x = r_off.x - 64;
     Button btn_export = {{right_x - 88, by, 82, 24}, "", {0,0,0,0}, 0};
@@ -381,6 +404,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (l->win_w > 620 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
         if (l->win_w > 700 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
         if (l->win_w > 790 && point_in_rect(mx, my, btn_filt.rect)) { s->win_filt.visible = !s->win_filt.visible; return; }
+        if (l->win_w > 870 && point_in_rect(mx, my, btn_spec.rect)) { s->win_spec.visible = !s->win_spec.visible; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) { s->show_help = !s->show_help; return; }
         if (aux_controls_visible && point_in_rect(mx, my, btn_export.rect)) { if (s->data_loaded) s->export_requested = 1; return; }
         if (offset_control_visible && point_in_rect(mx, my, r_off)) {
@@ -737,7 +761,16 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     if (sym == SDLK_t) s->win_avg.visible = !s->win_avg.visible;
     if (sym == SDLK_r) { // Reset View
         s->vxmin = s->xmin; s->vxmax = s->xmax;
-        s->vymin = s->ymin; s->vymax = s->ymax;
+        // Y range: span all visible spectra (overlay/shared common axis).
+        double miny = s->ymin, maxy = s->ymax;
+        int seen = 0;
+        for (int k = 0; k < s->n_spectra; k++) {
+            Spectrum *S = &s->spectra[k];
+            if (!S->visible) continue;
+            if (!seen) { miny = S->ymin; maxy = S->ymax; seen = 1; }
+            else { if (S->ymin < miny) miny = S->ymin; if (S->ymax > maxy) maxy = S->ymax; }
+        }
+        s->vymin = miny; s->vymax = maxy;
         s->pvxmin = s->xmin; s->pvxmax = s->xmax;
         s->pred_scale = 1.0;
         return;
@@ -761,16 +794,21 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     switch(sym) {
         // Y-Axis Auto Scale
         case SDLK_TAB: {
-            // The spectrum is displayed shifted by exp_offset, so the visible
-            // window in TRUE data coords is [vxmin - offset, vxmax - offset].
-            int istart = binary_search_lower(s->current_pts, s->n_pts, s->vxmin - s->exp_offset);
-            int iend = binary_search_upper(s->current_pts, s->n_pts, s->vxmax - s->exp_offset);
-            if(istart < 0) istart = 0; if(iend >= s->n_pts) iend = s->n_pts - 1;
-            
+            // Y auto-scale (only affects overlay/shared, where vymin/vymax are used).
+            // Fit the common axis to ALL visible spectra in the current window, so
+            // it isn't clamped to just the first/active trace. Each spectrum is
+            // displayed shifted by its exp_offset.
             double miny=1e99, maxy=-1e99;
-            for(int i=istart; i<=iend; i++) {
-                if(s->current_pts[i].y < miny) miny = s->current_pts[i].y;
-                if(s->current_pts[i].y > maxy) maxy = s->current_pts[i].y;
+            for (int k = 0; k < s->n_spectra; k++) {
+                Spectrum *S = &s->spectra[k];
+                if (!S->visible || S->n_pts < 1) continue;
+                int istart = binary_search_lower(S->current_pts, S->n_pts, s->vxmin - S->exp_offset);
+                int iend   = binary_search_upper(S->current_pts, S->n_pts, s->vxmax - S->exp_offset);
+                if(istart < 0) istart = 0; if(iend >= S->n_pts) iend = S->n_pts - 1;
+                for(int i=istart; i<=iend; i++) {
+                    if(S->current_pts[i].y < miny) miny = S->current_pts[i].y;
+                    if(S->current_pts[i].y > maxy) maxy = S->current_pts[i].y;
+                }
             }
             if(miny < maxy) { s->vymin = miny; s->vymax = maxy; }
             break;
@@ -835,12 +873,14 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
 
         // Vertical Control / Pred Scale
         case SDLK_w:
-            if(is_shift) s->pred_scale *= 1.1; 
-            else s->vymax -= pan_y; 
+            if(is_shift) s->pred_scale *= 1.1;
+            else if(s->multi_layout && s->active_spec >= 0) s->spectra[s->active_spec].vscale *= 1.1;
+            else s->vymax -= pan_y;
             break;
         case SDLK_z:
-            if(is_shift) s->pred_scale *= 0.9; 
-            else s->vymax += pan_y; 
+            if(is_shift) s->pred_scale *= 0.9;
+            else if(s->multi_layout && s->active_spec >= 0) s->spectra[s->active_spec].vscale *= 0.9;
+            else s->vymax += pan_y;
             break;
         case SDLK_UP:
             if(is_shift) s->pred_scale *= 1.1; 

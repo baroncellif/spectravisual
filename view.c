@@ -211,31 +211,70 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     SDL_RenderFillRect(ren, &clip);
     SDL_RenderSetClipRect(ren, &clip);
     
-    // Draw Data Lines
-    SDL_SetRenderDrawColor(ren, 205, 214, 225, 235);
-    
-    // OFFSET MODE: the spectrum is *displayed* shifted by exp_offset so it slides
-    // onto the (fixed) prediction. The stored data keeps its true frequencies, so
-    // the visible window in true coords is [vxmin - offset, vxmax - offset].
-    int start_idx = binary_search_lower(state->current_pts, state->n_pts, state->vxmin - state->exp_offset);
-    int end_idx   = binary_search_upper(state->current_pts, state->n_pts, state->vxmax - state->exp_offset);
+    // OFFSET MODE: each spectrum is *displayed* shifted by its exp_offset so it
+    // slides onto the (fixed) prediction. The stored data keeps true frequencies,
+    // so the visible window in true coords is [vxmin - offset, vxmax - offset].
+    //
+    // Multi-spectrum layout: overlay (all in the panel, distinct colours, optional
+    // per-trace vertical offset) or vertical stack (one band per visible trace).
+    // Y scale: shared (global) or normalized per trace.
+    int nvis = 0;
+    for (int s = 0; s < state->n_spectra; s++) if (state->spectra[s].visible) nvis++;
 
-    // Safety clamp
-    if (start_idx < 1) start_idx = 1;
-    if (end_idx >= state->n_pts) end_idx = state->n_pts - 1;
+    int band_h = (state->multi_layout && nvis > 0) ? (l->exp_h / nvis) : l->exp_h;
+    int vi = 0;
+    for (int s = 0; s < state->n_spectra; s++) {
+        Spectrum *sp = &state->spectra[s];
+        if (!sp->visible || sp->n_pts < 2) continue;
 
-    for(int i = start_idx; i <= end_idx; i++) {
-         double x1_val = state->current_pts[i-1].x + state->exp_offset;
-         double x2_val = state->current_pts[i].x   + state->exp_offset;
+        int area_y = state->multi_layout ? (l->exp_y + vi * band_h) : l->exp_y;
+        int area_h = state->multi_layout ? band_h : l->exp_h;
+        double voff_px = sp->voffset * area_h;   // works in both layouts
+        double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
 
-         int px1 = l->exp_x + (x1_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-         int px2 = l->exp_x + (x2_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-         
-         // Invert Y for graphics coordinates
-         int py1 = l->exp_y + (1.0 - (state->current_pts[i-1].y - state->vymin)/(state->vymax - state->vymin)) * l->exp_h;
-         int py2 = l->exp_y + (1.0 - (state->current_pts[i].y   - state->vymin)/(state->vymax - state->vymin)) * l->exp_h;
-         
-         SDL_RenderDrawLine(ren, px1, py1, px2, py2);
+        // Reference Y range the trace is mapped against.
+        //  - stack: each spectrum gets its OWN Y axis (own ymin/ymax)
+        //  - overlay normalized: each trace scaled to its own ymin/ymax
+        //  - overlay shared: common zoomable vymin/vymax (fits all visible traces)
+        double ymn, ymx;
+        if (state->multi_layout)       { ymn = sp->ymin; ymx = sp->ymax; }
+        else if (state->multi_ynorm)   { ymn = sp->ymin; ymx = sp->ymax; }
+        else                           { ymn = state->vymin; ymx = state->vymax; }
+        if (ymx <= ymn) ymx = ymn + 1.0;
+
+        SDL_SetRenderDrawColor(ren, sp->color.r, sp->color.g, sp->color.b, sp->color.a);
+
+        int start_idx = binary_search_lower(sp->current_pts, sp->n_pts, state->vxmin - sp->exp_offset);
+        int end_idx   = binary_search_upper(sp->current_pts, sp->n_pts, state->vxmax - sp->exp_offset);
+        if (start_idx < 1) start_idx = 1;
+        if (end_idx >= sp->n_pts) end_idx = sp->n_pts - 1;
+
+        for (int i = start_idx; i <= end_idx; i++) {
+            double x1_val = sp->current_pts[i-1].x + sp->exp_offset;
+            double x2_val = sp->current_pts[i].x   + sp->exp_offset;
+            int px1 = l->exp_x + (x1_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
+            int px2 = l->exp_x + (x2_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
+            double f1 = (sp->current_pts[i-1].y - ymn)/(ymx - ymn) * gain;
+            double f2 = (sp->current_pts[i].y   - ymn)/(ymx - ymn) * gain;
+            int py1 = area_y + (1.0 - f1) * area_h - voff_px;
+            int py2 = area_y + (1.0 - f2) * area_h - voff_px;
+            SDL_RenderDrawLine(ren, px1, py1, px2, py2);
+        }
+        vi++;
+    }
+
+    // Legend (only when more than one spectrum is loaded).
+    if (state->n_spectra > 1) {
+        int lx = l->exp_x + 10, ly = l->exp_y + 8;
+        for (int s = 0; s < state->n_spectra; s++) {
+            Spectrum *sp = &state->spectra[s];
+            SDL_Rect sw = {lx, ly + 3, 12, 12};
+            fill_rounded_rect(ren, sw, 3, sp->color);
+            char nm[20];
+            snprintf(nm, sizeof(nm), "%.18s", sp->name);
+            draw_text(ren, font, nm, lx + 18, ly + 2, (s == state->active_spec) ? COL_TXT : COL_TXT_DIM);
+            ly += 18;
+        }
     }
 
     // Draw already-assigned experimental frequencies loaded from config/LIN.
@@ -700,6 +739,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     Button btn_cut = {{552, by, 58, 24}, "Cut",   {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xE2\x86\x94"}; // leftright
     Button btn_jump = {{616, by, 78, 24}, "Jump",  {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x86\x92"}; // right
     Button btn_filt = {{700, by, 72, 24}, "Filter", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x96\xBD"}; // down triangle
+    Button btn_spec = {{778, by, 72, 24}, "Spec", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x98\xB0"};
 
     SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
     SDL_RenderDrawLine(ren, 224, by + 4, 224, by + 20);
@@ -715,6 +755,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     if (l->win_w > 620) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
     if (l->win_w > 700) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
     if (l->win_w > 790) draw_button(ren, font, &btn_filt, mx, my, m_down, state->win_filt.visible || state->filter_active);
+    if (l->win_w > 870) draw_button(ren, font, &btn_spec, mx, my, m_down, state->win_spec.visible || state->n_spectra > 1);
 
     if (l->win_w > 900) {
         int input_w = 122;
@@ -1102,6 +1143,61 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         draw_int_field(ren, font, state, (SDL_Rect){wx+124, wy+364, 36, 24}, INPUT_FILT_DKA, state->filt_dka);
         draw_text(ren, font, "dKc", wx+170, wy+368, COL_TXT_DIM);
         draw_int_field(ren, font, state, (SDL_Rect){wx+204, wy+364, 36, 24}, INPUT_FILT_DKC, state->filt_dkc);
+    }
+
+    // --- SPECTRA PANEL (multi-spectrum management) ---
+    if(state->win_spec.anim > 0.01f) {
+        SDL_RenderSetClipRect(ren, &state->win_spec.clip);
+        draw_draggable_window(ren, font, &state->win_spec);
+        int wx = state->win_spec.rect.x, wy = state->win_spec.rect.y;
+
+        Button btn_layout = {{wx+15, wy+44, 130, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_layout.label, 32, state->multi_layout ? "Stack" : "Overlay");
+        draw_button(ren, font, &btn_layout, mx, my, m_down, state->multi_layout);
+
+        Button btn_ynorm = {{wx+155, wy+44, 130, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_ynorm.label, 32, state->multi_ynorm ? "Y: Norm" : "Y: Shared");
+        draw_button(ren, font, &btn_ynorm, mx, my, m_down, state->multi_ynorm);
+
+        draw_text(ren, font, "Loaded spectra (click name = active)", wx+18, wy+78, COL_TXT_DIM);
+
+        for (int i = 0; i < state->n_spectra; i++) {
+            Spectrum *sp = &state->spectra[i];
+            int rowy = wy + 92 + i*30;
+            int is_active = (i == state->active_spec);
+
+            if (is_active) {
+                SDL_Rect hl = {wx+10, rowy-2, 278, 26};
+                fill_rounded_rect(ren, hl, 4, (SDL_Color){40, 56, 70, 180});
+            }
+            // colour swatch
+            SDL_Rect sw = {wx+12, rowy+3, 14, 14};
+            fill_rounded_rect(ren, sw, 3, sp->color);
+            // name (truncated)
+            char nm[18];
+            snprintf(nm, sizeof(nm), "%.16s", sp->name);
+            draw_text(ren, font, nm, wx+32, rowy+4, sp->visible ? COL_TXT : COL_TXT_DIM);
+
+            Button bvm = {{wx+150, rowy, 24, 22}, "-", {60,60,70,255}, 0};
+            Button bvp = {{wx+176, rowy, 24, 22}, "+", {60,60,70,255}, 0};
+            draw_button(ren, font, &bvm, mx, my, m_down, 0);
+            draw_button(ren, font, &bvp, mx, my, m_down, 0);
+
+            Button bvis = {{wx+204, rowy, 34, 22}, "", {60,60,70,255}, 1};
+            snprintf(bvis.label, 32, sp->visible ? "vis" : "hid");
+            draw_button(ren, font, &bvis, mx, my, m_down, sp->visible);
+
+            Button bdel = {{wx+244, rowy, 26, 22}, "x", {70,28,30,255}, 0, BTN_DANGER};
+            draw_button(ren, font, &bdel, mx, my, m_down, 0);
+        }
+
+        if (state->n_spectra == 0)
+            draw_text(ren, font, "Drop a .txt spectrum to add one.", wx+18, wy+96, COL_TXT_DIM);
+        else {
+            int ty = wy + 96 + state->n_spectra*30;
+            draw_text(ren, font, "- / + : shift a trace vertically", wx+18, ty, COL_TXT_DIM);
+            draw_text(ren, font, "W / Z : intensity of active (stack)", wx+18, ty+16, COL_TXT_DIM);
+        }
     }
 
     SDL_RenderSetClipRect(ren, NULL);

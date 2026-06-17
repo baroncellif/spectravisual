@@ -6,6 +6,14 @@ TARGET = spectravisual
 SRCS = main.c view.c controller.c algorithms.c layout.c loader.c
 OBJS = $(SRCS:.c=.o)
 
+# --- Header dependencies ---
+# Every object depends on all project headers. Without this, editing a header
+# (e.g. changing the AppState struct in types.h) would NOT trigger a recompile
+# of the .c files that weren't themselves edited, leaving object files with
+# mismatched struct layouts -> memory corruption / crashes. Keep it simple and
+# safe: rebuild every object whenever any header changes.
+HDRS = $(wildcard *.h)
+
 # --- Compiler Flags ---
 # -Wall: Enable all warnings
 # -g: Add debug info (useful for lldb/gdb)
@@ -46,7 +54,7 @@ $(TARGET): $(OBJS)
 
 # Compile source files into object files
 # This generic rule works for all .c files in the list
-%.o: %.c
+%.o: %.c $(HDRS)
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) -c $< -o $@
 
 # Clean up build files

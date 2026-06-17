@@ -10,12 +10,32 @@
 #define MAX_ASSIGNMENTS 5000
 #define MAX_SELECTED 100
 #define MAX_LIN_POINTS 50000 // New constant for LIN file
+#define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
 
 // --- DATA STRUCTURES ---
 
-typedef struct { 
-    double x, y; 
+typedef struct {
+    double x, y;
 } Point;
+
+// One loaded experimental spectrum. The "active" one is mirrored into the
+// legacy AppState fields (raw_pts/current_pts/n_pts/exp_offset/...) so all
+// existing tools keep operating on the selected spectrum unchanged.
+typedef struct {
+    Point *raw_pts;
+    Point *smooth_pts;
+    Point *current_pts;      // -> raw_pts or smooth_pts (rolling avg toggle)
+    int    n_pts;
+    double xmin, xmax, ymin, ymax;
+    double exp_offset;        // horizontal alignment offset (MHz)
+    double voffset;           // vertical display offset, fraction of plot/band height
+    double vscale;            // per-spectrum intensity gain (stack mode), default 1
+    int    rolling_avg_active;
+    int    visible;
+    SDL_Color color;
+    char   path[512];
+    char   name[64];          // short label for the legend
+} Spectrum;
 
 typedef struct {
     double freq_mhz;   
@@ -97,10 +117,21 @@ typedef enum {
 
 // --- MASTER APP STATE ---
 typedef struct {
-    // Data Pointers
+    // --- Multi-spectrum store ---
+    Spectrum spectra[MAX_SPECTRA];
+    int n_spectra;
+    int active_spec;          // index into spectra[]; tools operate on this one
+    int multi_layout;         // 0 = overlay, 1 = vertical stack
+    int multi_ynorm;          // 0 = shared Y scale, 1 = normalized per trace
+    char pending_spec_path[512];
+    char pending_pred_path[512];
+    int pending_select;       // request to switch active spectrum (-1 = none)
+    int pending_remove;       // request to remove a spectrum (-1 = none)
+
+    // Data Pointers (mirror of the active spectrum)
     Point *raw_pts;
     Point *smooth_pts;
-    Point *current_pts; 
+    Point *current_pts;
     int n_pts;
     int data_loaded;
     int verbose;
@@ -170,6 +201,7 @@ typedef struct {
     DraggableWindow win_cut;
     DraggableWindow win_jump;
     DraggableWindow win_filt;
+    DraggableWindow win_spec;
 
     DraggableWindow *drag_target;
     SDL_Point drag_offset;
