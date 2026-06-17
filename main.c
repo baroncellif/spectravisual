@@ -52,6 +52,7 @@ static void init_app_defaults(AppState *state) {
     state->active_spec = -1;
     state->multi_layout = 0;   // overlay
     state->multi_ynorm = 0;    // shared Y
+    state->multi_indiv_int = 0; // intensity controls affect all spectra
     state->pending_select = -1;
     state->pending_remove = -1;
 }

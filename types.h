@@ -121,8 +121,10 @@ typedef struct {
     Spectrum spectra[MAX_SPECTRA];
     int n_spectra;
     int active_spec;          // index into spectra[]; tools operate on this one
-    int multi_layout;         // 0 = overlay, 1 = vertical stack
+    int multi_layout;         // 0 = overlay, 1 = vertical stack (subplots)
     int multi_ynorm;          // 0 = shared Y scale, 1 = normalized per trace
+    int multi_indiv_int;      // 0 = intensity controls scale all spectra together,
+                              //     1 = only the active spectrum
     char pending_spec_path[512];
     char pending_pred_path[512];
     int pending_select;       // request to switch active spectrum (-1 = none)

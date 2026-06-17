@@ -227,9 +227,12 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         Spectrum *sp = &state->spectra[s];
         if (!sp->visible || sp->n_pts < 2) continue;
 
+        const int STACK_GAP = 8;   // pixels between stacked subplots
         int area_y = state->multi_layout ? (l->exp_y + vi * band_h) : l->exp_y;
-        int area_h = state->multi_layout ? band_h : l->exp_h;
-        double voff_px = sp->voffset * area_h;   // works in both layouts
+        int area_h = state->multi_layout ? (band_h - STACK_GAP) : l->exp_h;
+        if (area_h < 10) area_h = 10;
+        // Vertical offset only makes sense in overlay; stack is true subplots.
+        double voff_px = state->multi_layout ? 0.0 : sp->voffset * area_h;
         double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
 
         // Reference Y range the trace is mapped against.
@@ -260,11 +263,12 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             int py2 = area_y + (1.0 - f2) * area_h - voff_px;
             SDL_RenderDrawLine(ren, px1, py1, px2, py2);
         }
+
         vi++;
     }
 
-    // Legend (only when more than one spectrum is loaded).
-    if (state->n_spectra > 1) {
+    // Legend (overlay only; in stack each band is labelled in place).
+    if (state->n_spectra > 1 && !state->multi_layout) {
         int lx = l->exp_x + 10, ly = l->exp_y + 8;
         for (int s = 0; s < state->n_spectra; s++) {
             Spectrum *sp = &state->spectra[s];
@@ -324,15 +328,46 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     // DISABLE CLIPPING so we can draw borders and ticks
     SDL_RenderSetClipRect(ren, NULL);
 
+    // Stack mode: per-subplot frame + Y axis labels (drawn unclipped so the
+    // value labels fit in the left margin).
+    if (state->multi_layout && nvis > 0) {
+        const int STACK_GAP = 8;
+        int vj = 0;
+        for (int s = 0; s < state->n_spectra; s++) {
+            Spectrum *sp = &state->spectra[s];
+            if (!sp->visible || sp->n_pts < 2) continue;
+            int ay = l->exp_y + vj * band_h;
+            int ah = band_h - STACK_GAP; if (ah < 10) ah = 10;
+            double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
+            double top_val = sp->ymin + (sp->ymax - sp->ymin) / gain;
+
+            SDL_Rect box = {l->exp_x, ay, l->exp_w, ah};
+            SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, 110);
+            SDL_RenderDrawRect(ren, &box);
+            SDL_RenderDrawLine(ren, l->exp_x - 4, ay, l->exp_x, ay);
+            SDL_RenderDrawLine(ren, l->exp_x - 4, ay + ah, l->exp_x, ay + ah);
+
+            char vt[24], v0[24];
+            snprintf(vt, sizeof(vt), "%.3g", top_val);
+            snprintf(v0, sizeof(v0), "%.3g", sp->ymin);
+            draw_text(ren, font, vt, l->exp_x - 56, ay - 2, COL_TXT_DIM);
+            draw_text(ren, font, v0, l->exp_x - 56, ay + ah - 14, COL_TXT_DIM);
+            draw_text(ren, font, sp->name, l->exp_x + 8, ay + 3,
+                      (s == state->active_spec) ? sp->color : COL_TXT_DIM);
+            vj++;
+        }
+    }
+
     // Draw Borders
     SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
     SDL_RenderDrawRect(ren, &clip);
     
     // Draw X-Axis Ticks & Labels
-    double xrange = state->vxmax - state->vxmin; 
+    double xrange = state->vxmax - state->vxmin;
     double xstep = tick_step_for_pixels(xrange, l->exp_w, 90);
     double xstart = ceil(state->vxmin/xstep)*xstep;
-    
+
+    if (xstep > 0 && xrange > 0)
     for(double x=xstart; x<=state->vxmax; x+=xstep) {
         int px = l->exp_x + (x - state->vxmin)/xrange * l->exp_w;
         SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 60);
@@ -550,6 +585,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
     double xrange = state->pvxmax - state->pvxmin;
     double xstep = tick_step_for_pixels(xrange, l->pred_w, 90);
     double xstart = ceil(state->pvxmin/xstep)*xstep;
+    if (xstep > 0 && xrange > 0)
     for(double x=xstart; x<=state->pvxmax; x+=xstep) {
         int px = l->pred_x + (x - state->pvxmin)/xrange * l->pred_w;
         SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
@@ -1159,11 +1195,16 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         snprintf(btn_ynorm.label, 32, state->multi_ynorm ? "Y: Norm" : "Y: Shared");
         draw_button(ren, font, &btn_ynorm, mx, my, m_down, state->multi_ynorm);
 
-        draw_text(ren, font, "Loaded spectra (click name = active)", wx+18, wy+78, COL_TXT_DIM);
+        // Intensity control mode: all spectra together vs only the active one.
+        Button btn_int = {{wx+15, wy+76, 270, 26}, "", {60,60,70,255}, 1};
+        snprintf(btn_int.label, 32, state->multi_indiv_int ? "Intensity: per-spectrum (active)" : "Intensity: all together");
+        draw_button(ren, font, &btn_int, mx, my, m_down, state->multi_indiv_int);
+
+        draw_text(ren, font, "Loaded spectra (click name = active)", wx+18, wy+110, COL_TXT_DIM);
 
         for (int i = 0; i < state->n_spectra; i++) {
             Spectrum *sp = &state->spectra[i];
-            int rowy = wy + 92 + i*30;
+            int rowy = wy + 124 + i*30;
             int is_active = (i == state->active_spec);
 
             if (is_active) {
@@ -1192,11 +1233,11 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         }
 
         if (state->n_spectra == 0)
-            draw_text(ren, font, "Drop a .txt spectrum to add one.", wx+18, wy+96, COL_TXT_DIM);
+            draw_text(ren, font, "Drop a .txt spectrum to add one.", wx+18, wy+128, COL_TXT_DIM);
         else {
-            int ty = wy + 96 + state->n_spectra*30;
+            int ty = wy + 128 + state->n_spectra*30;
             draw_text(ren, font, "- / + : shift a trace vertically", wx+18, ty, COL_TXT_DIM);
-            draw_text(ren, font, "W / Z : intensity of active (stack)", wx+18, ty+16, COL_TXT_DIM);
+            draw_text(ren, font, "W / Z : intensity (stack & Y:Norm)", wx+18, ty+16, COL_TXT_DIM);
         }
     }
 

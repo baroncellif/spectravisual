@@ -24,6 +24,18 @@ static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
 
+// Scale the per-spectrum intensity gain. By default all visible spectra are
+// scaled together; with "individual intensity" enabled only the active one is.
+static void scale_intensity(AppState *s, double factor) {
+    if (s->multi_indiv_int) {
+        if (s->active_spec >= 0 && s->active_spec < s->n_spectra)
+            s->spectra[s->active_spec].vscale *= factor;
+    } else {
+        for (int i = 0; i < s->n_spectra; i++)
+            if (s->spectra[i].visible) s->spectra[i].vscale *= factor;
+    }
+}
+
 // --- MAIN EVENT LOOP ---
 void handle_app_events(AppState *state, Layout *l, int *running) {
     SDL_Event e;
@@ -170,8 +182,9 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
         if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 130, 26})) { s->multi_layout = !s->multi_layout; return; }
         if (point_in_rect(mx, my, (SDL_Rect){wx+155, wy+44, 130, 26})) { s->multi_ynorm = !s->multi_ynorm; return; }
+        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+76, 270, 26})) { s->multi_indiv_int = !s->multi_indiv_int; return; }
         for (int i = 0; i < s->n_spectra; i++) {
-            int rowy = wy + 92 + i*30;
+            int rowy = wy + 124 + i*30;
             if (point_in_rect(mx, my, (SDL_Rect){wx+150, rowy, 24, 22})) { s->spectra[i].voffset -= 0.05; return; }
             if (point_in_rect(mx, my, (SDL_Rect){wx+176, rowy, 24, 22})) { s->spectra[i].voffset += 0.05; return; }
             if (point_in_rect(mx, my, (SDL_Rect){wx+204, rowy, 34, 22})) { s->spectra[i].visible = !s->spectra[i].visible; return; }
@@ -871,15 +884,19 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
             break;
         }
 
-        // Vertical Control / Pred Scale
+        // Vertical Control / Pred Scale.
+        // In per-spectrum-scaled modes (stack, or overlay normalized) W/Z change
+        // the intensity GAIN: all visible spectra together by default, or only
+        // the active one when "individual intensity" is enabled in the panel.
+        // In overlay/shared they zoom the common vymax.
         case SDLK_w:
             if(is_shift) s->pred_scale *= 1.1;
-            else if(s->multi_layout && s->active_spec >= 0) s->spectra[s->active_spec].vscale *= 1.1;
+            else if(s->multi_layout || s->multi_ynorm) scale_intensity(s, 1.1);
             else s->vymax -= pan_y;
             break;
         case SDLK_z:
             if(is_shift) s->pred_scale *= 0.9;
-            else if(s->multi_layout && s->active_spec >= 0) s->spectra[s->active_spec].vscale *= 0.9;
+            else if(s->multi_layout || s->multi_ynorm) scale_intensity(s, 0.9);
             else s->vymax += pan_y;
             break;
         case SDLK_UP:
