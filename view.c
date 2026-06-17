@@ -233,7 +233,11 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (area_h < 10) area_h = 10;
         // Vertical offset only makes sense in overlay; stack is true subplots.
         double voff_px = state->multi_layout ? 0.0 : sp->voffset * area_h;
-        double gain = (sp->vscale > 0.0) ? sp->vscale : 1.0;
+        // Per-spectrum gain applies only where the Y axis is per-spectrum
+        // (stack or overlay-normalized). In overlay-shared the common vymin/vymax
+        // controls intensity, so gain must be neutral (1) regardless of vscale.
+        int per_spec_y = (state->multi_layout || state->multi_ynorm);
+        double gain = (per_spec_y && sp->vscale > 0.0) ? sp->vscale : 1.0;
 
         // Reference Y range the trace is mapped against.
         //  - stack: each spectrum gets its OWN Y axis (own ymin/ymax)
