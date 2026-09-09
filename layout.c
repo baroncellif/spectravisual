@@ -308,6 +308,11 @@ int ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int ki
     } else if (kind == UI_BTN_DANGER) {
         has_fill = hover;
         fill = UI_DANGER_BG; border = (SDL_Color){58, 37, 35, 255}; text = UI_DANGER_TEXT;
+    } else if (kind == UI_BTN_DANGER_QUIET) {
+        /* quiet in the command bar, red only under the pointer */
+        has_fill = hover; has_border = hover;
+        fill = UI_DANGER_BG; border = (SDL_Color){58, 37, 35, 255};
+        text = hover ? UI_DANGER_TEXT : UI_DIM;
     } else if (kind == UI_BTN_PRIMARY) {
         fill = (SDL_Color){29, 62, 99, 255}; border = (SDL_Color){44, 90, 140, 255}; text = (SDL_Color){187, 216, 255, 255};
     } else {                       /* quiet: only a hover surface */

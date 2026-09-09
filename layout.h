@@ -56,6 +56,7 @@ void ui_vline(SDL_Renderer *ren, int x, int y0, int y1, SDL_Color c);
 #define UI_BTN_QUIET   BTN_NORMAL
 #define UI_BTN_DANGER  BTN_DANGER
 #define UI_BTN_PRIMARY BTN_PRIMARY
+#define UI_BTN_DANGER_QUIET 3
 
 int  ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int kind,
                int active, int mx, int my, int mdown);

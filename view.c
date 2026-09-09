@@ -134,32 +134,14 @@ static double spectrum_df(const AppState *s) {
 #define COL_INPUT_BORDER UI_LINE
 static const SDL_Color COL_SEL_BOX = {76, 154, 255, 40};
 
-// Formats a frequency with a group separator: 12 452.7104
+// Frequencies are written plainly, the way they are typed and pasted into a
+// line list: 12345.6540, with no group separator.
 static void fmt_mhz(char *buf, size_t n, double v, int dec) {
-    char raw[64];
-    snprintf(raw, sizeof(raw), "%.*f", dec, fabs(v));
-    char *dot = strchr(raw, '.');
-    int ilen = (int)(dot ? (size_t)(dot - raw) : strlen(raw));
-    char out[80]; int o = 0;
-    if (v < 0 && o < (int)sizeof(out) - 1) out[o++] = '-';
-    for (int i = 0; i < ilen && o < (int)sizeof(out) - 2; i++) {
-        if (i > 0 && (ilen - i) % 3 == 0) out[o++] = ' ';
-        out[o++] = raw[i];
-    }
-    out[o] = '\0';
-    snprintf(buf, n, "%s%s", out, dot ? dot : "");
+    snprintf(buf, n, "%.*f", dec, v);
 }
 
 static void fmt_count(char *buf, size_t n, long v) {
-    char raw[32]; snprintf(raw, sizeof(raw), "%ld", v);
-    int len = (int)strlen(raw);
-    char out[48]; int o = 0;
-    for (int i = 0; i < len && o < (int)sizeof(out) - 2; i++) {
-        if (i > 0 && (len - i) % 3 == 0) out[o++] = ' ';
-        out[o++] = raw[i];
-    }
-    out[o] = '\0';
-    snprintf(buf, n, "%s", out);
+    snprintf(buf, n, "%ld", v);
 }
 
 // --- INTERNAL HELPERS PROTOTYPES ---
@@ -705,7 +687,7 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
     ui_vline(ren, UI_TOP_SEP_X, UI_TOP_BTN_Y + 3, UI_TOP_BTN_Y + UI_TOP_BTN_H - 3, UI_LINE);
 
     ui_button(ren, ui_top_rect(UI_TOP_DELPEAK, l->win_w), "Delete peak", UI_ICON_TRASH,
-              UI_BTN_DANGER, 0, mx, my, mdown);
+              UI_BTN_DANGER_QUIET, 0, mx, my, mdown);
 
     if (ui_top_right_visible(l->win_w)) {
         SDL_Rect off = ui_top_rect(UI_TOP_OFFSET, l->win_w);
@@ -773,17 +755,18 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 }
 
 // A small state chip, e.g. "filter off". Returns its width.
-static int draw_chip(SDL_Renderer *ren, int right_x, int cy, const char *text, SDL_Color c, int dotted) {
-    int tw = ui_text_w(UI_FONT_SANS_SM, text);
+static int draw_chip(SDL_Renderer *ren, int right_x, int cy, const char *text, SDL_Color c,
+                     int dotted, int role) {
+    int tw = ui_text_w(role, text);
     int w = tw + (dotted ? 24 : 16);
     SDL_Rect r = {right_x - w, cy - 9, w, 18};
     fill_rounded_rect(ren, r, 3, UI_RAISED);
     if (dotted) {
         SDL_Rect dot = {r.x + 8, cy - 3, 6, 6};
         fill_rounded_rect(ren, dot, 3, c);
-        ui_text_v(ren, UI_FONT_SANS_SM, text, r.x + 18, r, c);
+        ui_text_v(ren, role, text, r.x + 18, r, c);
     } else {
-        ui_text_v(ren, UI_FONT_SANS_SM, text, r.x + 8, r, c);
+        ui_text_v(ren, role, text, r.x + 8, r, c);
     }
     return w;
 }
@@ -813,11 +796,11 @@ static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s",
                      state->multi_layout ? "stack" : "overlay",
                      state->multi_ynorm ? "normalised Y" : "shared Y");
-            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0) + 6;
+            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0, UI_FONT_SANS_SM) + 6;
         }
         if (state->rolling_avg_active) {
             snprintf(buf, sizeof(buf), "rolling avg %d pt", state->rolling_avg_window);
-            rx -= draw_chip(ren, rx, cy, buf, UI_OK, 1) + 6;
+            rx -= draw_chip(ren, rx, cy, buf, UI_OK, 1, UI_FONT_MONO_SM) + 6;
         }
     }
 
@@ -849,10 +832,10 @@ static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *stat
                          (state->lorentz_gamma > 0 && state->gauss_gamma > 0) ? "Voigt" :
                          (state->lorentz_gamma > 0) ? "Lorentz" : "Gauss");
             }
-            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0) + 6;
+            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0, UI_FONT_MONO_SM) + 6;
         }
         rx -= draw_chip(ren, rx, cy, state->filter_active ? "filter on" : "filter off",
-                        state->filter_active ? UI_WARN : UI_FAINT, 1) + 6;
+                        state->filter_active ? UI_WARN : UI_FAINT, 1, UI_FONT_SANS_SM) + 6;
         (void)rx;
     }
 }
