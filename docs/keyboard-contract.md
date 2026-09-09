@@ -20,8 +20,8 @@ keyboard mapping is a primary workflow, not an optional convenience.
 | --- | --- | --- |
 | `A` / `S` | Pan both views left / right | Pan experiment; `Shift` pans prediction |
 | `Q` / `E` | Zoom both views out / in | Zoom experiment; `Shift` zooms prediction |
-| `W` / `Z` | Change experimental intensity scale | Change experiment; `Shift` scales prediction |
-| Up / Down | Move experimental vertical view | Move experiment; `Shift` scales prediction |
+| `W` / `Z` | Change experiment; `Shift` scales prediction | Change experiment; `Shift` scales prediction |
+| Up / Down | Move experiment; `Shift` scales prediction | Move experiment; `Shift` scales prediction |
 | `K` / `L` | Move both cursor bars | Move experiment bar; `Shift` moves prediction bar |
 | `Tab` | Autoscale the current experimental display | Same |
 | `R` | Reset view state | Same |
