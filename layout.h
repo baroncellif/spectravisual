@@ -62,6 +62,9 @@ int  ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int k
                int active, int mx, int my, int mdown);
 void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value, int focused);
 void ui_field_u(SDL_Renderer *ren, SDL_Rect r, const char *value, const char *unit, int focused);
+void ui_field_ex(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value,
+                 const char *unit, int focused, int caret, int anchor);
+int  ui_field_caret_at(SDL_Rect r, const char *value, const char *unit, int mx);
 void ui_switch(SDL_Renderer *ren, SDL_Rect r, int on);
 int  ui_toggle_row(SDL_Renderer *ren, SDL_Rect r, const char *label, int on, int mx, int my);
 void ui_segmented(SDL_Renderer *ren, SDL_Rect r, const char *const *labels, int n, int sel);

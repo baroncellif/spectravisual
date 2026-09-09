@@ -3,6 +3,7 @@
 #include "ui_chrome.h"
 #include "ui_panels.h"
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -152,33 +153,64 @@ static const int UI_FONT_SIZE[UI_FONT_COUNT] = {
     10    /* UI_FONT_MONO_SM axis ticks             */
 };
 
+// Opens the first font of a list that exists. A leading '~' is expanded, so a
+// face installed for the user is found without hard-coding a home directory.
+static TTF_Font *open_font_path(const char *path, int px) {
+    if (path[0] == '~') {
+        const char *home = getenv("HOME");
+        if (!home) return NULL;
+        char full[1024];
+        snprintf(full, sizeof(full), "%s%s", home, path + 1);
+        return TTF_OpenFont(full, px);
+    }
+    return TTF_OpenFont(path, px);
+}
+
 static TTF_Font *open_first(const char *const *paths, int n, int px) {
     for (int i = 0; i < n; i++) {
-        TTF_Font *f = TTF_OpenFont(paths[i], px);
+        TTF_Font *f = open_font_path(paths[i], px);
         if (f) return f;
     }
     return NULL;
 }
 
+// Aptos for the interface, Aptos Mono for every number, with the system faces
+// as a fallback on a machine where Aptos is not installed.
+static const char *const FONT_SANS[] = {
+    "~/Library/Fonts/Aptos.ttf",
+    "/Library/Fonts/Aptos.ttf",
+    "/System/Library/Fonts/SFNS.ttf",
+    "/System/Library/Fonts/HelveticaNeue.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+};
+static const char *const FONT_TITLE[] = {
+    "~/Library/Fonts/Aptos-SemiBold.ttf",
+    "/Library/Fonts/Aptos-SemiBold.ttf",
+    "~/Library/Fonts/Aptos.ttf",
+    "/System/Library/Fonts/SFNS.ttf",
+    "/System/Library/Fonts/HelveticaNeue.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+};
+static const char *const FONT_MONO[] = {
+    "~/Library/Fonts/Aptos-Mono.ttf",
+    "/Library/Fonts/Aptos-Mono.ttf",
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+};
+#define N_SANS  (int)(sizeof(FONT_SANS)  / sizeof(FONT_SANS[0]))
+#define N_TITLE (int)(sizeof(FONT_TITLE) / sizeof(FONT_TITLE[0]))
+#define N_MONO  (int)(sizeof(FONT_MONO)  / sizeof(FONT_MONO[0]))
+
 int ui_fonts_init(float scale) {
-    static const char *sans[] = {
-        "/System/Library/Fonts/SFNS.ttf",
-        "/System/Library/Fonts/HelveticaNeue.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    };
-    static const char *mono[] = {
-        "/System/Library/Fonts/SFNSMono.ttf",
-        "/System/Library/Fonts/Menlo.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
-    };
     g_scale = (scale > 0.1f) ? scale : 1.0f;
     g_dev_scale = g_scale;
     for (int r = 0; r < UI_FONT_COUNT; r++) {
         int px = (int)lround(UI_FONT_SIZE[r] * g_scale);
-        int is_mono = (r == UI_FONT_MONO || r == UI_FONT_MONO_SM);
-        g_fonts[r] = is_mono ? open_first(mono, 3, px) : open_first(sans, 4, px);
-        if (!g_fonts[r]) g_fonts[r] = open_first(sans, 4, px);
+        if (r == UI_FONT_MONO || r == UI_FONT_MONO_SM) g_fonts[r] = open_first(FONT_MONO, N_MONO, px);
+        else if (r == UI_FONT_TITLE)                   g_fonts[r] = open_first(FONT_TITLE, N_TITLE, px);
+        else                                           g_fonts[r] = open_first(FONT_SANS, N_SANS, px);
+        if (!g_fonts[r]) g_fonts[r] = open_first(FONT_SANS, N_SANS, px);
         if (!g_fonts[r]) return 0;
     }
     return 1;
@@ -338,34 +370,87 @@ int ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int ki
     return hover;
 }
 
-// Numeric input field. Shows the live edit buffer with a caret when focused.
-void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value, int focused) {
-    filled_border(ren, r, UI_RADIUS, focused ? UI_ACCENT_LINE : UI_LINE, UI_INPUT, 1);
-    int x = r.x + 8;
-    if (label && *label) {
-        ui_text_v(ren, UI_FONT_SANS_SM, label, x, r, UI_FAINT);
-        x += ui_text_w(UI_FONT_SANS_SM, label) + 8;
-        ui_vline(ren, x - 4, r.y + 1, r.y + r.h - 2, UI_LINE);
-    }
-    /* the value is right-aligned so digits stay in place while typing */
-    int h = ui_text_h(UI_FONT_MONO);
-    ui_text_right(ren, UI_FONT_MONO, value, r.x + r.w - 8, r.y + (r.h - h) / 2,
-                  focused ? UI_TEXT : UI_TEXT);
+// Width of the first `n` characters of `txt` in the mono face.
+static int mono_prefix_w(const char *txt, int n) {
+    char tmp[80];
+    if (n <= 0) return 0;
+    if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
+    memcpy(tmp, txt, (size_t)n);
+    tmp[n] = '\0';
+    return ui_text_w(UI_FONT_MONO, tmp);
 }
 
-// Numeric field with a unit suffix: the value stays right-aligned on the unit,
-// so a column of fields lines up on the same two edges.
-void ui_field_u(SDL_Renderer *ren, SDL_Rect r, const char *value, const char *unit, int focused) {
-    filled_border(ren, r, UI_RADIUS, focused ? UI_ACCENT_LINE : UI_LINE, UI_INPUT, 1);
+// Left edge of the value inside a field: values are right-aligned, and the unit
+// suffix (when there is one) sits between them and the border.
+static int field_text_x(SDL_Rect r, const char *value, const char *unit) {
     int right = r.x + r.w - 8;
-    int y_mono = r.y + (r.h - ui_text_h(UI_FONT_MONO)) / 2;
+    if (unit && *unit) right -= ui_text_w(UI_FONT_SANS_SM, unit) + 6;
+    return right - ui_text_w(UI_FONT_MONO, value);
+}
+
+// Character index the pointer is closest to: this is what places the caret on a
+// click, and what a drag extends the selection to.
+int ui_field_caret_at(SDL_Rect r, const char *value, const char *unit, int mx) {
+    int x0 = field_text_x(r, value, unit);
+    int n = (int)strlen(value);
+    int best = 0, best_d = 1 << 28;
+    for (int i = 0; i <= n; i++) {
+        int d = abs(mx - (x0 + mono_prefix_w(value, i)));
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    return best;
+}
+
+// A numeric field. `focused` draws the caret at `caret` and highlights the range
+// between `caret` and `anchor`; pass caret < 0 for a field that is not editable
+// at the moment.
+void ui_field_ex(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value,
+                 const char *unit, int focused, int caret, int anchor) {
+    filled_border(ren, r, UI_RADIUS, focused ? UI_ACCENT_LINE : UI_LINE, UI_INPUT, 1);
+
+    if (label && *label) {
+        int lx = r.x + 8;
+        ui_text_v(ren, UI_FONT_SANS_SM, label, lx, r, UI_FAINT);
+        ui_vline(ren, lx + ui_text_w(UI_FONT_SANS_SM, label) + 4, r.y + 1, r.y + r.h - 2, UI_LINE);
+    }
     if (unit && *unit) {
         int uw = ui_text_w(UI_FONT_SANS_SM, unit);
-        ui_text(ren, UI_FONT_SANS_SM, unit, right - uw,
+        ui_text(ren, UI_FONT_SANS_SM, unit, r.x + r.w - 8 - uw,
                 r.y + (r.h - ui_text_h(UI_FONT_SANS_SM)) / 2, UI_FAINT);
-        right -= uw + 6;
     }
-    ui_text_right(ren, UI_FONT_MONO, value, right, y_mono, UI_TEXT);
+
+    int x0 = field_text_x(r, value, unit);
+    int n  = (int)strlen(value);
+
+    if (focused && caret >= 0) {
+        if (caret > n) caret = n;
+        if (anchor > n) anchor = n;
+        if (anchor < 0) anchor = caret;
+        int lo = caret < anchor ? caret : anchor;
+        int hi = caret > anchor ? caret : anchor;
+        if (lo != hi) {
+            int xa = x0 + mono_prefix_w(value, lo);
+            int xb = x0 + mono_prefix_w(value, hi);
+            fill_rounded_rect(ren, (SDL_Rect){xa, r.y + 3, xb - xa, r.h - 6}, 2,
+                              (SDL_Color){37, 74, 122, 255});
+        }
+    }
+
+    ui_text(ren, UI_FONT_MONO, value, x0, r.y + (r.h - ui_text_h(UI_FONT_MONO)) / 2, UI_TEXT);
+
+    if (focused && caret >= 0) {
+        int cx = x0 + mono_prefix_w(value, caret > n ? n : caret);
+        ui_vline(ren, cx, r.y + 4, r.y + r.h - 5, UI_ACCENT);
+        ui_vline(ren, cx + 1, r.y + 4, r.y + r.h - 5, UI_ACCENT);
+    }
+}
+
+void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value, int focused) {
+    ui_field_ex(ren, r, label, value, NULL, focused, -1, -1);
+}
+
+void ui_field_u(SDL_Renderer *ren, SDL_Rect r, const char *value, const char *unit, int focused) {
+    ui_field_ex(ren, r, NULL, value, unit, focused, -1, -1);
 }
 
 // Small on/off switch, used for the "enabled" state of a tool.

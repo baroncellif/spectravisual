@@ -405,7 +405,11 @@ int main(int argc, char *argv[])
         render_app(ren, font, &state, &layout);
         if (state.export_requested) {
             state.export_requested = 0;
+            // Redraw without presenting: the back buffer then holds exactly the
+            // frame the user is looking at.
+            render_app_frame(ren, font, &state, &layout);
             save_screenshot(ren, &state);
+            SDL_RenderPresent(ren);
         }
     }
 

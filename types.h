@@ -236,6 +236,15 @@ typedef struct {
     int filt_use_delta;       // enable Delta J/Ka/Kc gating (upper - lower)
     int filt_dj, filt_dka, filt_dkc;
 
+    // Text input. The focused field is a real text field: a caret, a selection
+    // anchor, and the on-screen rectangle it was last drawn in, which is what
+    // lets a click place the caret between two digits.
+    int input_caret;        // caret position, 0..strlen(text_input_buf)
+    int input_anchor;       // selection anchor; equal to the caret when nothing is selected
+    int input_last;         // field that had focus when the current click arrived
+    SDL_Rect input_rect;    // where that field was drawn
+    char input_unit[12];    // its unit suffix, which shifts the value's right edge
+
     // Measure Tool State
     int measure_active;
     int measure_phase; 

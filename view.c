@@ -155,6 +155,10 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
 static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l);
 static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_status_bar(SDL_Renderer *ren, AppState *state, Layout *l);
+static int  field_focus(AppState *st, int which);
+static void field_val(AppState *st, int which, char *out, size_t n, const char *fmt, double v);
+static void draw_field(SDL_Renderer *ren, AppState *st, SDL_Rect r, const char *label,
+                       const char *value, const char *unit, int which);
 static const char *short_path(const char *path);
 static int pred_line_is_selected(AppState *state, int idx);
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
@@ -176,7 +180,11 @@ static double tick_step_for_pixels(double range, int pixels, int min_px) {
 }
 
 // --- MAIN RENDER ENTRY POINT ---
-void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+// Draws one frame without presenting it. Screenshots read the pixels here,
+// because reading them after SDL_RenderPresent returns whatever the driver
+// leaves in the back buffer - which is how the export ended up saving a stale
+// frame.
+void render_app_frame(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     // 1. Clear Screen
     SDL_SetRenderDrawColor(ren, COL_BG.r, COL_BG.g, COL_BG.b, 255);
     SDL_RenderClear(ren);
@@ -214,8 +222,10 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     draw_ui_overlays(ren, font, state, l);
     if (state->data_loaded) draw_cursor_overlay(ren, font, state, l);
     if (state->show_help) draw_help_overlay(ren, font, state, l);
+}
 
-    // 5. Present
+void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    render_app_frame(ren, font, state, l);
     SDL_RenderPresent(ren);
 }
 
@@ -692,9 +702,8 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
     if (ui_top_right_visible(l->win_w)) {
         SDL_Rect off = ui_top_rect(UI_TOP_OFFSET, l->win_w);
         char val[40];
-        if (state->input_state == INPUT_OFFSET) snprintf(val, sizeof(val), "%s_", state->text_input_buf);
-        else                                    snprintf(val, sizeof(val), "%.4f", state->exp_offset);
-        ui_field(ren, off, "Offset", val, state->input_state == INPUT_OFFSET);
+        field_val(state, INPUT_OFFSET, val, sizeof(val), "%.4f", state->exp_offset);
+        draw_field(ren, state, off, "Offset", val, NULL, INPUT_OFFSET);
 
         ui_button(ren, ui_top_rect(UI_TOP_EXPORT, l->win_w), "Export view", UI_ICON_EXPORT,
                   UI_BTN_QUIET, 0, mx, my, mdown);
@@ -919,22 +928,38 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
     SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
 }
 
-// Value of an input field: the live edit buffer with a caret while focused,
-// otherwise the stored value.
+static int field_focus(AppState *st, int which) { return (int)st->input_state == which; }
+
+// Value shown in a field: the live edit buffer while it is focused (the caret
+// and any selection are drawn by ui_field_ex), otherwise the stored value.
 static void field_val(AppState *st, int which, char *out, size_t n, const char *fmt, double v) {
-    if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
-    else                               snprintf(out, n, fmt, v);
+    if (field_focus(st, which)) snprintf(out, n, "%s", st->text_input_buf);
+    else                        snprintf(out, n, fmt, v);
 }
 static void field_val_i(AppState *st, int which, char *out, size_t n, int v) {
-    if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
-    else                               snprintf(out, n, "%d", v);
+    if (field_focus(st, which)) snprintf(out, n, "%s", st->text_input_buf);
+    else                        snprintf(out, n, "%d", v);
+}
+
+// Draws a field and, while it is focused, records where it was drawn. The
+// controller reads that rectangle back to turn a click or a drag into a caret
+// position, so the text cursor lands exactly between the drawn characters.
+static void draw_field(SDL_Renderer *ren, AppState *st, SDL_Rect r, const char *label,
+                       const char *value, const char *unit, int which) {
+    int focused = field_focus(st, which);
+    if (focused) {
+        st->input_rect = r;
+        snprintf(st->input_unit, sizeof(st->input_unit), "%s", unit ? unit : "");
+    }
+    ui_field_ex(ren, r, label, value, unit, focused,
+                focused ? st->input_caret : -1, focused ? st->input_anchor : -1);
 }
 
 // One row of a panel: caption on the left, value field on the right edge.
 static void panel_field(SDL_Renderer *ren, AppState *st, SDL_Rect panel, const char *label,
                         SDL_Rect field, int which, const char *value, const char *unit) {
     ui_text_v(ren, UI_FONT_SANS, label, panel.x + UI_P_PAD, field, UI_DIM);
-    ui_field_u(ren, field, value, unit, (int)st->input_state == which);
+    draw_field(ren, st, field, NULL, value, unit, which);
 }
 
 // A line of explanatory text under a group of controls, and its continuation.
@@ -1146,9 +1171,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             SDL_Rect lo = ui_filt_qn(w, i, 0), hi = ui_filt_qn(w, i, 1);
             ui_text_v(ren, UI_FONT_SANS, qn_lbl[i], ui_p_row(w, 5 + i).x + 4, lo, UI_DIM);
             field_val_i(state, qn_in_lo[i], buf, sizeof(buf), qn_lo[i]);
-            ui_field_u(ren, lo, buf, "", (int)state->input_state == qn_in_lo[i]);
+            draw_field(ren, state, lo, NULL, buf, NULL, qn_in_lo[i]);
             field_val_i(state, qn_in_hi[i], buf, sizeof(buf), qn_hi[i]);
-            ui_field_u(ren, hi, buf, "", (int)state->input_state == qn_in_hi[i]);
+            draw_field(ren, state, hi, NULL, buf, NULL, qn_in_hi[i]);
         }
 
         ui_toggle_row(ren, ui_filt_jump(w), "Quantum number jump", state->filt_use_delta, mx, my);
@@ -1159,7 +1184,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             SDL_Rect f = ui_filt_delta(w, i);
             ui_text_v(ren, UI_FONT_SANS, d_lbl[i], f.x - ui_text_w(UI_FONT_SANS, d_lbl[i]) - 6, f, UI_DIM);
             field_val_i(state, d_in[i], buf, sizeof(buf), d_val[i]);
-            ui_field_u(ren, f, buf, "", (int)state->input_state == d_in[i]);
+            draw_field(ren, state, f, NULL, buf, NULL, d_in[i]);
         }
     }
 

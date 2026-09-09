@@ -25,6 +25,91 @@ static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
 
+// --- TEXT FIELD EDITING ---------------------------------------------------
+// The focused field behaves like any other text field: the value starts
+// selected, typing replaces the selection, and the caret can be placed with the
+// arrows or with the mouse.
+
+static int input_sel_lo(const AppState *s) { return s->input_caret < s->input_anchor ? s->input_caret : s->input_anchor; }
+static int input_sel_hi(const AppState *s) { return s->input_caret > s->input_anchor ? s->input_caret : s->input_anchor; }
+static int input_len(const AppState *s)    { return (int)strlen(s->text_input_buf); }
+
+static void input_clamp(AppState *s) {
+    int n = input_len(s);
+    if (s->input_caret  < 0) s->input_caret  = 0;
+    if (s->input_caret  > n) s->input_caret  = n;
+    if (s->input_anchor < 0) s->input_anchor = 0;
+    if (s->input_anchor > n) s->input_anchor = n;
+}
+
+// Removes the selected range. Returns 1 if anything was removed.
+static int input_delete_selection(AppState *s) {
+    input_clamp(s);
+    int lo = input_sel_lo(s), hi = input_sel_hi(s);
+    if (lo == hi) return 0;
+    memmove(s->text_input_buf + lo, s->text_input_buf + hi, strlen(s->text_input_buf + hi) + 1);
+    s->input_caret = s->input_anchor = lo;
+    return 1;
+}
+
+static void input_insert(AppState *s, const char *text) {
+    input_delete_selection(s);
+    int n = input_len(s), add = (int)strlen(text);
+    int room = (int)sizeof(s->text_input_buf) - 1 - n;
+    if (add > room) add = room;
+    if (add <= 0) return;
+    memmove(s->text_input_buf + s->input_caret + add, s->text_input_buf + s->input_caret,
+            (size_t)(n - s->input_caret) + 1);
+    memcpy(s->text_input_buf + s->input_caret, text, (size_t)add);
+    s->input_caret += add;
+    s->input_anchor = s->input_caret;
+}
+
+static void input_move(AppState *s, int caret, int keep_selection) {
+    s->input_caret = caret;
+    if (!keep_selection) s->input_anchor = caret;
+    input_clamp(s);
+}
+
+// Gives a field focus. Clicking the field that already had it places the caret
+// where the pointer is instead of selecting the value again.
+static void input_focus(AppState *s, int which, int mx) {
+    int again = (s->input_last == which);
+    s->input_state = (InputState)which;
+    SDL_StartTextInput();
+    if (again && s->input_rect.w > 0) {
+        s->input_caret = ui_field_caret_at(s->input_rect, s->text_input_buf, s->input_unit, mx);
+        s->input_anchor = s->input_caret;
+    } else {
+        s->input_anchor = 0;
+        s->input_caret = input_len(s);      /* the value starts selected */
+    }
+}
+
+static void input_copy(AppState *s, int cut) {
+    input_clamp(s);
+    int lo = input_sel_lo(s), hi = input_sel_hi(s);
+    if (lo == hi) { lo = 0; hi = input_len(s); }
+    char tmp[64];
+    int n = hi - lo;
+    if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
+    memcpy(tmp, s->text_input_buf + lo, (size_t)n);
+    tmp[n] = '\0';
+    SDL_SetClipboardText(tmp);
+    if (cut) { s->input_anchor = lo; s->input_caret = hi; input_delete_selection(s); }
+}
+
+static void input_paste(AppState *s) {
+    char *clip = SDL_GetClipboardText();
+    if (!clip) return;
+    char clean[64]; int o = 0;
+    for (const char *p = clip; *p && o < (int)sizeof(clean) - 1; p++)
+        if (*p != '\n' && *p != '\r' && *p != '\t') clean[o++] = *p;
+    clean[o] = '\0';
+    SDL_free(clip);
+    input_insert(s, clean);
+}
+
 // Scale the per-spectrum intensity gain. By default all visible spectra are
 // scaled together; with "individual intensity" enabled only the active one is.
 static void scale_intensity(AppState *s, double factor) {
@@ -49,23 +134,56 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
                 continue;
             } 
             else if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_BACKSPACE) {
-                    size_t len = strlen(state->text_input_buf);
-                    if (len > 0) state->text_input_buf[len-1] = '\0';
+                SDL_Keymod mod = SDL_GetModState();
+                int cmd   = (mod & (KMOD_GUI | KMOD_CTRL)) != 0;
+                int shift = (mod & KMOD_SHIFT) != 0;
+                SDL_Keycode k = e.key.keysym.sym;
+
+                if (cmd && k == SDLK_a) {
+                    state->input_anchor = 0;
+                    state->input_caret = (int)strlen(state->text_input_buf);
                     continue;
                 }
-                else if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    state->input_state = INPUT_NONE;
-                    SDL_StopTextInput();
-                    continue;
+                if (cmd && (k == SDLK_c || k == SDLK_x)) { input_copy(state, k == SDLK_x); continue; }
+                if (cmd && k == SDLK_v) { input_paste(state); continue; }
+
+                switch (k) {
+                    case SDLK_LEFT:
+                        input_move(state, cmd ? 0 : state->input_caret - 1, shift);
+                        continue;
+                    case SDLK_RIGHT:
+                        input_move(state, cmd ? (int)strlen(state->text_input_buf)
+                                              : state->input_caret + 1, shift);
+                        continue;
+                    case SDLK_HOME: input_move(state, 0, shift); continue;
+                    case SDLK_END:  input_move(state, (int)strlen(state->text_input_buf), shift); continue;
+                    case SDLK_BACKSPACE:
+                        if (!input_delete_selection(state) && state->input_caret > 0) {
+                            input_move(state, state->input_caret - 1, 1);
+                            input_delete_selection(state);
+                        }
+                        continue;
+                    case SDLK_DELETE:
+                        if (!input_delete_selection(state) &&
+                            state->input_caret < (int)strlen(state->text_input_buf)) {
+                            input_move(state, state->input_caret + 1, 1);
+                            input_delete_selection(state);
+                        }
+                        continue;
+                    case SDLK_ESCAPE:
+                        state->input_state = INPUT_NONE;
+                        SDL_StopTextInput();
+                        continue;
+                    case SDLK_RETURN:
+                    case SDLK_KP_ENTER:
+                        commit_text_input(state);
+                        continue;
+                    default:
+                        continue;
                 }
-                else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                    commit_text_input(state);
-                    continue;
-                }
-                continue;
             }
             else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL) {
+                state->input_last = (int)state->input_state;
                 commit_text_input(state);
             }
         }
@@ -79,7 +197,10 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
                 SDL_free(path);
                 break;
             }
-            case SDL_MOUSEBUTTONDOWN: handle_mouse_down(state, l, &e.button); break;
+            case SDL_MOUSEBUTTONDOWN:
+                handle_mouse_down(state, l, &e.button);
+                state->input_last = INPUT_NONE;
+                break;
             case SDL_MOUSEBUTTONUP:   handle_mouse_up(state, l, &e.button); break;
             case SDL_MOUSEMOTION:     handle_mouse_motion(state, l, &e.motion); break;
             case SDL_MOUSEWHEEL:      handle_mouse_wheel(state, l, &e.wheel); break;
@@ -148,14 +269,14 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
             case UI_TOOL_PEAKS:
                 if (point_in_rect(mx, my, ui_pf_sig(w))) {
-                    s->input_state = INPUT_PF_SIG; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%d", s->pf_sig_pts);
+                    input_focus(s, INPUT_PF_SIG, mx);
                 } else if (point_in_rect(mx, my, ui_pf_noise(w))) {
-                    s->input_state = INPUT_PF_NOISE; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%d", s->pf_noise_pts);
+                    input_focus(s, INPUT_PF_NOISE, mx);
                 } else if (point_in_rect(mx, my, ui_pf_thresh(w))) {
-                    s->input_state = INPUT_PF_THRESH; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.1f", s->pf_thresh);
+                    input_focus(s, INPUT_PF_THRESH, mx);
                 } else if (point_in_rect(mx, my, ui_pf_find(w))) {
                     run_peak_finder(s->current_pts, s->n_pts, s->vxmin, s->vxmax,
                                     s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh, s->peaks, &s->n_peaks);
@@ -173,8 +294,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
             case UI_TOOL_AVG:
                 if (point_in_rect(mx, my, ui_avg_field(w))) {
-                    s->input_state = INPUT_AVG_PTS; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%d", s->rolling_avg_window);
+                    input_focus(s, INPUT_AVG_PTS, mx);
                 } else if (point_in_rect(mx, my, ui_avg_toggle(w))) {
                     s->rolling_avg_active = !s->rolling_avg_active;
                     if (s->rolling_avg_active) {
@@ -195,23 +316,23 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 }
                 if (point_in_rect(mx, my, ui_br_f1(w))) {
                     if (s->broaden_mode == 0) {
-                        s->input_state = INPUT_GAMMA; SDL_StartTextInput();
                         snprintf(s->text_input_buf, 32, "%.2f", s->lorentz_gamma);
+                        input_focus(s, INPUT_GAMMA, mx);
                     } else {
-                        s->input_state = INPUT_KBETA; SDL_StartTextInput();
                         snprintf(s->text_input_buf, 32, "%.2f", s->kaiser_beta);
+                        input_focus(s, INPUT_KBETA, mx);
                     }
                 } else if (point_in_rect(mx, my, ui_br_f2(w))) {
                     if (s->broaden_mode == 0) {
-                        s->input_state = INPUT_GAUSS; SDL_StartTextInput();
                         snprintf(s->text_input_buf, 32, "%.2f", s->gauss_gamma);
+                        input_focus(s, INPUT_GAUSS, mx);
                     } else {
-                        s->input_state = INPUT_KCEROS; SDL_StartTextInput();
                         snprintf(s->text_input_buf, 32, "%d", s->kaiser_ceros);
+                        input_focus(s, INPUT_KCEROS, mx);
                     }
                 } else if (s->broaden_mode == 1 && point_in_rect(mx, my, ui_br_f3(w))) {
-                    s->input_state = INPUT_KINTR; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.3f", s->kaiser_intrinsic);
+                    input_focus(s, INPUT_KINTR, mx);
                 } else if (point_in_rect(mx, my, ui_br_toggle(w, s->broaden_mode == 1))) {
                     s->broadening_active = !s->broadening_active;
                 }
@@ -220,21 +341,21 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
             case UI_TOOL_CUT:
                 if (point_in_rect(mx, my, ui_cut_min(w))) {
-                    s->input_state = INPUT_PRED_MIN; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.1f", s->pred_min_log_int);
+                    input_focus(s, INPUT_PRED_MIN, mx);
                 } else if (point_in_rect(mx, my, ui_cut_max(w))) {
-                    s->input_state = INPUT_PRED_MAX; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.1f", s->pred_max_log_int);
+                    input_focus(s, INPUT_PRED_MAX, mx);
                 }
                 return;
 
             case UI_TOOL_JUMP:
                 if (point_in_rect(mx, my, ui_jump_start(w))) {
-                    s->input_state = INPUT_JUMP_MIN; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.1f", s->vxmin);
+                    input_focus(s, INPUT_JUMP_MIN, mx);
                 } else if (point_in_rect(mx, my, ui_jump_end(w))) {
-                    s->input_state = INPUT_JUMP_MAX; SDL_StartTextInput();
                     snprintf(s->text_input_buf, 32, "%.1f", s->vxmax);
+                    input_focus(s, INPUT_JUMP_MAX, mx);
                 }
                 return;
 
@@ -255,8 +376,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 for (int i = 0; i < 3; i++) {
                     for (int c = 0; c < 2; c++) {
                         if (point_in_rect(mx, my, ui_filt_qn(w, i, c))) {
-                            s->input_state = qn_in[i][c]; SDL_StartTextInput();
                             snprintf(s->text_input_buf, 32, "%d", *qn_val[i][c]);
+                            input_focus(s, qn_in[i][c], mx);
                             return;
                         }
                     }
@@ -266,8 +387,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 int *d_val[3] = {&s->filt_dj, &s->filt_dka, &s->filt_dkc};
                 for (int i = 0; i < 3; i++) {
                     if (point_in_rect(mx, my, ui_filt_delta(w, i))) {
-                        s->input_state = d_in[i]; SDL_StartTextInput();
                         snprintf(s->text_input_buf, 32, "%d", *d_val[i]);
+                        input_focus(s, d_in[i], mx);
                         return;
                     }
                 }
@@ -345,9 +466,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 return;
             }
             if (point_in_rect(mx, my, ui_top_rect(UI_TOP_OFFSET, l->win_w))) {
-                s->input_state = INPUT_OFFSET;
-                SDL_StartTextInput();
                 snprintf(s->text_input_buf, 32, "%.4f", s->exp_offset);
+                input_focus(s, INPUT_OFFSET, mx);
                 return;
             }
         }
@@ -424,6 +544,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
 
 // --- MOUSE MOTION (Dragging) ---
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m) {
+    // Dragging inside the focused field selects text, as in any text field.
+    if (s->input_state != INPUT_NONE && (m->state & SDL_BUTTON_LMASK) &&
+        s->input_rect.w > 0 && point_in_rect(m->x, m->y, s->input_rect)) {
+        s->input_caret = ui_field_caret_at(s->input_rect, s->text_input_buf, s->input_unit, m->x);
+        return;
+    }
     if (s->drag_target) {
         s->drag_target->rect.x = m->x - s->drag_offset.x;
         s->drag_target->rect.y = m->y - s->drag_offset.y;
@@ -647,9 +773,7 @@ static void commit_text_input(AppState *s) {
 
 // --- TEXT INPUT BUFFER ---
 static void handle_text_input_event(AppState *s, char *text) {
-    if (strlen(s->text_input_buf) < 63) {
-        strcat(s->text_input_buf, text);
-    }
+    input_insert(s, text);
 }
 
 static int path_looks_like_cat(const char *path) {
