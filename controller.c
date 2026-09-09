@@ -470,6 +470,16 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 input_focus(s, INPUT_OFFSET, mx);
                 return;
             }
+            if (point_in_rect(mx, my, ui_top_rect(UI_TOP_CAT_TEMP, l->win_w))) {
+                snprintf(s->text_input_buf, 32, "%.1f", s->cat_temp_k);
+                input_focus(s, INPUT_CAT_TEMP, mx);
+                return;
+            }
+            if (point_in_rect(mx, my, ui_top_rect(UI_TOP_ROT_TEMP, l->win_w))) {
+                snprintf(s->text_input_buf, 32, "%.1f", s->rot_temp_k);
+                input_focus(s, INPUT_ROT_TEMP, mx);
+                return;
+            }
         }
         /* clicks on the chrome bands never fall through to the plot */
         if (my < UI_CONTENT_Y) return;
@@ -756,6 +766,24 @@ static void commit_text_input(AppState *s) {
     }
     else if (s->input_state == INPUT_OFFSET) {
         s->exp_offset = atof(s->text_input_buf);
+    }
+    else if (s->input_state == INPUT_CAT_TEMP) {
+        double temp_k = atof(s->text_input_buf);
+        if (isfinite(temp_k) && temp_k > 0.0) s->cat_temp_k = temp_k;
+        if (s->pred_lines && s->n_pred > 0)
+            rescale_predicted_intensities(s->pred_lines, s->n_pred,
+                                          s->cat_temp_k, s->rot_temp_k,
+                                          &s->pred_global_max);
+    }
+    else if (s->input_state == INPUT_ROT_TEMP) {
+        double temp_k = atof(s->text_input_buf);
+        if (isfinite(temp_k) && temp_k > 0.0) {
+            s->rot_temp_k = temp_k;
+            if (s->pred_lines && s->n_pred > 0)
+                rescale_predicted_intensities(s->pred_lines, s->n_pred,
+                                              s->cat_temp_k, s->rot_temp_k,
+                                              &s->pred_global_max);
+        }
     }
     else if (s->input_state == INPUT_FILT_JMIN)  s->filt_j_min  = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_FILT_JMAX)  s->filt_j_max  = atoi(s->text_input_buf);

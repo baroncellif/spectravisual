@@ -53,6 +53,8 @@ typedef enum {
     UI_TOP_SYNC,
     UI_TOP_DELPEAK,
     UI_TOP_OFFSET,
+    UI_TOP_CAT_TEMP,
+    UI_TOP_ROT_TEMP,
     UI_TOP_EXPORT,
     UI_TOP_HELP,
     UI_TOP_COUNT
@@ -66,16 +68,20 @@ typedef enum {
 
 static inline SDL_Rect ui_top_rect(int item, int win_w) {
     const int y = UI_TOP_BTN_Y, h = UI_TOP_BTN_H;
-    int help_w = 92, export_w = 104, offset_w = 150;
+    int help_w = 92, export_w = 104, offset_w = 150, temp_w = 132, cat_temp_w = 132;
     int help_x   = win_w - 10 - help_w;
     int export_x = help_x - 6 - export_w;
     int offset_x = export_x - 14 - offset_w;
+    int temp_x   = offset_x - 6 - temp_w;
+    int cat_temp_x = temp_x - 6 - cat_temp_w;
     switch (item) {
         case UI_TOP_BAR:     return (SDL_Rect){ 10, y,  58, h};
         case UI_TOP_MEASURE: return (SDL_Rect){ 72, y,  86, h};
         case UI_TOP_SYNC:    return (SDL_Rect){162, y,  64, h};
         case UI_TOP_DELPEAK: return (SDL_Rect){243, y, 104, h};
         case UI_TOP_OFFSET:  return (SDL_Rect){offset_x, y, offset_w, h};
+        case UI_TOP_CAT_TEMP:return (SDL_Rect){cat_temp_x, y, cat_temp_w, h};
+        case UI_TOP_ROT_TEMP:return (SDL_Rect){temp_x, y, temp_w, h};
         case UI_TOP_EXPORT:  return (SDL_Rect){export_x, y, export_w, h};
         case UI_TOP_HELP:    return (SDL_Rect){help_x,   y, help_w,   h};
         default:             return (SDL_Rect){0, 0, 0, 0};
@@ -84,7 +90,7 @@ static inline SDL_Rect ui_top_rect(int item, int win_w) {
 
 /* The right-hand controls need room; below this width they are hidden and the
  * keyboard shortcuts remain the way to reach them. */
-static inline int ui_top_right_visible(int win_w) { return win_w > 780; }
+static inline int ui_top_right_visible(int win_w) { return win_w > 1060; }
 
 /* --- line-art icons, drawn from polylines instead of a symbol font --- */
 typedef enum {

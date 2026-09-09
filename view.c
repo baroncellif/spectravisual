@@ -700,6 +700,20 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
               UI_BTN_DANGER_QUIET, 0, mx, my, mdown);
 
     if (ui_top_right_visible(l->win_w)) {
+        SDL_Rect cat_temp = ui_top_rect(UI_TOP_CAT_TEMP, l->win_w);
+        char cat_temp_val[40];
+        if (field_focus(state, INPUT_CAT_TEMP)) snprintf(cat_temp_val, sizeof(cat_temp_val), "%s", state->text_input_buf);
+        else if (state->cat_temp_k > 0.0)       snprintf(cat_temp_val, sizeof(cat_temp_val), "%.1f", state->cat_temp_k);
+        else                                     snprintf(cat_temp_val, sizeof(cat_temp_val), "set");
+        draw_field(ren, state, cat_temp, "T cat", cat_temp_val, "K", INPUT_CAT_TEMP);
+
+        SDL_Rect temp = ui_top_rect(UI_TOP_ROT_TEMP, l->win_w);
+        char temp_val[40];
+        if (field_focus(state, INPUT_ROT_TEMP)) snprintf(temp_val, sizeof(temp_val), "%s", state->text_input_buf);
+        else if (state->rot_temp_k > 0.0)       snprintf(temp_val, sizeof(temp_val), "%.1f", state->rot_temp_k);
+        else                                     snprintf(temp_val, sizeof(temp_val), "set");
+        draw_field(ren, state, temp, "T rot", temp_val, "K", INPUT_ROT_TEMP);
+
         SDL_Rect off = ui_top_rect(UI_TOP_OFFSET, l->win_w);
         char val[40];
         field_val(state, INPUT_OFFSET, val, sizeof(val), "%.4f", state->exp_offset);

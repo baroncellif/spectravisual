@@ -33,6 +33,20 @@ static char mu_from_qn(int Kau,int Kal,int Kcu,int Kcl) {
     return '?';
 }
 
+// The first fixed-width fields of a Pickett .cat line are
+// FREQ(13), ERR(8), LGINT(8), DR(2), ELO(10), ... .
+static void parse_cat_intensity_fields(const char *line, PredLine *pl) {
+    int dr = 0;
+    double elo = 0.0;
+    if (sscanf(line + 29, "%2d%10lf", &dr, &elo) != 2) {
+        dr = 0;
+        elo = 0.0;
+    }
+    pl->cat_lgint = pl->lgint;
+    pl->elo_cm = elo;
+    pl->rot_dof = dr;
+}
+
 static int parse_line(const char *line, double *a, double *b, Separator sep) {
     if (sep == SEP_COMMA) return (sscanf(line, "%lf , %lf", a, b) == 2);
     if (sep == SEP_TAB)   return (sscanf(line, "%lf\t%lf", a, b) == 2);
@@ -202,6 +216,7 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
         pl.freq_mhz = freq;
         pl.lgint    = lgint;
         pl.linear_int = pow(10.0, lgint); 
+        parse_cat_intensity_fields(line, &pl);
 
         const int qn0 = 55;
         pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
@@ -258,6 +273,7 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
         pl.freq_mhz = freq;
         pl.lgint    = lgint;
         pl.linear_int = pow(10.0, lgint); 
+        parse_cat_intensity_fields(line, &pl);
 
         const int qn0 = 55;
         pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
@@ -284,6 +300,42 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
     PredLine *shrunk = realloc(arr, sizeof(PredLine) * n);
     *out = shrunk ? shrunk : arr;
     return n;
+}
+
+void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
+                                   double rot_temp_k,
+                                   double *global_max_int)
+{
+    // A .cat does not store the temperature used to calculate LGINT.  When
+    // both temperatures are supplied, rescale its integrated LTE intensity:
+    // I(T)/I(Tcat) = Q(Tcat)/Q(T) exp[-c2 E_l (1/T - 1/Tcat)]
+    //                 * (1-exp(-c2 nu/T)) / (1-exp(-c2 nu/Tcat)).
+    const double c2 = 1.438776877;       // hc/k_B, K cm
+    const double mhz_per_cm = 29979.2458;
+    int valid_temps = isfinite(cat_temp_k) && cat_temp_k > 0.0
+                   && isfinite(rot_temp_k) && rot_temp_k > 0.0;
+
+    double max_int = -1.0;
+    for (int i = 0; i < n; i++) {
+        PredLine *p = &lines[i];
+        if (!valid_temps) {
+            p->lgint = p->cat_lgint;
+            p->linear_int = pow(10.0, p->cat_lgint);
+            if (p->linear_int > max_int) max_int = p->linear_int;
+            continue;
+        }
+        double nu_cm = p->freq_mhz / mhz_per_cm;
+        double stim_t = -expm1(-c2 * nu_cm / rot_temp_k);
+        double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
+        double log_scale = -0.5 * p->rot_dof * log(rot_temp_k / cat_temp_k)
+                         - c2 * p->elo_cm * (1.0 / rot_temp_k - 1.0 / cat_temp_k);
+        if (stim_t > 0.0 && stim_cat > 0.0) log_scale += log(stim_t / stim_cat);
+
+        p->lgint = p->cat_lgint + log_scale / log(10.0);
+        p->linear_int = pow(10.0, p->lgint);
+        if (p->linear_int > max_int) max_int = p->linear_int;
+    }
+    if (global_max_int) *global_max_int = max_int;
 }
 
 int read_data(const char *fname, Point *pts, int maxpts,

@@ -15,6 +15,8 @@
 
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
+    state->cat_temp_k = 0.0;
+    state->rot_temp_k = 0.0;
     state->sync_active = 1;
     state->broaden_mode = 0;
     state->lorentz_gamma = 0.0;
@@ -221,7 +223,9 @@ static int set_predictions(AppState *state, const char *path) {
     state->pred_lines = pred;
     state->n_pred = n;
     state->pxmin = pxmin; state->pxmax = pxmax;
-    state->pred_global_max = pgmax;
+    rescale_predicted_intensities(state->pred_lines, state->n_pred,
+                                  state->cat_temp_k, state->rot_temp_k,
+                                  &state->pred_global_max);
     snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
 
     int first = !state->data_loaded;

@@ -83,6 +83,7 @@ Prediction handling
 	•	Ctrl / Cmd + click: select multiple predicted lines
 	•	m : apply Lorentzian broadening to predicted lines
 	•	C : open a window to filter predicted transitions by intensity (log10(Int))
+	•	T cat and T rot: the fields beside Offset rescale Pickett .cat line intensities between the catalog-generation temperature and a requested LTE rotational temperature (K). A .cat does not record its generation temperature, so both must be entered. The rescaling uses ELO and the DR rigid-rotor partition-function approximation; it changes relative predicted intensities, not the experimental trace's absolute scale.
 
 Analysis tools
 	•	f : select a frequency range to visualize

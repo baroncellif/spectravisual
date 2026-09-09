@@ -39,8 +39,11 @@ typedef struct {
 
 typedef struct {
     double freq_mhz;   
-    double lgint;      
-    double linear_int; 
+    double lgint;      // log10 integrated intensity at the currently selected T
+    double linear_int; // integrated intensity at the currently selected T
+    double cat_lgint;  // unmodified LGINT read from the .cat
+    double elo_cm;     // lower-state energy ELO, in cm^-1
+    int    rot_dof;    // rotational degrees of freedom (the .cat DR field)
     // Quantum Numbers
     int Ju, Kau, Kcu, M1u, M2u, M3u;
     int Jl, Kal, Kcl, M1l, M2l, M3l;
@@ -103,6 +106,8 @@ typedef enum {
     INPUT_JUMP_MIN,
     INPUT_JUMP_MAX,
     INPUT_OFFSET,
+    INPUT_CAT_TEMP,
+    INPUT_ROT_TEMP,
     // Quantum-number / branch filter inputs
     INPUT_FILT_JMIN,
     INPUT_FILT_JMAX,
@@ -161,6 +166,8 @@ typedef struct {
     double vxmin, vxmax, vymin, vymax;   
     double pvxmin, pvxmax;               
     double pred_scale;
+    double cat_temp_k;       // temperature used to generate LGINT; 0 = unknown
+    double rot_temp_k;       // requested rotational temperature; 0 = unset
     
     // Tools State
     int sync_active;
