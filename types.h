@@ -43,6 +43,7 @@ typedef struct {
     double linear_int; // integrated intensity at the currently selected T
     double cat_lgint;  // unmodified LGINT read from the .cat
     double elo_cm;     // lower-state energy ELO, in cm^-1
+    double line_strength; // recovered S; valid when Tcat and mu_cat are set
     int    rot_dof;    // rotational degrees of freedom (the .cat DR field)
     // Quantum Numbers
     int Ju, Kau, Kcu, M1u, M2u, M3u;
@@ -108,6 +109,12 @@ typedef enum {
     INPUT_OFFSET,
     INPUT_CAT_TEMP,
     INPUT_ROT_TEMP,
+    INPUT_MUCAT_A,
+    INPUT_MUCAT_B,
+    INPUT_MUCAT_C,
+    INPUT_MURED_A,
+    INPUT_MURED_B,
+    INPUT_MURED_C,
     // Quantum-number / branch filter inputs
     INPUT_FILT_JMIN,
     INPUT_FILT_JMAX,
@@ -168,6 +175,8 @@ typedef struct {
     double pred_scale;
     double cat_temp_k;       // temperature used to generate LGINT; 0 = unknown
     double rot_temp_k;       // requested rotational temperature; 0 = unset
+    double dipole_cat[3];    // a/b/c dipoles used to generate the .cat (Debye)
+    double dipole_red[3];    // manually requested a/b/c dipoles (Debye)
     
     // Tools State
     int sync_active;
@@ -210,6 +219,7 @@ typedef struct {
     DraggableWindow win_cut;
     DraggableWindow win_jump;
     DraggableWindow win_filt;
+    DraggableWindow win_dip;
     DraggableWindow win_spec;
 
     DraggableWindow *drag_target;

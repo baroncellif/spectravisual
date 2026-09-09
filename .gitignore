@@ -13,6 +13,7 @@ last_spectravisual
 # dati di esempio / output di lavoro (tenuti fuori dal repo)
 spettro.txt
 pred.cat
+pred.int
 linelist.csv
 assigned.lin
 assignments.txt

@@ -14,9 +14,12 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
 // Rescale Pickett catalog intensities from the temperature used to create the
 // .cat to a requested LTE rotational temperature. The partition function uses
 // the rigid-rotor approximation Qrot(T) / Qrot(Tcat) = (T / Tcat)^(DR/2).
-// Invalid temperatures leave the catalog intensities unchanged.
+// Invalid temperatures leave the catalog intensities unchanged. For a/b/c
+// components with both dipoles set, recover S from mu_cat and apply mu_red.
 void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
                                    double rot_temp_k,
+                                   const double dipole_cat[3],
+                                   const double dipole_red[3],
                                    double *global_max_int);
 
 // Reads a standard X Y data file

@@ -82,8 +82,10 @@ Prediction handling
 	•	Click on a predicted line: select a single transition
 	•	Ctrl / Cmd + click: select multiple predicted lines
 	•	m : apply Lorentzian broadening to predicted lines
+	•	d : open the Dipole moments panel
 	•	C : open a window to filter predicted transitions by intensity (log10(Int))
-	•	T cat and T rot: the fields beside Offset rescale Pickett .cat line intensities between the catalog-generation temperature and a requested LTE rotational temperature (K). A .cat does not record its generation temperature, so both must be entered. The rescaling uses ELO and the DR rigid-rotor partition-function approximation; it changes relative predicted intensities, not the experimental trace's absolute scale.
+	•	T cat and T rot: the fields beside Offset rescale Pickett .cat line intensities between the catalog-generation temperature and a requested LTE rotational temperature (K). A .cat does not record its generation temperature, so both must be entered manually. The rescaling uses ELO and the DR rigid-rotor partition-function approximation; it changes relative predicted intensities, not the experimental trace's absolute scale.
+	•	Dipole moments: enter the a/b/c dipoles used for the catalog (`mu cat`) and replacement values (`mu red`), in Debye. For each supplied component, the app recovers its line strength from the catalog intensity at T cat and predicts the intensity at T rot using the replacement dipole.
 
 Analysis tools
 	•	f : select a frequency range to visualize

@@ -51,6 +51,15 @@ static inline SDL_Rect ui_br_f3(SDL_Rect w)    { return ui_p_right(w, 3, UI_P_FI
 static inline SDL_Rect ui_br_toggle(SDL_Rect w, int kaiser) { return ui_p_row(w, kaiser ? 6 : 4); }
 static inline int      ui_br_rows(int kaiser)  { return kaiser ? 7 : 5; }
 
+/* --- Dipole moments --------------------------------------------------- */
+static inline SDL_Rect ui_dip_field(SDL_Rect w, int component, int reduced) {
+    SDL_Rect r = ui_p_row(w, 1 + component);
+    int red_x = r.x + r.w - UI_P_FIELD;
+    int cat_x = red_x - 8 - UI_P_FIELD;
+    return (SDL_Rect){reduced ? red_x : cat_x, r.y, UI_P_FIELD, UI_P_ROW};
+}
+#define UI_DIP_ROWS 5
+
 /* --- Rolling average -------------------------------------------------- */
 static inline SDL_Rect ui_avg_field(SDL_Rect w)  { return ui_p_right(w, 0, UI_P_FIELD); }
 static inline SDL_Rect ui_avg_toggle(SDL_Rect w) { return ui_p_row(w, 1); }
@@ -166,6 +175,7 @@ static inline int ui_panel_height(int tool, const AppState *s) {
         case UI_TOOL_PEAKS:   return ui_p_height(UI_PF_ROWS);
         case UI_TOOL_AVG:     return ui_p_height(UI_AVG_ROWS);
         case UI_TOOL_BROAD:   return ui_p_height(ui_br_rows(s->broaden_mode == 1));
+        case UI_TOOL_DIP:     return ui_p_height(UI_DIP_ROWS);
         case UI_TOOL_CUT:     return ui_p_height(UI_CUT_ROWS);
         case UI_TOOL_FILTER:  return ui_p_height(UI_FILT_ROWS);
         case UI_TOOL_JUMP:    return ui_p_height(UI_JUMP_ROWS);

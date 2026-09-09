@@ -33,6 +33,8 @@ static const signed char ICON_DATA[UI_ICON_COUNT][64] = {
     { 1,9, 3,4, 5,9, 7,14, 9,9, 11,4, 13,9, 15,9, STOP },
     /* BELL: broadened line profile */
     { 1,13, 4,12, 6,8, 8,3, 10,8, 12,12, 15,13, END, 8,3, 8,13, STOP },
+    /* DIPOLE: positive and negative ends */
+    { 8,2, 8,14, END, 5,4, 7,4, END, 6,3, 6,5, END, 10,12, 14,12, STOP },
     /* RANGE: bounded interval */
     { 3,3, 3,13, END, 13,3, 13,13, END, 5,8, 11,8, END, 7,6, 5,8, 7,10, END, 9,6, 11,8, 9,10, STOP },
     /* JUMP: go to frequency */
@@ -112,6 +114,7 @@ const char *ui_tool_title(int tool) {
         case UI_TOOL_PEAKS:   return "Peak finder";
         case UI_TOOL_AVG:     return "Rolling average";
         case UI_TOOL_BROAD:   return "Broadening";
+        case UI_TOOL_DIP:     return "Dipole moments";
         case UI_TOOL_CUT:     return "Intensity range";
         case UI_TOOL_FILTER:  return "Transition filter";
         case UI_TOOL_JUMP:    return "Frequency jump";
@@ -126,6 +129,7 @@ const char *ui_tool_key(int tool) {
         case UI_TOOL_PEAKS:  return "P";
         case UI_TOOL_AVG:    return "T";
         case UI_TOOL_BROAD:  return "M";
+        case UI_TOOL_DIP:    return "D";
         case UI_TOOL_CUT:    return "C";
         case UI_TOOL_FILTER: return "B";
         case UI_TOOL_JUMP:   return "F";
@@ -139,6 +143,7 @@ int ui_tool_icon(int tool) {
         case UI_TOOL_PEAKS:   return UI_ICON_PEAK;
         case UI_TOOL_AVG:     return UI_ICON_WAVE;
         case UI_TOOL_BROAD:   return UI_ICON_BELL;
+        case UI_TOOL_DIP:     return UI_ICON_DIPOLE;
         case UI_TOOL_CUT:     return UI_ICON_RANGE;
         case UI_TOOL_FILTER:  return UI_ICON_FILTER;
         case UI_TOOL_JUMP:    return UI_ICON_JUMP;

@@ -52,6 +52,7 @@ static void init_app_defaults(AppState *state) {
     state->win_cut  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 152}, 0, "Intensity range"};
     state->win_jump = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 132}, 0, "Frequency jump"};
     state->win_filt = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 402}, 0, "Transition filter"};
+    state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 250}, 0, "Dipole moments"};
     state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
 
     state->n_spectra = 0;
@@ -223,8 +224,11 @@ static int set_predictions(AppState *state, const char *path) {
     state->pred_lines = pred;
     state->n_pred = n;
     state->pxmin = pxmin; state->pxmax = pxmax;
+    state->cat_temp_k = 0.0;
+    state->dipole_cat[0] = state->dipole_cat[1] = state->dipole_cat[2] = 0.0;
     rescale_predicted_intensities(state->pred_lines, state->n_pred,
                                   state->cat_temp_k, state->rot_temp_k,
+                                  state->dipole_cat, state->dipole_red,
                                   &state->pred_global_max);
     snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
 

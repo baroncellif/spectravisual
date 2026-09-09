@@ -744,7 +744,7 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 
     const DraggableWindow *panels[UI_TOOL_COUNT] = {
         &state->win_as, &state->win_pf, &state->win_avg, &state->win_br,
-        &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec
+        &state->win_dip, &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec
     };
 
     int tip_tool = -1;
@@ -1119,7 +1119,32 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         ui_toggle_row(ren, ui_br_toggle(w, kaiser), "Simulated profile", state->broadening_active, mx, my);
     }
 
-    // 5. INTENSITY RANGE
+    // 5. DIPOLE MOMENTS
+    if (state->win_dip.visible) {
+        SDL_RenderSetClipRect(ren, &state->win_dip.clip);
+        draw_inspector_section(ren, &state->win_dip, UI_ICON_DIPOLE, mx, my);
+        SDL_Rect w = state->win_dip.rect;
+        SDL_Rect cat = ui_dip_field(w, 0, 0), red = ui_dip_field(w, 0, 1);
+        ui_text(ren, UI_FONT_SANS_SM, "mu cat", cat.x + (cat.w - ui_text_w(UI_FONT_SANS_SM, "mu cat")) / 2,
+                ui_p_row(w, 0).y + 8, UI_FAINT);
+        ui_text(ren, UI_FONT_SANS_SM, "mu red", red.x + (red.w - ui_text_w(UI_FONT_SANS_SM, "mu red")) / 2,
+                ui_p_row(w, 0).y + 8, UI_ACCENT_TEXT);
+
+        static const char *component[3] = {"a", "b", "c"};
+        static const int cat_input[3] = {INPUT_MUCAT_A, INPUT_MUCAT_B, INPUT_MUCAT_C};
+        static const int red_input[3] = {INPUT_MURED_A, INPUT_MURED_B, INPUT_MURED_C};
+        for (int i = 0; i < 3; i++) {
+            SDL_Rect cat_f = ui_dip_field(w, i, 0), red_f = ui_dip_field(w, i, 1);
+            ui_text_v(ren, UI_FONT_SANS, component[i], ui_p_row(w, 1 + i).x + 4, cat_f, UI_DIM);
+            field_val(state, cat_input[i], buf, sizeof(buf), "%.4f", state->dipole_cat[i]);
+            draw_field(ren, state, cat_f, NULL, buf, "D", cat_input[i]);
+            field_val(state, red_input[i], buf, sizeof(buf), "%.4f", state->dipole_red[i]);
+            draw_field(ren, state, red_f, NULL, buf, "D", red_input[i]);
+        }
+        panel_hint(ren, ui_p_row(w, 4), "Set T cat/T rot, then mu cat and mu red.");
+    }
+
+    // 6. INTENSITY RANGE
     if (state->win_cut.visible) {
         SDL_RenderSetClipRect(ren, &state->win_cut.clip);
         draw_inspector_section(ren, &state->win_cut, UI_ICON_RANGE, mx, my);
@@ -1137,7 +1162,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         panel_hint2(ren, ui_p_row(w, 2), buf);
     }
 
-    // 6. FREQUENCY JUMP
+    // 7. FREQUENCY JUMP
     if (state->win_jump.visible) {
         SDL_RenderSetClipRect(ren, &state->win_jump.clip);
         draw_inspector_section(ren, &state->win_jump, UI_ICON_JUMP, mx, my);
@@ -1149,7 +1174,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         panel_field(ren, state, w, "End", ui_jump_end(w), INPUT_JUMP_MAX, buf, "MHz");
     }
 
-    // 7. TRANSITION FILTER
+    // 8. TRANSITION FILTER
     if (state->win_filt.visible) {
         SDL_RenderSetClipRect(ren, &state->win_filt.clip);
         draw_inspector_section(ren, &state->win_filt, UI_ICON_FILTER, mx, my);
@@ -1323,6 +1348,7 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "P",         "Peak finder"},
         {NULL,        "T",         "Rolling average"},
         {NULL,        "M",         "Broadening"},
+        {NULL,        "D",         "Dipole moments"},
         {NULL,        "C",         "Intensity range"},
         {NULL,        "F",         "Frequency jump"},
         {NULL,        "B",         "Transition filter"},

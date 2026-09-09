@@ -47,6 +47,13 @@ static void parse_cat_intensity_fields(const char *line, PredLine *pl) {
     pl->rot_dof = dr;
 }
 
+static int dipole_index(char mu) {
+    if (mu == 'a') return 0;
+    if (mu == 'b') return 1;
+    if (mu == 'c') return 2;
+    return -1;
+}
+
 static int parse_line(const char *line, double *a, double *b, Separator sep) {
     if (sep == SEP_COMMA) return (sscanf(line, "%lf , %lf", a, b) == 2);
     if (sep == SEP_TAB)   return (sscanf(line, "%lf\t%lf", a, b) == 2);
@@ -304,6 +311,8 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
 
 void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
                                    double rot_temp_k,
+                                   const double dipole_cat[3],
+                                   const double dipole_red[3],
                                    double *global_max_int)
 {
     // A .cat does not store the temperature used to calculate LGINT.  When
@@ -321,18 +330,34 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
         if (!valid_temps) {
             p->lgint = p->cat_lgint;
             p->linear_int = pow(10.0, p->cat_lgint);
+            p->line_strength = 0.0;
             if (p->linear_int > max_int) max_int = p->linear_int;
             continue;
         }
         double nu_cm = p->freq_mhz / mhz_per_cm;
         double stim_t = -expm1(-c2 * nu_cm / rot_temp_k);
         double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
-        double log_scale = -0.5 * p->rot_dof * log(rot_temp_k / cat_temp_k)
-                         - c2 * p->elo_cm * (1.0 / rot_temp_k - 1.0 / cat_temp_k);
-        if (stim_t > 0.0 && stim_cat > 0.0) log_scale += log(stim_t / stim_cat);
+        double pop_t = exp(-c2 * p->elo_cm / rot_temp_k) * stim_t
+                     / pow(rot_temp_k, 0.5 * p->rot_dof);
+        double pop_cat = exp(-c2 * p->elo_cm / cat_temp_k) * stim_cat
+                       / pow(cat_temp_k, 0.5 * p->rot_dof);
+        int component = dipole_index(p->mu);
+        double mu_cat = component >= 0 && dipole_cat ? dipole_cat[component] : 0.0;
+        double mu_red = component >= 0 && dipole_red ? dipole_red[component] : 0.0;
 
-        p->lgint = p->cat_lgint + log_scale / log(10.0);
-        p->linear_int = pow(10.0, p->lgint);
+        // With both dipoles specified, recover the catalog-independent line
+        // strength S = Icat / (population(Tcat) * mu_cat^2), then predict
+        // I(Trot) = S * population(Trot) * mu_red^2.  If a component was not
+        // supplied, retain the catalog dipole for that component.
+        if (pop_cat > 0.0 && mu_cat != 0.0 && mu_red != 0.0) {
+            p->line_strength = pow(10.0, p->cat_lgint) / (pop_cat * mu_cat * mu_cat);
+            p->linear_int = p->line_strength * pop_t * mu_red * mu_red;
+        } else {
+            p->line_strength = 0.0;
+            p->linear_int = pop_cat > 0.0 ? pow(10.0, p->cat_lgint) * pop_t / pop_cat
+                                          : pow(10.0, p->cat_lgint);
+        }
+        p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
         if (p->linear_int > max_int) max_int = p->linear_int;
     }
     if (global_max_int) *global_max_int = max_int;

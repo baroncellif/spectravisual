@@ -220,7 +220,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             DraggableWindow *p = panels[t];
@@ -339,6 +339,24 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 return;
             }
 
+            case UI_TOOL_DIP: {
+                static const int cat_input[3] = {INPUT_MUCAT_A, INPUT_MUCAT_B, INPUT_MUCAT_C};
+                static const int red_input[3] = {INPUT_MURED_A, INPUT_MURED_B, INPUT_MURED_C};
+                for (int i = 0; i < 3; i++) {
+                    if (point_in_rect(mx, my, ui_dip_field(w, i, 0))) {
+                        snprintf(s->text_input_buf, 32, "%.4f", s->dipole_cat[i]);
+                        input_focus(s, cat_input[i], mx);
+                        return;
+                    }
+                    if (point_in_rect(mx, my, ui_dip_field(w, i, 1))) {
+                        snprintf(s->text_input_buf, 32, "%.4f", s->dipole_red[i]);
+                        input_focus(s, red_input[i], mx);
+                        return;
+                    }
+                }
+                return;
+            }
+
             case UI_TOOL_CUT:
                 if (point_in_rect(mx, my, ui_cut_min(w))) {
                     snprintf(s->text_input_buf, 32, "%.1f", s->pred_min_log_int);
@@ -422,7 +440,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     if (b->button == SDL_BUTTON_LEFT) {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             if (point_in_rect(mx, my, ui_rail_rect(t))) {
@@ -773,6 +791,7 @@ static void commit_text_input(AppState *s) {
         if (s->pred_lines && s->n_pred > 0)
             rescale_predicted_intensities(s->pred_lines, s->n_pred,
                                           s->cat_temp_k, s->rot_temp_k,
+                                          s->dipole_cat, s->dipole_red,
                                           &s->pred_global_max);
     }
     else if (s->input_state == INPUT_ROT_TEMP) {
@@ -782,8 +801,23 @@ static void commit_text_input(AppState *s) {
             if (s->pred_lines && s->n_pred > 0)
                 rescale_predicted_intensities(s->pred_lines, s->n_pred,
                                               s->cat_temp_k, s->rot_temp_k,
+                                              s->dipole_cat, s->dipole_red,
                                               &s->pred_global_max);
         }
+    }
+    else if (s->input_state >= INPUT_MUCAT_A && s->input_state <= INPUT_MURED_C) {
+        double mu = atof(s->text_input_buf);
+        int which = s->input_state - INPUT_MUCAT_A;
+        int component = which % 3;
+        if (isfinite(mu)) {
+            if (which < 3) s->dipole_cat[component] = mu;
+            else           s->dipole_red[component] = mu;
+        }
+        if (s->pred_lines && s->n_pred > 0)
+            rescale_predicted_intensities(s->pred_lines, s->n_pred,
+                                          s->cat_temp_k, s->rot_temp_k,
+                                          s->dipole_cat, s->dipole_red,
+                                          &s->pred_global_max);
     }
     else if (s->input_state == INPUT_FILT_JMIN)  s->filt_j_min  = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_FILT_JMAX)  s->filt_j_max  = atoi(s->text_input_buf);
@@ -849,6 +883,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     // Toggle Windows
     if (sym == SDLK_n) s->win_as.visible = !s->win_as.visible;
     if (sym == SDLK_m) s->win_br.visible = !s->win_br.visible;
+    if (sym == SDLK_d) s->win_dip.visible = !s->win_dip.visible;
     if (sym == SDLK_p) s->win_pf.visible = !s->win_pf.visible;
     if (sym == SDLK_t) s->win_avg.visible = !s->win_avg.visible;
     if (sym == SDLK_r) { // Reset View
