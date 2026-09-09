@@ -21,3 +21,10 @@ assignments.txt
 
 # macOS
 .DS_Store
+
+# file locali di lavoro (non fanno parte del progetto)
+.claude/
+*_session.txt
+*.tar.gz
+spectralvisual.icon/
+spectravisual_*.html
