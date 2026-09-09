@@ -38,6 +38,27 @@ To clean the build:
 
 make clean
 
+Run the deterministic core test suite:
+
+```
+make test
+```
+
+## Internal project standards
+
+SpectraVisual is currently a private, proprietary research product. The
+repository is maintained as a release-ready project: `main` must compile and
+pass tests, scientific behaviour is documented, and changes are reviewed in a
+pull request before merge.
+
+The keyboard-driven workflow and the separate experimental/prediction views
+are protected compatibility requirements. See the developer documentation:
+
+- [Product vision](docs/product-vision.md)
+- [Keyboard and dual-view contract](docs/keyboard-contract.md)
+- [Scientific validation policy](docs/scientific-validation.md)
+- [Internal contribution workflow](CONTRIBUTING.md)
+
 ⸻
 
 Controls and commands

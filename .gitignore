@@ -4,6 +4,7 @@
 
 # compiled binaries
 spectravisual
+tests/test_core
 liveplot
 liveplot_sdl
 liveplot_sdl.backup

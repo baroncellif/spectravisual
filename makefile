@@ -17,7 +17,7 @@ HDRS = $(wildcard *.h)
 # --- Compiler Flags ---
 # -Wall: Enable all warnings
 # -g: Add debug info (useful for lldb/gdb)
-CFLAGS = -Wall -g
+CFLAGS = -Wall -Wextra -Wpedantic -g
 
 # --- Library Flags ---
 # -lm: Math library
@@ -28,6 +28,15 @@ LDFLAGS = -lm
 # It usually comes with SDL2 installation.
 SDL_CFLAGS := $(shell sdl2-config --cflags)
 SDL_LDFLAGS := $(shell sdl2-config --libs) -lSDL2_ttf
+
+# The application is ad-hoc signed only on macOS.  A Linux CI build must not
+# depend on the macOS-only `codesign` command.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+SIGN_BINARY = codesign --force --sign - $(TARGET)
+else
+SIGN_BINARY = @true
+endif
 
 # --- SDL2 Configuration (Manual macOS Fallback) ---
 # If the auto-detect above fails, comment out the two lines above 
@@ -49,7 +58,7 @@ all: $(TARGET)
 # Link the object files into the executable
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET) $(SDL_LDFLAGS) $(LDFLAGS)
-	codesign --force --sign - $(TARGET)
+	$(SIGN_BINARY)
 	@echo "Build successful! Run with: ./$(TARGET) exp.csv pred.cat"
 
 # Compile source files into object files
@@ -59,11 +68,24 @@ $(TARGET): $(OBJS)
 
 # Clean up build files
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(TEST_TARGET)
 
 # Helper to run the app quickly (adjust arguments as needed)
 run: $(TARGET)
 	./$(TARGET) exp.csv pred.cat
+
+# Fast deterministic checks for the scientific core.  These tests deliberately
+# do not create files in the source root or require a graphics display.
+TEST_TARGET = tests/test_core
+TEST_SRCS = tests/test_core.c algorithms.c loader.c
+
+$(TEST_TARGET): $(TEST_SRCS) $(HDRS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) -I. $(TEST_SRCS) -o $@ -lm
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+check: all test
 
 # Deploy the latest build to the parent liveplot/ (the PATH copy) and RE-SIGN it
 # there. A plain `cp` invalidates the ad-hoc signature -> macOS SIGKILLs it.
@@ -73,4 +95,4 @@ deploy: $(TARGET)
 	codesign --force --sign - ../$(TARGET)
 	@echo "Deployed + signed: ../$(TARGET)"
 
-.PHONY: all clean run deploy
+.PHONY: all clean run test check deploy
