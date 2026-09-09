@@ -82,7 +82,7 @@ typedef struct {
     SDL_Color color;
     int is_toggle;
     int style;         // ButtonStyle; 0 (BTN_NORMAL) by default
-    char icon[8];      // optional UTF-8 glyph drawn left of the label ("" = none)
+    int  icon_id;      // UiIcon drawn left of the label, -1 = none
 } Button;
 
 // --- STATE ENUMS ---
@@ -248,7 +248,8 @@ typedef struct {
     int exp_x, exp_y, exp_w, exp_h;
     int pred_x, pred_y, pred_w, pred_h;
     int plot_x, gap;
-    int plot_right;   // right edge available to the plot (shrinks when sidebars are open)
+    int plot_right;      // right edge available to the plot (shrinks when the inspector is open)
+    int inspector_open;  // 1 while at least one tool panel is open
 } Layout;
 
 #endif

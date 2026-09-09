@@ -2,13 +2,13 @@
 #include "algorithms.h"
 #include "loader.h"
 #include "layout.h"
+#include "ui_chrome.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
 
 #define ABS(x) ((x)<0?-(x):(x))
-#define UI_TOOLBAR_Y 28
 
 // --- INTERNAL HELPERS ---
 static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key);
@@ -101,7 +101,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             handled = 1; \
             if (my < (win).rect.y + 30) { \
                 if (mx > (win).rect.x + (win).rect.w - 30) { (win).visible = 0; } \
-                else { s->drag_target = &(win); s->drag_offset.x = mx - (win).rect.x; s->drag_offset.y = my - (win).rect.y; } \
+                else { /* docked panel: not draggable */ } \
                 return; \
             } \
         }
@@ -111,7 +111,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             handled = 1;
             if (my < s->win_cut.rect.y + 30) {
                 if (mx > s->win_cut.rect.x + s->win_cut.rect.w - 30) s->win_cut.visible = 0;
-                else { s->drag_target = &s->win_cut; s->drag_offset.x = mx - s->win_cut.rect.x; s->drag_offset.y = my - s->win_cut.rect.y; }
+                else { /* docked panel: not draggable */ }
                 return;
             }
             SDL_Rect r_min = {s->win_cut.rect.x + 120, s->win_cut.rect.y + 50, 80, 28};
@@ -126,7 +126,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         handled = 1;
         if (my < s->win_jump.rect.y + 30) {
             if (mx > s->win_jump.rect.x + s->win_jump.rect.w - 30) s->win_jump.visible = 0;
-            else { s->drag_target = &s->win_jump; s->drag_offset.x = mx - s->win_jump.rect.x; s->drag_offset.y = my - s->win_jump.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         SDL_Rect r_start = {s->win_jump.rect.x + 120, s->win_jump.rect.y + 50, 80, 28};
@@ -142,7 +142,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         int wx = s->win_filt.rect.x, wy = s->win_filt.rect.y;
         if (my < wy + 30) {
             if (mx > wx + s->win_filt.rect.w - 30) s->win_filt.visible = 0;
-            else { s->drag_target = &s->win_filt; s->drag_offset.x = mx - wx; s->drag_offset.y = my - wy; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         // Master enable
@@ -177,7 +177,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         int wx = s->win_spec.rect.x, wy = s->win_spec.rect.y;
         if (my < wy + 30) {
             if (mx > wx + s->win_spec.rect.w - 30) s->win_spec.visible = 0;
-            else { s->drag_target = &s->win_spec; s->drag_offset.x = mx - wx; s->drag_offset.y = my - wy; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 130, 26})) { s->multi_layout = !s->multi_layout; return; }
@@ -200,7 +200,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         // Header / Close logic
         if (my < s->win_br.rect.y + 30) {
             if (mx > s->win_br.rect.x + s->win_br.rect.w - 30) s->win_br.visible = 0;
-            else { s->drag_target = &s->win_br; s->drag_offset.x = mx - s->win_br.rect.x; s->drag_offset.y = my - s->win_br.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         // Content logic
@@ -250,7 +250,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         handled = 1;
         if (my < s->win_avg.rect.y + 30) {
             if (mx > s->win_avg.rect.x + s->win_avg.rect.w - 30) s->win_avg.visible = 0;
-            else { s->drag_target = &s->win_avg; s->drag_offset.x = mx - s->win_avg.rect.x; s->drag_offset.y = my - s->win_avg.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         SDL_Rect r_in = {s->win_avg.rect.x + 130, s->win_avg.rect.y + 60, 80, 28};
@@ -277,7 +277,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         handled = 1;
         if (my < s->win_pf.rect.y + 30) {
             if (mx > s->win_pf.rect.x + s->win_pf.rect.w - 30) s->win_pf.visible = 0;
-            else { s->drag_target = &s->win_pf; s->drag_offset.x = mx - s->win_pf.rect.x; s->drag_offset.y = my - s->win_pf.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         
@@ -307,7 +307,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         handled = 1;
         if (my < s->win_as.rect.y + 30) {
             if (mx > s->win_as.rect.x + s->win_as.rect.w - 30) s->win_as.visible = 0;
-            else { s->drag_target = &s->win_as; s->drag_offset.x = mx - s->win_as.rect.x; s->drag_offset.y = my - s->win_as.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
         clamp_assignment_scroll(s);
@@ -348,7 +348,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         // Header (Drag/Close)
         if (my < s->win_cut.rect.y + 30) {
             if (mx > s->win_cut.rect.x + s->win_cut.rect.w - 30) s->win_cut.visible = 0;
-            else { s->drag_target = &s->win_cut; s->drag_offset.x = mx - s->win_cut.rect.x; s->drag_offset.y = my - s->win_cut.rect.y; }
+            else { /* docked panel: not draggable */ }
             return;
         }
 
@@ -368,64 +368,64 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
         return;
     }
-    // 2. Toolbar Buttons
-    // (We reconstruct rects to match view.c)
-    int by = UI_TOOLBAR_Y + 5;
-    int right_x = l->win_w - 18;
-    Button btn_bar  = {{12,  by, 58, 24}, "", {0,0,0,0}, 0};
-    Button btn_sync = {{76,  by, 70, 24}, "", {0,0,0,0}, 0};
-    Button btn_del  = {{156, by, 58, 24}, "", {0,0,0,0}, 0};
-    Button btn_list = {{236, by, 64, 24}, "", {0,0,0,0}, 0};
-    Button btn_peak = {{306, by, 68, 24}, "", {0,0,0,0}, 0};
-    Button btn_roll = {{380, by, 62, 24}, "", {0,0,0,0}, 0};
-    Button btn_broad = {{448, by, 82, 24}, "", {0,0,0,0}, 0};
-    Button btn_cut = {{552, by, 58, 24}, "", {0,0,0,0}, 0};
-    Button btn_jump = {{616, by, 78, 24}, "", {0,0,0,0}, 0};
-    Button btn_filt = {{700, by, 72, 24}, "", {0,0,0,0}, 0};
-    Button btn_spec = {{778, by, 72, 24}, "", {0,0,0,0}, 0};
-    SDL_Rect r_off = {right_x - 122, by, 122, 24};
-    right_x = r_off.x - 64;
-    Button btn_export = {{right_x - 88, by, 82, 24}, "", {0,0,0,0}, 0};
-    Button btn_help = {{right_x - 154, by, 60, 24}, "", {0,0,0,0}, 0};
-    int aux_controls_visible = (l->win_w > 980);
-    int offset_control_visible = (l->win_w > 900);
-
-    if (!s->data_loaded && b->button == SDL_BUTTON_LEFT) {
-        if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) s->show_help = !s->show_help;
-        return;
-    }
-
+    // 2. Rail and command bar.
+    //    Both rectangles come from ui_chrome.h, the same source the renderer
+    //    draws from, so a visual change cannot move the click targets away.
     if (b->button == SDL_BUTTON_LEFT) {
-        if (point_in_rect(mx, my, btn_bar.rect)) {
+        DraggableWindow *panels[UI_TOOL_COUNT] = {
+            &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
+            &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+        };
+        for (int t = 0; t < UI_TOOL_COUNT; t++) {
+            if (point_in_rect(mx, my, ui_rail_rect(t))) {
+                panels[t]->visible = !panels[t]->visible;
+                return;
+            }
+        }
+        if (ui_top_right_visible(l->win_w) &&
+            point_in_rect(mx, my, ui_top_rect(UI_TOP_HELP, l->win_w))) {
+            s->show_help = !s->show_help;
+            return;
+        }
+        /* the rail itself swallows clicks so they never reach the plot */
+        if (mx < UI_RAIL_W && my >= UI_CONTENT_Y) return;
+
+        if (point_in_rect(mx, my, ui_top_rect(UI_TOP_BAR, l->win_w))) {
             s->bar_active = !s->bar_active;
-            if(s->bar_active) { s->bar_x = (s->vxmin + s->vxmax)/2.0; s->pbar_x = (s->pvxmin + s->pvxmax)/2.0; }
+            if (s->bar_active) {
+                s->bar_x  = (s->vxmin + s->vxmax) / 2.0;
+                s->pbar_x = (s->pvxmin + s->pvxmax) / 2.0;
+            }
             return;
         }
-        if (point_in_rect(mx, my, btn_sync.rect)) {
+        if (point_in_rect(mx, my, ui_top_rect(UI_TOP_MEASURE, l->win_w))) {
+            s->measure_active = !s->measure_active;
+            s->measure_phase = 0;
+            return;
+        }
+        if (point_in_rect(mx, my, ui_top_rect(UI_TOP_SYNC, l->win_w))) {
             s->sync_active = !s->sync_active;
-            if(s->sync_active) { s->pvxmin = s->vxmin; s->pvxmax = s->vxmax; }
+            if (s->sync_active) { s->pvxmin = s->vxmin; s->pvxmax = s->vxmax; }
             return;
         }
-        if (point_in_rect(mx, my, btn_del.rect)) {
-            if(s->n_peaks > 0) s->n_peaks--;
+        if (point_in_rect(mx, my, ui_top_rect(UI_TOP_DELPEAK, l->win_w))) {
+            if (s->n_peaks > 0) s->n_peaks--;
             return;
         }
-        if (point_in_rect(mx, my, btn_list.rect)) { s->win_as.visible = !s->win_as.visible; return; }
-        if (point_in_rect(mx, my, btn_peak.rect)) { s->win_pf.visible = !s->win_pf.visible; return; }
-        if (l->win_w > 450 && point_in_rect(mx, my, btn_roll.rect)) { s->win_avg.visible = !s->win_avg.visible; return; }
-        if (l->win_w > 540 && point_in_rect(mx, my, btn_broad.rect)) { s->win_br.visible = !s->win_br.visible; return; }
-        if (l->win_w > 620 && point_in_rect(mx, my, btn_cut.rect)) { s->win_cut.visible = !s->win_cut.visible; return; }
-        if (l->win_w > 700 && point_in_rect(mx, my, btn_jump.rect)) { s->win_jump.visible = !s->win_jump.visible; return; }
-        if (l->win_w > 790 && point_in_rect(mx, my, btn_filt.rect)) { s->win_filt.visible = !s->win_filt.visible; return; }
-        if (l->win_w > 870 && point_in_rect(mx, my, btn_spec.rect)) { s->win_spec.visible = !s->win_spec.visible; return; }
-        if (aux_controls_visible && point_in_rect(mx, my, btn_help.rect)) { s->show_help = !s->show_help; return; }
-        if (aux_controls_visible && point_in_rect(mx, my, btn_export.rect)) { if (s->data_loaded) s->export_requested = 1; return; }
-        if (offset_control_visible && point_in_rect(mx, my, r_off)) {
-            s->input_state = INPUT_OFFSET;
-            SDL_StartTextInput();
-            snprintf(s->text_input_buf, 32, "%.4f", s->exp_offset);
-            return;
+        if (ui_top_right_visible(l->win_w)) {
+            if (point_in_rect(mx, my, ui_top_rect(UI_TOP_EXPORT, l->win_w))) {
+                if (s->data_loaded) s->export_requested = 1;
+                return;
+            }
+            if (point_in_rect(mx, my, ui_top_rect(UI_TOP_OFFSET, l->win_w))) {
+                s->input_state = INPUT_OFFSET;
+                SDL_StartTextInput();
+                snprintf(s->text_input_buf, 32, "%.4f", s->exp_offset);
+                return;
+            }
         }
+        /* clicks on the chrome bands never fall through to the plot */
+        if (my < UI_CONTENT_Y) return;
     }
 
     if (!s->data_loaded) return;

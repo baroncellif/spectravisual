@@ -3,7 +3,7 @@ CC = gcc
 TARGET = spectravisual
 
 # --- Source and Object Files ---
-SRCS = main.c view.c controller.c algorithms.c layout.c loader.c
+SRCS = main.c view.c controller.c algorithms.c layout.c loader.c ui_icons.c
 OBJS = $(SRCS:.c=.o)
 
 # --- Header dependencies ---

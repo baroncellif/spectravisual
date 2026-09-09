@@ -42,6 +42,18 @@ make clean
 
 Controls and commands
 
+### Window layout
+
+The window is organised as a workbench: a command bar at the top (bar, measure,
+sync, delete peak, offset, export, shortcuts), an icon rail on the left that
+opens the tool panels, an inspector column on the right where the open panels
+are stacked, and a single status line at the bottom with the cursor readout.
+The two plots share one frequency axis, drawn under the prediction.
+
+Every tool still has its keyboard shortcut, and the rail shows it on hover.
+
+### Commands
+
 The application is controlled via keyboard shortcuts and mouse interactions. Most commands act on both experimental and predicted spectra when Sync mode is active.
 
 When Sync mode is not active, the same commands applied while holding Shift act only on the predicted spectrum.

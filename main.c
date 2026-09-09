@@ -8,6 +8,7 @@
 #include "loader.h"
 #include "algorithms.h"
 #include "layout.h"
+#include "ui_theme.h"
 #include "view.h"
 #include "controller.h"
 
@@ -39,14 +40,16 @@ static void init_app_defaults(AppState *state) {
     state->filt_use_delta = 0;
     state->filt_dj = 1;  state->filt_dka = 0;  state->filt_dkc = 1;
 
-    state->win_pf = (DraggableWindow){{100, 100, 300, 300}, 0, "PEAK FINDER"};
-    state->win_br = (DraggableWindow){{150, 150, 300, 320}, 0, "BROADENING"};
-    state->win_as = (DraggableWindow){{200, 200, 440, 400}, 0, "ASSIGNMENTS"};
-    state->win_avg = (DraggableWindow){{250, 150, 300, 200}, 0, "ROLLING AVG"};
-    state->win_cut = (DraggableWindow){{350, 250, 250, 160}, 0, "INTENSITY RANGE"};
-    state->win_jump = (DraggableWindow){{400, 300, 250, 140}, 0, "FREQ JUMP"};
-    state->win_filt = (DraggableWindow){{300, 120, 260, 402}, 0, "FILTER"};
-    state->win_spec = (DraggableWindow){{120, 120, 300, 360}, 0, "SPECTRA"};
+    // Titles and sizes of the inspector sections. The x/y are placeholders:
+    // update_sidebars docks every open panel in the right-hand column.
+    state->win_pf   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 300}, 0, "Peak finder"};
+    state->win_br   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 300}, 0, "Broadening"};
+    state->win_as   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 400}, 0, "Assignments"};
+    state->win_avg  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 190}, 0, "Rolling average"};
+    state->win_cut  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 152}, 0, "Intensity range"};
+    state->win_jump = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 132}, 0, "Frequency jump"};
+    state->win_filt = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 402}, 0, "Transition filter"};
+    state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
 
     state->n_spectra = 0;
     state->active_spec = -1;
@@ -299,16 +302,26 @@ int main(int argc, char *argv[])
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     if (TTF_Init() != 0) return 1;
 
-    SDL_Window *win = SDL_CreateWindow("SpectraVisual", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1200, 720, SDL_WINDOW_RESIZABLE);
+    SDL_Window *win = SDL_CreateWindow("SpectraVisual", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                       1400, 884, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_SetWindowMinimumSize(win, 900, 560);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    
-    TTF_Font *font = TTF_OpenFont("/Users/filippobaroncelli/Library/Fonts/Aptos-Mono.ttf",12);
-    if (!font) {
-        font = TTF_OpenFont("/System/Library/Fonts/Helvetica.ttc", 12);
-        if(!font) font = TTF_OpenFont("arial.ttf", 12);
+
+    // On a Retina display the drawable is larger than the window. Draw in window
+    // (logical) coordinates but let the renderer scale to the real pixel grid,
+    // and open the fonts at the same factor: text and hairlines are then
+    // rendered at native density instead of being blown up from a 1x bitmap.
+    float ui_dpi = 1.0f;
+    {
+        int ww = 0, wh = 0, dw = 0, dh = 0;
+        SDL_GetWindowSize(win, &ww, &wh);
+        SDL_GetRendererOutputSize(ren, &dw, &dh);
+        if (ww > 0 && dw > 0) ui_dpi = (float)dw / (float)ww;
+        SDL_RenderSetScale(ren, ui_dpi, ui_dpi);
     }
-    if(!font) { fprintf(stderr, "No font found.\n"); return 1; }
+    if (!ui_fonts_init(ui_dpi)) { fprintf(stderr, "No font found.\n"); return 1; }
+    TTF_Font *font = ui_font(UI_FONT_SANS);
 
     if (pred_arg) set_predictions(&state, pred_arg);
     for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
@@ -319,40 +332,47 @@ int main(int argc, char *argv[])
     while(running) {
         int w, h; SDL_GetWindowSize(win, &w, &h);
         layout.win_w = w; layout.win_h = h;
-        layout.plot_x = (w < 560) ? 56 : ((w < 760) ? 64 : 78);
-        layout.gap = (h < 520) ? 42 : 54;
-        
-        int usable_h = h - 160;
-        if (usable_h < 220) usable_h = 220;
+        layout.plot_x = UI_RAIL_W + UI_PLOT_GUTTER;
+        layout.gap = UI_PANEL_HEADER_H;
 
-        // Give the whole plot area to whichever pane is present: if there are no
-        // predictions (or no spectra), don't reserve an empty window for it.
+        int content_top    = UI_CONTENT_Y;
+        int content_bottom = h - UI_STATUS_H;
+
+        // Dock the inspector first: it decides how much width is left.
+        update_sidebars(&state, &layout);
+
         int has_exp  = (state.n_spectra > 0);
         int has_pred = (state.n_pred > 0);
+        int avail = content_bottom - content_top;
+        if (avail < 200) avail = 200;
+
+        // Each pane carries a header; the shared frequency axis is drawn once,
+        // under the bottom pane.
         if (has_exp && has_pred) {
-            layout.exp_h = usable_h * 0.6;
-            layout.pred_h = usable_h * 0.4 - layout.gap;
-            if (layout.pred_h < 70) layout.pred_h = 70;
-        } else if (has_pred && !has_exp) {
-            layout.exp_h = 0;
-            layout.pred_h = usable_h;
-        } else {   // only spectra, or nothing yet
-            layout.exp_h = usable_h;
+            int usable = avail - 2 * UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
+            if (usable < 120) usable = 120;
+            layout.exp_h  = (int)(usable * 0.62);
+            layout.pred_h = usable - layout.exp_h;
+            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
+            layout.pred_y = layout.exp_y + layout.exp_h + UI_PANEL_HEADER_H;
+        } else if (has_pred) {
+            layout.exp_h  = 0;
+            layout.pred_h = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
+            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
+            layout.pred_y = content_top + UI_PANEL_HEADER_H;
+        } else {
+            layout.exp_h  = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
             layout.pred_h = 0;
+            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
+            layout.pred_y = layout.exp_y;
         }
+        if (layout.exp_h  < 0) layout.exp_h  = 0;
+        if (layout.pred_h < 0) layout.pred_h = 0;
 
         layout.exp_x = layout.plot_x;
-        layout.exp_y = 96;
-
-        // Dock/animate the tool sidebars and shrink the plot to fit beside them.
-        update_sidebars(&state, &layout);
-        layout.exp_w = layout.plot_right - layout.exp_x;
+        layout.exp_w = layout.plot_right - layout.exp_x - 16;
         if (layout.exp_w < 240) layout.exp_w = 240;
-
         layout.pred_x = layout.plot_x;
-        // Prediction pane: stacked below the spectrum when both exist, otherwise
-        // it takes the top (full) area.
-        layout.pred_y = has_exp ? (layout.exp_y + layout.exp_h + layout.gap) : layout.exp_y;
         layout.pred_w = layout.exp_w;
 
         handle_app_events(&state, &layout, &running);
@@ -377,7 +397,7 @@ int main(int argc, char *argv[])
     }
 
     free_dataset(&state);
-    if(font) TTF_CloseFont(font);
+    ui_fonts_close();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

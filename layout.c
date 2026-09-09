@@ -1,13 +1,10 @@
 #include "layout.h"
+#include "ui_theme.h"
+#include "ui_chrome.h"
+#include <string.h>
 #include <math.h>
 #include <stdio.h>
 
-// --- COLORS (The one you liked + Minimalist accents) ---
-const SDL_Color WIN_BG          = {24, 27, 32, 246};
-const SDL_Color BORDER_GLOW     = {64, 190, 215, 255};
-const SDL_Color BORDER_IDLE     = {70, 78, 88, 255};
-const SDL_Color TXT_BRIGHT      = {232, 238, 245, 255};
-const SDL_Color TXT_DIM         = {145, 153, 164, 255};
 
 // --- UTILS ---
 
@@ -113,261 +110,358 @@ void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c)
     }
 }
 
+
+// ============================================================================
+//  FONTS
+//  One sans face for labels and controls, one mono face for every number, in
+//  four sizes. Faces are opened at size * backing_scale and drawn back at
+//  logical size, so text is rendered at the display's real pixel density
+//  instead of being scaled up from a 1x bitmap.
+// ============================================================================
+static TTF_Font *g_fonts[UI_FONT_COUNT];
+static float     g_scale = 1.0f;
+
+static const int UI_FONT_SIZE[UI_FONT_COUNT] = {
+    12,   /* UI_FONT_SANS    labels, buttons        */
+    11,   /* UI_FONT_SANS_SM captions, chips        */
+    13,   /* UI_FONT_TITLE   window + section title */
+    12,   /* UI_FONT_MONO    values, tables         */
+    10    /* UI_FONT_MONO_SM axis ticks             */
+};
+
+static TTF_Font *open_first(const char *const *paths, int n, int px) {
+    for (int i = 0; i < n; i++) {
+        TTF_Font *f = TTF_OpenFont(paths[i], px);
+        if (f) return f;
+    }
+    return NULL;
+}
+
+int ui_fonts_init(float scale) {
+    static const char *sans[] = {
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    };
+    static const char *mono[] = {
+        "/System/Library/Fonts/SFNSMono.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+    };
+    g_scale = (scale > 0.1f) ? scale : 1.0f;
+    for (int r = 0; r < UI_FONT_COUNT; r++) {
+        int px = (int)lround(UI_FONT_SIZE[r] * g_scale);
+        int is_mono = (r == UI_FONT_MONO || r == UI_FONT_MONO_SM);
+        g_fonts[r] = is_mono ? open_first(mono, 3, px) : open_first(sans, 4, px);
+        if (!g_fonts[r]) g_fonts[r] = open_first(sans, 4, px);
+        if (!g_fonts[r]) return 0;
+    }
+    return 1;
+}
+
+void ui_fonts_close(void) {
+    for (int r = 0; r < UI_FONT_COUNT; r++) {
+        if (g_fonts[r]) { TTF_CloseFont(g_fonts[r]); g_fonts[r] = NULL; }
+    }
+}
+
+TTF_Font *ui_font(int role) {
+    if (role < 0 || role >= UI_FONT_COUNT) role = UI_FONT_SANS;
+    return g_fonts[role];
+}
+
+float ui_scale(void) { return g_scale; }
+
+// Width of `txt` in logical pixels (the font is oversized by g_scale).
+int ui_text_w(int role, const char *txt) {
+    TTF_Font *f = ui_font(role);
+    if (!f || !txt || !*txt) return 0;
+    int w = 0, h = 0;
+    TTF_SizeUTF8(f, txt, &w, &h);
+    return (int)lround(w / (double)g_scale);
+}
+
+int ui_text_h(int role) {
+    TTF_Font *f = ui_font(role);
+    if (!f) return 0;
+    return (int)lround(TTF_FontHeight(f) / (double)g_scale);
+}
+
 // --- DRAWING FUNCTIONS ---
 
 void draw_text(SDL_Renderer *ren, TTF_Font *font, const char *txt, int x, int y, SDL_Color color) {
     if (!txt || !*txt) return;
+    if (!font) font = ui_font(UI_FONT_SANS);
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, txt, color);
     if (!surf) return;
     SDL_Texture *tex  = SDL_CreateTextureFromSurface(ren, surf);
-    SDL_Rect dst = {x, y, surf->w, surf->h};
+    SDL_Rect dst = {x, y,
+                    (int)lround(surf->w / (double)g_scale),
+                    (int)lround(surf->h / (double)g_scale)};
     SDL_FreeSurface(surf);
     SDL_RenderCopy(ren, tex, NULL, &dst);
     SDL_DestroyTexture(tex);
 }
 
+// Same as draw_text but picks the face by role, which is how the UI code should
+// ask for type: numbers always mono, labels always sans.
+void ui_text(SDL_Renderer *ren, int role, const char *txt, int x, int y, SDL_Color c) {
+    draw_text(ren, ui_font(role), txt, x, y, c);
+}
+
+// Draws text right-aligned on `right_x`. Numeric readouts line up on their last
+// digit, so a changing value does not make the whole row twitch.
+void ui_text_right(SDL_Renderer *ren, int role, const char *txt, int right_x, int y, SDL_Color c) {
+    draw_text(ren, ui_font(role), txt, right_x - ui_text_w(role, txt), y, c);
+}
+
+// Vertically centres one line of text in `box`.
+void ui_text_v(SDL_Renderer *ren, int role, const char *txt, int x, SDL_Rect box, SDL_Color c) {
+    int h = ui_text_h(role);
+    draw_text(ren, ui_font(role), txt, x, box.y + (box.h - h) / 2, c);
+}
+
 void draw_text_vertical(SDL_Renderer *ren, TTF_Font *font, const char *txt, int x, int y, SDL_Color color) {
     if (!txt || !*txt) return;
+    if (!font) font = ui_font(UI_FONT_SANS);
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, txt, color);
     if (!surf) return;
     SDL_Texture *tex  = SDL_CreateTextureFromSurface(ren, surf);
-    SDL_Rect dst = {x, y, surf->w, surf->h};
-    SDL_Point center = {0, surf->h};
+    SDL_Rect dst = {x, y,
+                    (int)lround(surf->w / (double)g_scale),
+                    (int)lround(surf->h / (double)g_scale)};
+    SDL_Point center = {0, dst.h};
     SDL_RenderCopyEx(ren, tex, NULL, &dst, -90.0, &center, SDL_FLIP_NONE);
     SDL_FreeSurface(surf);
     SDL_DestroyTexture(tex);
 }
 
-// Smooth ease (smoothstep) used for panel slide-in / push animation.
+// --- PRIMITIVES ---
+
+void ui_fill(SDL_Renderer *ren, SDL_Rect r, SDL_Color c) {
+    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+    SDL_RenderFillRect(ren, &r);
+}
+
+void ui_frame(SDL_Renderer *ren, SDL_Rect r, SDL_Color c) {
+    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+    SDL_RenderDrawRect(ren, &r);
+}
+
+void ui_hline(SDL_Renderer *ren, int x0, int x1, int y, SDL_Color c) {
+    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+    SDL_RenderDrawLine(ren, x0, y, x1, y);
+}
+
+void ui_vline(SDL_Renderer *ren, int x, int y0, int y1, SDL_Color c) {
+    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+    SDL_RenderDrawLine(ren, x, y0, x, y1);
+}
+
+// 1px border drawn as a rounded outline with the fill inset by one pixel.
+static void filled_border(SDL_Renderer *ren, SDL_Rect r, int radius, SDL_Color border, SDL_Color fill, int has_fill) {
+    fill_rounded_rect(ren, r, radius, border);
+    if (has_fill) {
+        SDL_Rect in = {r.x + 1, r.y + 1, r.w - 2, r.h - 2};
+        fill_rounded_rect(ren, in, radius > 0 ? radius - 1 : 0, fill);
+    }
+}
+
+// --- CONTROLS ---
+
+// A control button. `kind` picks the visual role, `active` lights a toggle.
+// Returns 1 when the pointer is over it, so callers can show a tooltip.
+int ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int kind,
+              int active, int mx, int my, int mdown) {
+    int hover = point_in_rect(mx, my, r);
+    int pressed = hover && mdown;
+    SDL_Color fill = UI_RAISED, border = UI_LINE, text = UI_DIM;
+    int has_fill = 1, has_border = 1;
+
+    if (active) {
+        fill = UI_ACCENT_SOFT; border = UI_ACCENT_LINE; text = UI_ACCENT_TEXT;
+    } else if (kind == UI_BTN_DANGER) {
+        has_fill = hover; has_border = hover;
+        fill = UI_DANGER_BG; border = (SDL_Color){58, 37, 35, 255}; text = hover ? UI_DANGER_TEXT : UI_DIM;
+    } else if (kind == UI_BTN_PRIMARY) {
+        fill = (SDL_Color){29, 62, 99, 255}; border = (SDL_Color){44, 90, 140, 255}; text = (SDL_Color){187, 216, 255, 255};
+    } else {                       /* quiet: only a hover surface */
+        has_fill = hover; has_border = hover;
+        text = hover ? UI_TEXT : UI_DIM;
+    }
+    if (pressed && has_fill) {
+        fill.r = (Uint8)(fill.r * 0.85); fill.g = (Uint8)(fill.g * 0.85); fill.b = (Uint8)(fill.b * 0.85);
+    }
+
+    if (has_border) filled_border(ren, r, UI_RADIUS, border, fill, has_fill);
+    else if (has_fill) fill_rounded_rect(ren, r, UI_RADIUS, fill);
+
+    int iw = (icon >= 0) ? 16 : 0;
+    int lw = (label && *label) ? ui_text_w(UI_FONT_SANS, label) : 0;
+    int gap = (iw && lw) ? 6 : 0;
+    int x = r.x + (r.w - (iw + gap + lw)) / 2;
+    if (icon >= 0) {
+        ui_draw_icon(ren, icon, (SDL_Rect){x, r.y + (r.h - 16) / 2, 16, 16}, text);
+        x += iw + gap;
+    }
+    if (lw) ui_text_v(ren, UI_FONT_SANS, label, x, r, text);
+    return hover;
+}
+
+// Numeric input field. Shows the live edit buffer with a caret when focused.
+void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value, int focused) {
+    filled_border(ren, r, UI_RADIUS, focused ? UI_ACCENT_LINE : UI_LINE, UI_INPUT, 1);
+    int x = r.x + 8;
+    if (label && *label) {
+        ui_text_v(ren, UI_FONT_SANS_SM, label, x, r, UI_FAINT);
+        x += ui_text_w(UI_FONT_SANS_SM, label) + 8;
+        ui_vline(ren, x - 4, r.y + 1, r.y + r.h - 2, UI_LINE);
+    }
+    /* the value is right-aligned so digits stay in place while typing */
+    int h = ui_text_h(UI_FONT_MONO);
+    ui_text_right(ren, UI_FONT_MONO, value, r.x + r.w - 8, r.y + (r.h - h) / 2,
+                  focused ? UI_TEXT : UI_TEXT);
+}
+
+// Small on/off switch, used for the "enabled" state of a tool.
+void ui_switch(SDL_Renderer *ren, SDL_Rect r, int on) {
+    SDL_Rect track = {r.x, r.y + (r.h - 16) / 2, 28, 16};
+    fill_rounded_rect(ren, track, 8, on ? (SDL_Color){36, 62, 96, 255} : (SDL_Color){43, 45, 51, 255});
+    SDL_Rect knob = {track.x + (on ? 14 : 2), track.y + 2, 12, 12};
+    fill_rounded_rect(ren, knob, 6, on ? UI_ACCENT : (SDL_Color){138, 141, 148, 255});
+}
+
+// A row that reads "label            [switch]" and toggles the whole row.
+int ui_toggle_row(SDL_Renderer *ren, SDL_Rect r, const char *label, int on, int mx, int my) {
+    int hover = point_in_rect(mx, my, r);
+    if (hover) fill_rounded_rect(ren, r, UI_RADIUS, UI_RAISED);
+    ui_text_v(ren, UI_FONT_SANS, label, r.x + 2, r, on ? UI_TEXT : UI_DIM);
+    ui_switch(ren, (SDL_Rect){r.x + r.w - 30, r.y, 28, r.h}, on);
+    return hover;
+}
+
+// Segmented control: `n` options sharing one track, `sel` is highlighted.
+void ui_segmented(SDL_Renderer *ren, SDL_Rect r, const char *const *labels, int n, int sel) {
+    filled_border(ren, r, UI_RADIUS, UI_LINE, UI_INPUT, 1);
+    int seg_w = (r.w - 4) / (n > 0 ? n : 1);
+    for (int i = 0; i < n; i++) {
+        SDL_Rect s = {r.x + 2 + i * seg_w, r.y + 2, seg_w, r.h - 4};
+        if (i == sel) fill_rounded_rect(ren, s, 2, UI_RAISED_HI);
+        int w = ui_text_w(UI_FONT_SANS, labels[i]);
+        ui_text_v(ren, UI_FONT_SANS, labels[i], s.x + (s.w - w) / 2, s, i == sel ? UI_TEXT : UI_DIM);
+    }
+}
+
+// Legacy Button wrapper kept so existing panel code reads the same.
+void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my, int m_down, int active_state) {
+    (void)font;
+    ui_button(ren, btn->rect, btn->label, btn->icon_id, btn->style,
+              btn->is_toggle ? active_state : 0, mx, my, m_down);
+}
+
+// Smooth ease (smoothstep) used for the inspector slide-in.
 double ui_smoothstep(double a) {
     if (a < 0.0) a = 0.0;
     if (a > 1.0) a = 1.0;
     return a * a * (3.0 - 2.0 * a);
 }
 
-// Dock the tool panels to the right edge as a vertical stack of floating glass
-// cards. Each visible window animates a 0..1 "open" value; the open ones are
-// right-aligned and stacked top-to-bottom, reflowing as neighbours open/close,
-// and the spectrum is given the remaining width via l->plot_right.
+// ============================================================================
+//  INSPECTOR
+//  The tool windows are no longer free-floating: the open ones are stacked in a
+//  fixed column on the right, in rail order, and the plot gets the rest of the
+//  width. Each panel keeps its own internal layout, so the hit-testing in
+//  controller.c still lines up with what is drawn.
+// ============================================================================
 void update_sidebars(AppState *s, Layout *l) {
-    const int TOP          = l->exp_y;   // align panel tops with the plot
-    const int RIGHT_MARGIN = 18;
-    const int GAP          = 12;
-    const float SPEED      = 0.22f;      // per-frame approach toward target
-
-    DraggableWindow *panels[] = {
-        &s->win_as, &s->win_pf, &s->win_avg,
-        &s->win_br, &s->win_cut, &s->win_jump, &s->win_filt, &s->win_spec
+    DraggableWindow *panels[UI_TOOL_COUNT] = {
+        &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
+        &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
     };
-    int N = (int)(sizeof(panels) / sizeof(panels[0]));
+    const int TOP = UI_CONTENT_Y;
+    const float SPEED = 0.26f;
 
-    int vp_bottom = l->win_h - 34;        // viewport ends above the info bar
+    int vp_bottom = l->win_h - UI_STATUS_H;
     if (vp_bottom < TOP + 60) vp_bottom = TOP + 60;
-    int view_h = vp_bottom - TOP;
 
-    // Pass 1: advance animations, measure the stacked height and widest panel.
-    double e_arr[8];
-    double total = 0.0, max_push = 0.0;
     int any = 0;
-    for (int i = 0; i < N; i++) {
+    double total = 0.0;
+    double e_arr[UI_TOOL_COUNT];
+    for (int i = 0; i < UI_TOOL_COUNT; i++) {
         DraggableWindow *p = panels[i];
-
         double target = p->visible ? 1.0 : 0.0;
         p->anim += (float)((target - p->anim) * SPEED);
         if (target > 0.5 && p->anim > 0.999f) p->anim = 1.0f;
         if (target < 0.5 && p->anim < 0.001f) p->anim = 0.0f;
-
-        double e = ui_smoothstep(p->anim);
-        e_arr[i] = e;
-        if (e < 0.01) continue;
-        any = 1;
-        total += (p->rect.h + GAP) * e;
-        double push = p->rect.w * e;
-        if (push > max_push) max_push = push;
+        e_arr[i] = ui_smoothstep(p->anim);
+        if (e_arr[i] > 0.01) { any = 1; total += p->rect.h * e_arr[i]; }
     }
-    if (any && total >= GAP) total -= GAP;    // drop the trailing gap
 
-    // Clamp the scroll offset to the available range.
+    int view_h = vp_bottom - TOP;
     double max_scroll = total - view_h;
     if (max_scroll < 0) max_scroll = 0;
     if (s->sidebar_scroll < 0) s->sidebar_scroll = 0;
     if (s->sidebar_scroll > max_scroll) s->sidebar_scroll = max_scroll;
 
-    // Pass 2: place the cards, clipped to the scrollable viewport.
+    int col_x = l->win_w - UI_INSPECTOR_W;
     double y = (double)TOP - s->sidebar_scroll;
-    for (int i = 0; i < N; i++) {
+
+    for (int i = 0; i < UI_TOOL_COUNT; i++) {
         DraggableWindow *p = panels[i];
         double e = e_arr[i];
-        if (e < 0.01) {                       // fully closed: park off-screen
+        p->rect.w = UI_INSPECTOR_W;
+        if (e < 0.01) {                      /* closed: park off-screen */
             p->rect.x = l->win_w + 80;
             p->rect.y = TOP;
             p->clip = (SDL_Rect){0, 0, 0, 0};
             continue;
         }
-
-        int w = p->rect.w, h = p->rect.h;
-        p->rect.x = l->win_w - RIGHT_MARGIN - w;   // right-aligned, full width
+        p->rect.x = col_x;
         p->rect.y = (int)y;
 
-        int vis_w = (int)(w * e);             // animated slice (reveals from right)
-        int cy = (int)y, ch = h;
-        if (cy < TOP)        { ch -= (TOP - cy); cy = TOP; }   // clip above viewport
-        if (cy + ch > vp_bottom) ch = vp_bottom - cy;          // clip below viewport
+        int cy = (int)y, ch = p->rect.h;
+        if (cy < TOP) { ch -= (TOP - cy); cy = TOP; }
+        if (cy + ch > vp_bottom) ch = vp_bottom - cy;
         if (ch < 0) ch = 0;
-        p->clip = (SDL_Rect){ l->win_w - RIGHT_MARGIN - vis_w, cy, vis_w, ch };
+        /* slide in from the right while opening */
+        int vis_w = (int)(UI_INSPECTOR_W * e);
+        p->clip = (SDL_Rect){l->win_w - vis_w, cy, vis_w, ch};
 
-        y += (h + GAP) * e;                   // stack downward, animated
+        y += p->rect.h * e;
     }
 
-    l->plot_right = any ? (l->win_w - RIGHT_MARGIN - (int)max_push - GAP)
-                        : (l->win_w - 25);
+    l->inspector_open = any;
+    l->plot_right = any ? col_x : l->win_w;
 }
 
-// IMPROVED: Floating "glass" panel — translucent body, rounded corners, soft
-// shadow and a subtle top highlight. Opacity follows win->anim so it fades while
-// it slides in. Geometry of the header / close button is unchanged so the
-// existing hit-testing in controller.c still lines up.
-void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win) {
+// Header of one inspector section: icon, title, close button, hairline.
+void draw_inspector_section(SDL_Renderer *ren, DraggableWindow *win, int icon, int mx, int my) {
     double a = ui_smoothstep(win->anim);
     if (a <= 0.01) return;
 
-    const int RAD = 14;
-    Uint8 A = (Uint8)(a * 255.0);
+    SDL_Rect body = win->rect;
+    ui_fill(ren, body, UI_PANEL);
 
-    // Soft drop shadow.
-    SDL_Rect shadow = {win->rect.x + 6, win->rect.y + 8, win->rect.w, win->rect.h};
-    fill_rounded_rect(ren, shadow, RAD, (SDL_Color){0, 0, 0, (Uint8)(70 * a)});
+    SDL_Rect head = {body.x, body.y, body.w, UI_SECTION_HEAD_H};
+    ui_fill(ren, head, UI_CHROME);
+    ui_hline(ren, head.x, head.x + head.w, head.y + head.h - 1, UI_LINE_SOFT);
+    ui_hline(ren, body.x, body.x + body.w, body.y + body.h - 1, UI_LINE);
+    ui_vline(ren, body.x, body.y, body.y + body.h, UI_LINE);
 
-    // Translucent glass body.
-    fill_rounded_rect(ren, win->rect, RAD, (SDL_Color){26, 30, 38, (Uint8)(208 * a)});
+    ui_draw_icon(ren, icon, (SDL_Rect){head.x + 10, head.y + (head.h - 16) / 2, 16, 16}, UI_FAINT);
+    ui_text_v(ren, UI_FONT_TITLE, win->title, head.x + 32, head, UI_TEXT);
 
-    // Top highlight band (fake light catching the glass edge).
-    SDL_Rect hi = {win->rect.x + RAD, win->rect.y + 1, win->rect.w - 2 * RAD, 1};
-    SDL_SetRenderDrawColor(ren, 255, 255, 255, (Uint8)(28 * a));
-    SDL_RenderFillRect(ren, &hi);
+    SDL_Rect close = {head.x + head.w - 26, head.y + (head.h - 18) / 2, 18, 18};
+    int hover = point_in_rect(mx, my, close);
+    if (hover) fill_rounded_rect(ren, close, 3, UI_RAISED);
+    ui_draw_icon(ren, UI_ICON_CLOSE, (SDL_Rect){close.x + 3, close.y + 3, 12, 12},
+                 hover ? UI_TEXT : UI_FAINT);
+}
 
-    // Outer border.
-    SDL_SetRenderDrawColor(ren, BORDER_IDLE.r, BORDER_IDLE.g, BORDER_IDLE.b, (Uint8)(150 * a));
-    SDL_RenderDrawRect(ren, &win->rect);
-
-    // Header strip + title.
-    SDL_Rect header = {win->rect.x, win->rect.y, win->rect.w, 34};
-    fill_rounded_rect(ren, header, RAD, (SDL_Color){34, 39, 49, (Uint8)(220 * a)});
-
-    SDL_Color title_c = TXT_BRIGHT; title_c.a = A;
-    draw_text(ren, font, win->title, win->rect.x + 16, win->rect.y + 8, title_c);
-
-    SDL_SetRenderDrawColor(ren, BORDER_GLOW.r, BORDER_GLOW.g, BORDER_GLOW.b, (Uint8)(180 * a));
-    SDL_RenderDrawLine(ren, win->rect.x + 14, win->rect.y + 33, win->rect.x + win->rect.w - 14, win->rect.y + 33);
-
-    // Close button (circular).
-    int cx = win->rect.x + win->rect.w - 20;
-    int cy = win->rect.y + 15;
-    int r = 10;
-
+// Kept for source compatibility: the panels are drawn by the call above.
+void draw_draggable_window(SDL_Renderer *ren, TTF_Font *font, DraggableWindow *win) {
+    (void)font;
     int mx, my; SDL_GetMouseState(&mx, &my);
-    int distSq = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
-    int hover = (distSq <= r * r);
-
-    SDL_Rect close_r = {cx - r + 1, cy - r + 1, r * 2 - 2, r * 2 - 2};
-    SDL_Color c_col = hover ? (SDL_Color){210, 72, 76, A} : (SDL_Color){52, 58, 68, A};
-    fill_rounded_rect(ren, close_r, 8, c_col);
-
-    SDL_Color x_c = TXT_BRIGHT; x_c.a = A;
-    draw_text(ren, font, "x", cx - 3, cy - 8, x_c);
-}
-
-// Lazily-loaded icon font. The default UI font (Helvetica) lacks arrow/symbol
-// glyphs, so toolbar icons are drawn with Arial Unicode, which provides them.
-static TTF_Font *ui_icon_font(void) {
-    static TTF_Font *f = NULL;
-    static int tried = 0;
-    if (!tried) {
-        tried = 1;
-        f = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 13);
-    }
-    return f;
-}
-
-// Flat, crisp button matching spectravisual_redesign.html.
-// Each visual state defines: a fill colour, a 1px border colour, and a text
-// colour. BTN_NORMAL is transparent when idle (just dim text) and only grows a
-// subtle filled background + border on hover. Active toggles and the
-// danger/primary styles use coloured fills with matching borders and text.
-void draw_button(SDL_Renderer *ren, TTF_Font *font, Button *btn, int mx, int my, int m_down, int active_state) {
-
-    int hover = point_in_rect(mx, my, btn->rect);
-    int pressed = (hover && m_down);
-
-    SDL_Color bg, border, text_col;
-    int has_bg = 1, has_border = 1;
-
-    if (btn->is_toggle && active_state) {
-        // Active toggle -> cyan accent (.btn-active)
-        bg       = (SDL_Color){14, 58, 71, 255};
-        border   = (SDL_Color){26, 85, 102, 255};
-        text_col = (SDL_Color){64, 190, 215, 255};
-        if (hover) bg = (SDL_Color){14, 64, 80, 255};
-    } else if (btn->style == BTN_DANGER) {
-        // Destructive action -> red accent (.btn-danger)
-        bg       = (SDL_Color){61, 26, 26, 255};
-        border   = (SDL_Color){90, 37, 37, 255};
-        text_col = (SDL_Color){248, 113, 113, 255};
-        if (hover) bg = (SDL_Color){74, 32, 32, 255};
-    } else if (btn->style == BTN_PRIMARY) {
-        // Primary action -> cyan accent (.btn-primary)
-        bg       = (SDL_Color){26, 58, 74, 255};
-        border   = (SDL_Color){37, 85, 101, 255};
-        text_col = (SDL_Color){64, 190, 215, 255};
-        if (hover) bg = (SDL_Color){30, 69, 85, 255};
-    } else {
-        // Normal: transparent idle, subtle filled hover (.btn / .btn:hover)
-        if (hover) {
-            bg       = (SDL_Color){30, 34, 48, 255};
-            border   = (SDL_Color){42, 48, 64, 255};
-            text_col = (SDL_Color){226, 232, 240, 255};
-        } else {
-            has_bg = 0;
-            has_border = 0;
-            text_col = (SDL_Color){156, 163, 175, 255};
-        }
-    }
-
-    // Pressed: darken the fill slightly for tactile feedback.
-    if (pressed && has_bg) {
-        bg.r = (Uint8)(bg.r * 0.82);
-        bg.g = (Uint8)(bg.g * 0.82);
-        bg.b = (Uint8)(bg.b * 0.82);
-    }
-
-    // Draw the 1px rounded border by stacking the fill on a slightly larger
-    // border-coloured rounded rect.
-    if (has_border) {
-        fill_rounded_rect(ren, btn->rect, 5, border);
-        SDL_Rect inner = {btn->rect.x + 1, btn->rect.y + 1, btn->rect.w - 2, btn->rect.h - 2};
-        if (has_bg) fill_rounded_rect(ren, inner, 4, bg);
-    } else if (has_bg) {
-        fill_rounded_rect(ren, btn->rect, 5, bg);
-    }
-
-    // Draw icon (icon font) + label (UI font) centered as one group.
-    TTF_Font *ifont = (btn->icon[0]) ? ui_icon_font() : NULL;
-    int iw = 0, ih = 0, lw = 0, lh = 0;
-    if (ifont) TTF_SizeUTF8(ifont, btn->icon, &iw, &ih);
-    if (font && btn->label[0]) TTF_SizeUTF8(font, btn->label, &lw, &lh);
-
-    int gap = (iw && lw) ? 5 : 0;
-    int total = iw + gap + lw;
-    int sx = btn->rect.x + (btn->rect.w - total) / 2;
-    int cy = btn->rect.y + btn->rect.h / 2;
-    int dy = pressed ? 1 : 0;
-    if (pressed) sx += 1;
-
-    if (ifont && iw) {
-        draw_text(ren, ifont, btn->icon, sx, cy - ih / 2 + dy, text_col);
-        sx += iw + gap;
-    }
-    if (font && btn->label[0]) {
-        draw_text(ren, font, btn->label, sx, cy - lh / 2 + dy, text_col);
-    }
+    draw_inspector_section(ren, win, UI_ICON_LIST, mx, my);
 }

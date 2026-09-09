@@ -1,5 +1,7 @@
 #include "view.h"
-#include "layout.h" 
+#include "layout.h"
+#include "ui_theme.h"
+#include "ui_chrome.h"
 #include "algorithms.h"
 #include <math.h>
 #include <stdio.h>
@@ -117,25 +119,47 @@ static double spectrum_df(const AppState *s) {
     return (d > 0.0) ? d : 0.0;
 }
 
-// --- INTERNAL CONSTANTS & PALETTE ---
-static const SDL_Color COL_BG           = {15, 17, 20, 255};
-static const SDL_Color COL_PANEL        = {22, 25, 29, 255};
-static const SDL_Color COL_GRID         = {78, 84, 92, 120};
-static const SDL_Color COL_AXIS         = {190, 196, 204, 210};
-static const SDL_Color COL_TXT          = {232, 238, 245, 255};
-static const SDL_Color COL_TXT_DIM      = {145, 153, 164, 255};
-static const SDL_Color COL_ACCENT       = {64, 190, 215, 255};
-static const SDL_Color COL_SEL_BOX      = {64, 190, 215, 42};
-static const SDL_Color COL_INPUT_BG     = {10, 12, 15, 255};
-static const SDL_Color COL_INPUT_BORDER = {70, 78, 88, 255};
+// --- PALETTE ---
+// The chrome palette lives in ui_theme.h so the renderer and the design stay in
+// step; these aliases keep the plotting code below reading the way it did.
+#define COL_BG           UI_GROUND
+#define COL_PANEL        UI_PLOT
+#define COL_GRID         UI_GRID
+#define COL_AXIS         UI_AXIS
+#define COL_TXT          UI_TEXT
+#define COL_TXT_DIM      UI_DIM
+#define COL_ACCENT       UI_ACCENT
+#define COL_INPUT_BG     UI_INPUT
+#define COL_INPUT_BORDER UI_LINE
+static const SDL_Color COL_SEL_BOX = {76, 154, 255, 40};
 
-#define UI_TITLE_H 22
-#define UI_TOOLBAR_Y 22
-#define UI_TOOLBAR_H 34
-#define UI_STATUS_Y 56
-#define UI_STATUS_H 20
-#define UI_PANEL_HEADER_H 20
-#define UI_INFO_H 24
+// Formats a frequency with a group separator: 12 452.7104
+static void fmt_mhz(char *buf, size_t n, double v, int dec) {
+    char raw[64];
+    snprintf(raw, sizeof(raw), "%.*f", dec, fabs(v));
+    char *dot = strchr(raw, '.');
+    int ilen = (int)(dot ? (size_t)(dot - raw) : strlen(raw));
+    char out[80]; int o = 0;
+    if (v < 0 && o < (int)sizeof(out) - 1) out[o++] = '-';
+    for (int i = 0; i < ilen && o < (int)sizeof(out) - 2; i++) {
+        if (i > 0 && (ilen - i) % 3 == 0) out[o++] = ' ';
+        out[o++] = raw[i];
+    }
+    out[o] = '\0';
+    snprintf(buf, n, "%s%s", out, dot ? dot : "");
+}
+
+static void fmt_count(char *buf, size_t n, long v) {
+    char raw[32]; snprintf(raw, sizeof(raw), "%ld", v);
+    int len = (int)strlen(raw);
+    char out[48]; int o = 0;
+    for (int i = 0; i < len && o < (int)sizeof(out) - 2; i++) {
+        if (i > 0 && (len - i) % 3 == 0) out[o++] = ' ';
+        out[o++] = raw[i];
+    }
+    out[o] = '\0';
+    snprintf(buf, n, "%s", out);
+}
 
 // --- INTERNAL HELPERS PROTOTYPES ---
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
@@ -145,8 +169,9 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
 static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
 static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l);
 static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
-static void draw_info_bar(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l);
+static void draw_status_bar(SDL_Renderer *ren, AppState *state, Layout *l);
 static const char *short_path(const char *path);
 static int pred_line_is_selected(AppState *state, int idx);
 static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int idx, int sx, int sy1);
@@ -175,6 +200,12 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 
     draw_top_chrome(ren, font, state, l);
 
+    // The plot ground covers the whole content area, so the axis gutters are
+    // part of the pane instead of showing the window ground behind them.
+    ui_fill(ren, (SDL_Rect){UI_RAIL_W, UI_CONTENT_Y,
+                            l->plot_right - UI_RAIL_W,
+                            l->win_h - UI_CONTENT_Y - UI_STATUS_H}, UI_PLOT);
+
     // 2. Draw Graphs / Start Screen. Only draw a pane if it has data, so an
     // empty spectrum/prediction window isn't shown when only one was loaded.
     if (state->data_loaded) {
@@ -195,7 +226,8 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 
     // 4. UI Elements (Windows, Buttons, Cursor Info)
     draw_panel_headers(ren, font, state, l);
-    draw_info_bar(ren, font, state, l);
+    draw_rail(ren, state, l);
+    draw_status_bar(ren, state, l);
     draw_ui_overlays(ren, font, state, l);
     if (state->data_loaded) draw_cursor_overlay(ren, font, state, l);
     if (state->show_help) draw_help_overlay(ren, font, state, l);
@@ -206,6 +238,7 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
 
 // --- SPECTRUM (EXPERIMENTAL) ---
 static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    (void)font;
     // Clipping
     SDL_Rect clip = {l->exp_x, l->exp_y, l->exp_w, l->exp_h};
     SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
@@ -285,7 +318,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             fill_rounded_rect(ren, sw, 3, sp->color);
             char nm[20];
             snprintf(nm, sizeof(nm), "%.18s", sp->name);
-            draw_text(ren, font, nm, lx + 18, ly + 2, (s == state->active_spec) ? COL_TXT : COL_TXT_DIM);
+            ui_text(ren, UI_FONT_SANS_SM, nm, lx + 18, ly + 2,
+                    (s == state->active_spec) ? UI_TEXT : UI_DIM);
             ly += 18;
         }
     }
@@ -317,11 +351,11 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         SDL_SetRenderDrawColor(ren, 245, 210, 75, 220);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
 
-        char label[64]; snprintf(label, sizeof(label), "%.3f", pkx);  // show true freq
-        SDL_Rect tag = {px + 4, l->exp_y + 8, 74, 22};
+        char label[64]; fmt_mhz(label, sizeof(label), pkx, 3);   // true frequency
+        SDL_Rect tag = {px + 4, l->exp_y + 8, ui_text_w(UI_FONT_MONO_SM, label) + 14, 19};
         if (tag.x + tag.w < l->exp_x + l->exp_w) {
-            fill_rounded_rect(ren, tag, 4, (SDL_Color){34, 30, 12, 210});
-            draw_text(ren, font, label, tag.x + 6, tag.y + 4, (SDL_Color){245,210,75,255});
+            fill_rounded_rect(ren, tag, 3, (SDL_Color){28, 24, 12, 225});
+            ui_text_v(ren, UI_FONT_MONO_SM, label, tag.x + 7, tag, UI_WARN);
         }
     }
 
@@ -372,17 +406,18 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
                 SDL_RenderDrawLine(ren, l->exp_x - 4, tick_y[t], l->exp_x, tick_y[t]);
                 char vb[24];
                 snprintf(vb, sizeof(vb), "%.3g", tick_val[t]);
-                draw_text(ren, font, vb, l->exp_x - 56, tick_y[t] - 6, COL_TXT_DIM);
+                ui_text_right(ren, UI_FONT_MONO_SM, vb, l->exp_x - 10,
+                              tick_y[t] - ui_text_h(UI_FONT_MONO_SM) / 2, UI_FAINT);
             }
-            draw_text(ren, font, sp->name, l->exp_x + 8, ay + 3,
-                      (s == state->active_spec) ? sp->color : COL_TXT_DIM);
+            ui_text(ren, UI_FONT_SANS_SM, sp->name, l->exp_x + 8, ay + 3,
+                    (s == state->active_spec) ? sp->color : UI_FAINT);
             vj++;
         }
     }
 
-    // Draw Borders
-    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
-    SDL_RenderDrawRect(ren, &clip);
+    // Axis lines: left and bottom only, the way a plot is normally framed.
+    ui_vline(ren, l->exp_x, l->exp_y, l->exp_y + l->exp_h, UI_AXIS);
+    ui_hline(ren, l->exp_x, l->exp_x + l->exp_w, l->exp_y + l->exp_h, UI_AXIS);
     
     // Draw X-Axis Ticks & Labels
     double xrange = state->vxmax - state->vxmin;
@@ -395,15 +430,14 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 60);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
         SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
-        SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 5);
-        
-        char buf[32]; snprintf(buf,sizeof(buf),"%.3f", x);
-        draw_text(ren, font, buf, px - 24, l->exp_y + l->exp_h + 8, COL_TXT);
-    }
-    
-    // X-Axis Title
-    if (l->gap >= 45 && l->exp_w > 360) {
-        draw_text(ren, font, "Frequency / MHz", l->exp_x + l->exp_w/2 - 60, l->exp_y + l->exp_h + 28, COL_TXT_DIM);
+        SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 4);
+
+        // With no prediction pane below, this is the only frequency axis.
+        if (state->n_pred == 0) {
+            char buf[40]; fmt_mhz(buf, sizeof(buf), x, 3);
+            ui_text(ren, UI_FONT_MONO_SM, buf,
+                    px - ui_text_w(UI_FONT_MONO_SM, buf) / 2, l->exp_y + l->exp_h + 7, UI_FAINT);
+        }
     }
     
     // --- Y-Axis Ticks & Labels (NEW) ---
@@ -422,33 +456,25 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 45);
             SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x + l->exp_w, py);
             
-            // Draw Label (Scientific notation)
-            char buf[32]; 
+            char buf[32];
             snprintf(buf, sizeof(buf), "%.1e", y);
             if (py > l->exp_y + 6 && py < l->exp_y + l->exp_h - 6) {
-                draw_text(ren, font, buf, l->exp_x - 65, py - 7, COL_TXT_DIM);
+                ui_text_right(ren, UI_FONT_MONO_SM, buf, l->exp_x - 10,
+                              py - ui_text_h(UI_FONT_MONO_SM) / 2, UI_FAINT);
             }
         }
-    }
-    // Y-Axis Title
-    if (l->exp_h > 160) {
-        draw_text_vertical(ren, font, "Intensity", l->exp_x - 75, l->exp_y + l->exp_h/2 + 30, COL_TXT_DIM);
     }
 }
 
 // --- PREDICTION (PICKETT) ---
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    (void)font;
     SDL_Rect pred_rect = {l->pred_x, l->pred_y, l->pred_w, l->pred_h};
     SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
     SDL_RenderFillRect(ren, &pred_rect);
-    
-    // Draw Border
-    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
-    SDL_RenderDrawRect(ren, &pred_rect);
 
-    // Grid Lines for Pred
-    SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
-    SDL_RenderDrawLine(ren, l->pred_x, l->pred_y + l->pred_h, l->pred_x + l->pred_w, l->pred_y + l->pred_h);
+    ui_vline(ren, l->pred_x, l->pred_y, l->pred_y + l->pred_h, UI_AXIS);
+    ui_hline(ren, l->pred_x, l->pred_x + l->pred_w, l->pred_y + l->pred_h, UI_AXIS);
 
     if (state->n_pred > 0) {
         SDL_RenderSetClipRect(ren, &pred_rect);
@@ -486,8 +512,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
                 }
                 if (group_n + overflow_n > 1) {
-                    SDL_Rect cluster_mark = {group_sx - 4, l->pred_y + 5, 9, 5};
-                    fill_rounded_rect(ren, cluster_mark, 2, (SDL_Color){235, 240, 245, 145});
+                    SDL_Rect cluster_mark = {group_sx - 2, l->pred_y + 4, 5, 2};
+                    fill_rounded_rect(ren, cluster_mark, 1, (SDL_Color){147, 149, 156, 120});
                 }
                 group_n = 0;
                 overflow_n = 0;
@@ -512,8 +538,8 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
             }
             if (group_n + overflow_n > 1) {
-                    SDL_Rect cluster_mark = {group_sx - 4, l->pred_y + 5, 9, 5};
-                    fill_rounded_rect(ren, cluster_mark, 2, (SDL_Color){235, 240, 245, 145});
+                    SDL_Rect cluster_mark = {group_sx - 2, l->pred_y + 4, 5, 2};
+                    fill_rounded_rect(ren, cluster_mark, 1, (SDL_Color){147, 149, 156, 120});
             }
         }
 
@@ -615,8 +641,9 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         SDL_RenderDrawLine(ren, px, l->pred_y, px, l->pred_y + l->pred_h);
         SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->pred_y + l->pred_h, px, l->pred_y + l->pred_h + 4);
-        char buf[32]; snprintf(buf,sizeof(buf),"%.3f",x);
-        draw_text(ren, font, buf, px - 24, l->pred_y + l->pred_h + 8, COL_TXT_DIM);
+        char buf[40]; fmt_mhz(buf, sizeof(buf), x, 3);
+        ui_text(ren, UI_FONT_MONO_SM, buf,
+                px - ui_text_w(UI_FONT_MONO_SM, buf) / 2, l->pred_y + l->pred_h + 7, UI_FAINT);
     }
 }
 
@@ -634,118 +661,262 @@ static const char *short_path(const char *path) {
     return slash ? slash + 1 : path;
 }
 
+// ============================================================================
+//  WINDOW CHROME
+//  Two bands at the top (document + commands), an icon rail on the left, one
+//  status line at the bottom. Everything else on screen is the data.
+// ============================================================================
 static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
-    SDL_Rect title = {0, 0, l->win_w, UI_TITLE_H};
-    SDL_Rect toolbar = {0, UI_TOOLBAR_Y, l->win_w, UI_TOOLBAR_H};
-    SDL_Rect status = {0, UI_STATUS_Y, l->win_w, UI_STATUS_H};
-    char buf[256];
+    (void)font;
+    int mx, my;
+    int mdown = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    char buf[512];
 
-    SDL_SetRenderDrawColor(ren, 15, 17, 21, 255);
-    SDL_RenderFillRect(ren, &title);
-    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
-    SDL_RenderDrawLine(ren, 0, UI_TITLE_H - 1, l->win_w, UI_TITLE_H - 1);
+    /* --- document bar: which files this window is showing --- */
+    SDL_Rect doc = {0, 0, l->win_w, UI_TITLEBAR_H};
+    ui_fill(ren, doc, UI_TITLEBAR);
+    ui_hline(ren, 0, l->win_w, UI_TITLEBAR_H - 1, (SDL_Color){10, 11, 12, 255});
 
-    draw_text(ren, font, "SpectraVisual", 14, 6, COL_TXT);
-    snprintf(buf, sizeof(buf), "%s - %s", short_path(state->exp_path), short_path(state->pred_path));
-    if (l->win_w > 720) draw_text(ren, font, buf, 154, 6, COL_TXT_DIM);
-
-    SDL_SetRenderDrawColor(ren, 19, 22, 28, 255);
-    SDL_RenderFillRect(ren, &toolbar);
-    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
-    SDL_RenderDrawLine(ren, 0, UI_TOOLBAR_Y + UI_TOOLBAR_H - 1, l->win_w, UI_TOOLBAR_Y + UI_TOOLBAR_H - 1);
-
-    SDL_SetRenderDrawColor(ren, 13, 15, 19, 255);
-    SDL_RenderFillRect(ren, &status);
-    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
-    SDL_RenderDrawLine(ren, 0, UI_STATUS_Y + UI_STATUS_H - 1, l->win_w, UI_STATUS_Y + UI_STATUS_H - 1);
-
-    fill_rounded_rect(ren, (SDL_Rect){14, UI_STATUS_Y + 7, 6, 6}, 3,
-                      state->data_loaded ? (SDL_Color){34, 197, 94, 255} : (SDL_Color){248, 187, 68, 255});
-    // Status line: only show errors / transient messages / the drop hint.
-    // (Point counts, frequency and intensity ranges are intentionally omitted;
-    //  the axes already convey ranges and the readouts live in the info bar.)
-    if (state->error_message[0]) {
-        draw_text(ren, font, state->error_message, 30, UI_STATUS_Y + 3, (SDL_Color){255, 170, 175, 255});
-    } else if (!state->data_loaded && state->status_message[0]) {
-        draw_text(ren, font, state->status_message, 30, UI_STATUS_Y + 3, COL_TXT_DIM);
-    } else if (!state->data_loaded) {
-        draw_text(ren, font, "Drop a spectrum file and a .cat file, or launch with both paths from Terminal.", 30, UI_STATUS_Y + 3, COL_TXT_DIM);
+    if (state->exp_path[0] || state->pred_path[0]) {
+        const char *sp = state->exp_path[0] ? short_path(state->exp_path) : NULL;
+        const char *pr = state->pred_path[0] ? short_path(state->pred_path) : NULL;
+        if (sp && pr)      snprintf(buf, sizeof(buf), "%s   \xC2\xB7   %s", sp, pr);
+        else if (sp)       snprintf(buf, sizeof(buf), "%s", sp);
+        else               snprintf(buf, sizeof(buf), "%s", pr);
+    } else {
+        snprintf(buf, sizeof(buf), "No file loaded");
     }
+    int tw = ui_text_w(UI_FONT_SANS, buf);
+    ui_text_v(ren, UI_FONT_SANS, buf, (l->win_w - tw) / 2, doc, UI_DIM);
+
+    /* --- command bar --- */
+    SDL_Rect bar = {0, UI_TITLEBAR_H, l->win_w, UI_TOPBAR_H};
+    ui_fill(ren, bar, UI_CHROME);
+    ui_hline(ren, 0, l->win_w, UI_CONTENT_Y - 1, UI_LINE);
+
+    ui_button(ren, ui_top_rect(UI_TOP_BAR, l->win_w), "Bar", UI_ICON_BAR,
+              UI_BTN_QUIET, state->bar_active, mx, my, mdown);
+    ui_button(ren, ui_top_rect(UI_TOP_MEASURE, l->win_w), "Measure", UI_ICON_MEASURE,
+              UI_BTN_QUIET, state->measure_active, mx, my, mdown);
+    ui_button(ren, ui_top_rect(UI_TOP_SYNC, l->win_w), "Sync", UI_ICON_SYNC,
+              UI_BTN_QUIET, state->sync_active, mx, my, mdown);
+
+    ui_vline(ren, UI_TOP_SEP_X, UI_TOP_BTN_Y + 3, UI_TOP_BTN_Y + UI_TOP_BTN_H - 3, UI_LINE);
+
+    ui_button(ren, ui_top_rect(UI_TOP_DELPEAK, l->win_w), "Delete peak", UI_ICON_TRASH,
+              UI_BTN_DANGER, 0, mx, my, mdown);
+
+    if (ui_top_right_visible(l->win_w)) {
+        SDL_Rect off = ui_top_rect(UI_TOP_OFFSET, l->win_w);
+        char val[40];
+        if (state->input_state == INPUT_OFFSET) snprintf(val, sizeof(val), "%s_", state->text_input_buf);
+        else                                    snprintf(val, sizeof(val), "%.4f", state->exp_offset);
+        ui_field(ren, off, "Offset", val, state->input_state == INPUT_OFFSET);
+
+        ui_button(ren, ui_top_rect(UI_TOP_EXPORT, l->win_w), "Export view", UI_ICON_EXPORT,
+                  UI_BTN_QUIET, 0, mx, my, mdown);
+        ui_button(ren, ui_top_rect(UI_TOP_HELP, l->win_w), "Shortcuts", UI_ICON_HELP,
+                  UI_BTN_QUIET, state->show_help, mx, my, mdown);
+    }
+
+    /* the error / hint line sits at the left of the document bar */
+    if (state->error_message[0]) {
+        ui_text_v(ren, UI_FONT_SANS_SM, state->error_message, 12, doc, UI_DANGER_TEXT);
+    } else if (!state->data_loaded && state->status_message[0]) {
+        ui_text_v(ren, UI_FONT_SANS_SM, state->status_message, 12, doc, UI_FAINT);
+    }
+}
+
+// Left rail: one icon per tool panel, in the order the panels stack.
+static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
+    int mx, my;
+    int mdown = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+
+    SDL_Rect rail = {0, UI_CONTENT_Y, UI_RAIL_W, l->win_h - UI_CONTENT_Y - UI_STATUS_H};
+    ui_fill(ren, rail, UI_CHROME);
+    ui_vline(ren, UI_RAIL_W - 1, rail.y, rail.y + rail.h, UI_LINE);
+
+    const DraggableWindow *panels[UI_TOOL_COUNT] = {
+        &state->win_as, &state->win_pf, &state->win_avg, &state->win_br,
+        &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec
+    };
+
+    int tip_tool = -1;
+    SDL_Rect tip_rect = {0, 0, 0, 0};
+
+    for (int t = 0; t < UI_TOOL_COUNT; t++) {
+        SDL_Rect r = ui_rail_rect(t);
+        int on = panels[t]->visible;
+        int hover = ui_button(ren, r, "", ui_tool_icon(t), UI_BTN_QUIET, on, mx, my, mdown);
+        if (on) {
+            SDL_Rect mark = {0, r.y + 6, 2, r.h - 12};
+            ui_fill(ren, mark, UI_ACCENT);
+        }
+        if (ui_rail_separator_after(t))
+            ui_hline(ren, r.x + 6, r.x + r.w - 6, r.y + r.h + UI_RAIL_SEP / 2, UI_LINE);
+        if (hover) { tip_tool = t; tip_rect = r; }
+    }
+
+    /* tooltip last, so it sits above the neighbouring buttons */
+    if (tip_tool >= 0) {
+        const char *title = ui_tool_title(tip_tool);
+        const char *key   = ui_tool_key(tip_tool);
+        int tw = ui_text_w(UI_FONT_SANS, title);
+        int kw = (key && *key) ? ui_text_w(UI_FONT_MONO_SM, key) + 10 : 0;
+        SDL_Rect tip = {UI_RAIL_W + 6, tip_rect.y + (tip_rect.h - 22) / 2, tw + kw + 20, 22};
+        fill_rounded_rect(ren, tip, 4, (SDL_Color){8, 9, 10, 245});
+        ui_frame(ren, tip, UI_LINE);
+        ui_text_v(ren, UI_FONT_SANS, title, tip.x + 10, tip, UI_TEXT);
+        if (kw) ui_text_v(ren, UI_FONT_MONO_SM, key, tip.x + 10 + tw + 10, tip, UI_FAINT);
+    }
+}
+
+// A small state chip, e.g. "filter off". Returns its width.
+static int draw_chip(SDL_Renderer *ren, int right_x, int cy, const char *text, SDL_Color c, int dotted) {
+    int tw = ui_text_w(UI_FONT_SANS_SM, text);
+    int w = tw + (dotted ? 24 : 16);
+    SDL_Rect r = {right_x - w, cy - 9, w, 18};
+    fill_rounded_rect(ren, r, 3, UI_RAISED);
+    if (dotted) {
+        SDL_Rect dot = {r.x + 8, cy - 3, 6, 6};
+        fill_rounded_rect(ren, dot, 3, c);
+        ui_text_v(ren, UI_FONT_SANS_SM, text, r.x + 18, r, c);
+    } else {
+        ui_text_v(ren, UI_FONT_SANS_SM, text, r.x + 8, r, c);
+    }
+    return w;
 }
 
 static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    (void)font;
     char buf[128];
-    SDL_Rect exp_head = {l->exp_x, l->exp_y - UI_PANEL_HEADER_H, l->exp_w, UI_PANEL_HEADER_H};
-    SDL_Rect pred_head = {l->pred_x, l->pred_y - UI_PANEL_HEADER_H, l->pred_w, UI_PANEL_HEADER_H};
+    int pane_x = UI_RAIL_W;
+    int pane_w = l->plot_right - pane_x;
+    if (pane_w < 80) return;
 
-    fill_rounded_rect(ren, exp_head, 0, (SDL_Color){15, 18, 24, 255});
-    fill_rounded_rect(ren, pred_head, 0, (SDL_Color){15, 18, 24, 255});
-    SDL_SetRenderDrawColor(ren, 30, 34, 48, 255);
-    SDL_RenderDrawLine(ren, exp_head.x, exp_head.y + exp_head.h - 1, exp_head.x + exp_head.w, exp_head.y + exp_head.h - 1);
-    SDL_RenderDrawLine(ren, pred_head.x, pred_head.y + pred_head.h - 1, pred_head.x + pred_head.w, pred_head.y + pred_head.h - 1);
+    if (state->n_spectra > 0) {
+        SDL_Rect head = {pane_x, l->exp_y - UI_PANEL_HEADER_H, pane_w, UI_PANEL_HEADER_H};
+        ui_fill(ren, head, UI_PANEL);
+        ui_hline(ren, head.x, head.x + head.w, head.y + head.h - 1, UI_LINE_SOFT);
+        ui_text_v(ren, UI_FONT_TITLE, "Experimental", head.x + 12, head, UI_TEXT);
 
-    draw_text(ren, font, "EXPERIMENTAL SPECTRUM", exp_head.x + 14, exp_head.y + 3, (SDL_Color){100, 110, 126, 255});
+        int nvis = 0;
+        for (int i = 0; i < state->n_spectra; i++) if (state->spectra[i].visible) nvis++;
+        char pts[32]; fmt_count(pts, sizeof(pts), (long)state->n_pts);
+        snprintf(buf, sizeof(buf), "%d trace%s   %s pts", nvis, nvis == 1 ? "" : "s", pts);
+        ui_text_v(ren, UI_FONT_MONO_SM, buf,
+                  head.x + 12 + ui_text_w(UI_FONT_TITLE, "Experimental") + 16, head, UI_FAINT);
 
-    draw_text(ren, font, "PREDICTION", pred_head.x + 14, pred_head.y + 3, (SDL_Color){100, 110, 126, 255});
-    if (state->data_loaded && pred_head.w > 760) {
-        snprintf(buf, sizeof(buf), "%d lines   %s", state->n_pred, state->sync_active ? "synced" : "free");
-        draw_text(ren, font, buf, pred_head.x + 120, pred_head.y + 3, COL_TXT_DIM);
+        int rx = head.x + head.w - 12, cy = head.y + head.h / 2;
+        if (state->n_spectra > 1) {
+            snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s",
+                     state->multi_layout ? "stack" : "overlay",
+                     state->multi_ynorm ? "normalised Y" : "shared Y");
+            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0) + 6;
+        }
+        if (state->rolling_avg_active) {
+            snprintf(buf, sizeof(buf), "rolling avg %d pt", state->rolling_avg_window);
+            rx -= draw_chip(ren, rx, cy, buf, UI_OK, 1) + 6;
+        }
+    }
+
+    if (state->n_pred > 0) {
+        SDL_Rect head = {pane_x, l->pred_y - UI_PANEL_HEADER_H, pane_w, UI_PANEL_HEADER_H};
+        ui_fill(ren, head, UI_PANEL);
+        ui_hline(ren, head.x, head.x + head.w, head.y + head.h - 1, UI_LINE_SOFT);
+        ui_text_v(ren, UI_FONT_TITLE, "Prediction", head.x + 12, head, UI_TEXT);
+
+        int shown = 0;
+        for (int i = 0; i < state->n_pred; i++) {
+            double f = state->pred_lines[i].freq_mhz;
+            if (f < state->pvxmin || f > state->pvxmax) continue;
+            if (pred_passes_filter(state, i)) shown++;
+        }
+        char cnt[32]; fmt_count(cnt, sizeof(cnt), (long)shown);
+        snprintf(buf, sizeof(buf), "%s lines in view", cnt);
+        ui_text_v(ren, UI_FONT_MONO_SM, buf,
+                  head.x + 12 + ui_text_w(UI_FONT_TITLE, "Prediction") + 16, head, UI_FAINT);
+
+        int rx = head.x + head.w - 12, cy = head.y + head.h / 2;
+        if (state->broadening_active) {
+            if (state->broaden_mode == 1) {
+                double df = spectrum_df(state);
+                int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
+                snprintf(buf, sizeof(buf), "Kaiser FFT \xC2\xB7 res %.4g MHz", cer * df);
+            } else {
+                snprintf(buf, sizeof(buf), "%s profile",
+                         (state->lorentz_gamma > 0 && state->gauss_gamma > 0) ? "Voigt" :
+                         (state->lorentz_gamma > 0) ? "Lorentz" : "Gauss");
+            }
+            rx -= draw_chip(ren, rx, cy, buf, UI_DIM, 0) + 6;
+        }
+        rx -= draw_chip(ren, rx, cy, state->filter_active ? "filter on" : "filter off",
+                        state->filter_active ? UI_WARN : UI_FAINT, 1) + 6;
+        (void)rx;
     }
 }
 
-// Draws "label" (dim) followed by "value" (coloured), e.g. "Cursor: 4231.872 MHz".
-static void draw_kv(SDL_Renderer *ren, TTF_Font *font, const char *label,
-                    const char *value, int x, int y, SDL_Color vcol) {
-    draw_text(ren, font, label, x, y, COL_TXT_DIM);
-    int w = 0, h = 0;
-    TTF_SizeUTF8(font, label, &w, &h);
-    draw_text(ren, font, value, x + w + 5, y, vcol);
-}
+// One status line: what the pointer reads, what is marked, what is loaded.
+static void draw_status_bar(SDL_Renderer *ren, AppState *state, Layout *l) {
+    char buf[96];
+    SDL_Rect bar = {0, l->win_h - UI_STATUS_H, l->win_w, UI_STATUS_H};
+    ui_fill(ren, bar, UI_CHROME);
+    ui_hline(ren, 0, l->win_w, bar.y, UI_LINE);
 
-static void draw_info_bar(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
-    SDL_Rect info = {0, l->win_h - UI_INFO_H, l->win_w, UI_INFO_H};
-    char buf[128];
-    int mx, my;
+    int mx, my; SDL_GetMouseState(&mx, &my);
+    int in_exp = state->data_loaded &&
+                 point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h});
+    int ty_mono = bar.y + (bar.h - ui_text_h(UI_FONT_MONO)) / 2;
+    int ty_sans = bar.y + (bar.h - ui_text_h(UI_FONT_SANS_SM)) / 2;
 
-    SDL_SetRenderDrawColor(ren, 11, 13, 16, 255);
-    SDL_RenderFillRect(ren, &info);
-    SDL_SetRenderDrawColor(ren, 26, 30, 40, 255);
-    SDL_RenderDrawLine(ren, 0, info.y, l->win_w, info.y);
-
-    int ty = info.y + 5;
-    SDL_GetMouseState(&mx, &my);
-    if (state->data_loaded && point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
+    int x = 12;
+    ui_text(ren, UI_FONT_SANS_SM, "f", x, ty_sans, UI_FAINT); x += 14;
+    if (in_exp) {
         double fx = (mx - l->exp_x) / (double)l->exp_w;
+        fmt_mhz(buf, sizeof(buf), state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset, 4);
+    } else snprintf(buf, sizeof(buf), "\xE2\x80\x94");
+    ui_text(ren, UI_FONT_MONO, buf, x, ty_mono, in_exp ? UI_ACCENT : UI_FAINT);
+    x += 104;
+    ui_text(ren, UI_FONT_SANS_SM, "MHz", x, ty_sans, UI_FAINT); x += 42;
+
+    ui_text(ren, UI_FONT_SANS_SM, "I", x, ty_sans, UI_FAINT); x += 14;
+    if (in_exp) {
         double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
-        double cx = state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset;  // true freq
-        double cy = state->vymin + fy * (state->vymax - state->vymin);
-        snprintf(buf, sizeof(buf), "%.4f MHz", cx);
-        draw_kv(ren, font, "Cursor:", buf, 14, ty, COL_ACCENT);
-        snprintf(buf, sizeof(buf), "%.2e", cy);
-        draw_kv(ren, font, "Int:", buf, 190, ty, COL_TXT);
-    } else {
-        draw_kv(ren, font, "Cursor:", "-", 14, ty, COL_TXT_DIM);
-        draw_kv(ren, font, "Int:", "-", 190, ty, COL_TXT_DIM);
+        snprintf(buf, sizeof(buf), "%.2e", state->vymin + fy * (state->vymax - state->vymin));
+    } else snprintf(buf, sizeof(buf), "\xE2\x80\x94");
+    ui_text(ren, UI_FONT_MONO, buf, x, ty_mono, in_exp ? UI_TEXT : UI_FAINT);
+    x += 92;
+
+    ui_text(ren, UI_FONT_SANS_SM, "bar", x, ty_sans, UI_FAINT); x += 30;
+    if (state->bar_active && state->data_loaded) fmt_mhz(buf, sizeof(buf), state->bar_x, 4);
+    else snprintf(buf, sizeof(buf), "off");
+    ui_text(ren, UI_FONT_MONO, buf, x, ty_mono, state->bar_active ? UI_WARN : UI_FAINT);
+    x += 104;
+
+    if (state->data_loaded && l->win_w > 760) {
+        ui_text(ren, UI_FONT_SANS_SM, "span", x, ty_sans, UI_FAINT); x += 38;
+        snprintf(buf, sizeof(buf), "%.2f MHz", state->vxmax - state->vxmin);
+        ui_text(ren, UI_FONT_MONO, buf, x, ty_mono, UI_TEXT);
     }
 
-    if (state->bar_active && state->data_loaded) {
-        snprintf(buf, sizeof(buf), "%.4f MHz", state->bar_x);
-        draw_kv(ren, font, "Bar:", buf, 320, ty, (SDL_Color){251, 191, 36, 255});
-    } else {
-        draw_kv(ren, font, "Bar:", "off", 320, ty, COL_TXT_DIM);
-    }
+    int rx = l->win_w - 12;
+    snprintf(buf, sizeof(buf), "%s", state->sync_active ? "on" : "off");
+    ui_text_right(ren, UI_FONT_MONO, buf, rx, ty_mono, state->sync_active ? UI_TEXT : UI_FAINT);
+    rx -= ui_text_w(UI_FONT_MONO, buf) + 6;
+    ui_text_right(ren, UI_FONT_SANS_SM, "sync", rx, ty_sans, UI_FAINT);
+    rx -= ui_text_w(UI_FONT_SANS_SM, "sync") + 22;
 
-    if (l->win_w > 760) {
-        snprintf(buf, sizeof(buf), "%d", state->n_peaks);
-        draw_kv(ren, font, "Peaks:", buf, l->win_w - 350, ty, COL_TXT_DIM);
-    }
-    if (l->win_w > 900) {
+    if (l->win_w > 640) {
         snprintf(buf, sizeof(buf), "%d", state->n_assignments);
-        draw_kv(ren, font, "Assignments:", buf, l->win_w - 230, ty, COL_ACCENT);
-    }
-    if (state->data_loaded && l->win_w > 1080) {
-        snprintf(buf, sizeof(buf), "%.1f MHz", state->vxmax - state->vxmin);
-        draw_kv(ren, font, "Zoom:", buf, l->win_w - 105, ty, COL_TXT_DIM);
+        ui_text_right(ren, UI_FONT_MONO, buf, rx, ty_mono, UI_TEXT);
+        rx -= ui_text_w(UI_FONT_MONO, buf) + 6;
+        ui_text_right(ren, UI_FONT_SANS_SM, "assigned", rx, ty_sans, UI_FAINT);
+        rx -= ui_text_w(UI_FONT_SANS_SM, "assigned") + 22;
+
+        snprintf(buf, sizeof(buf), "%d", state->n_peaks);
+        ui_text_right(ren, UI_FONT_MONO, buf, rx, ty_mono, state->n_peaks ? UI_WARN : UI_FAINT);
+        rx -= ui_text_w(UI_FONT_MONO, buf) + 6;
+        ui_text_right(ren, UI_FONT_SANS_SM, "peaks", rx, ty_sans, UI_FAINT);
     }
 }
 
@@ -764,503 +935,294 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
     SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
 }
 
-// Small integer input field used by the FILTER panel. Shows the live edit
-// buffer (with caret) when focused, otherwise the stored value.
-static void draw_int_field(SDL_Renderer *ren, TTF_Font *font, AppState *state,
-                           SDL_Rect r, InputState which, int value) {
-    SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-    SDL_RenderFillRect(ren, &r);
-    int focus = (state->input_state == which);
-    SDL_Color b = focus ? COL_ACCENT : COL_INPUT_BORDER;
-    SDL_SetRenderDrawColor(ren, b.r, b.g, b.b, 255);
-    SDL_RenderDrawRect(ren, &r);
-    char buf[32];
-    if (focus) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-    else       snprintf(buf, sizeof(buf), "%d", value);
-    draw_text(ren, font, buf, r.x + 5, r.y + 4, COL_TXT);
+// Value of an input field: the live edit buffer with a caret while focused,
+// otherwise the stored value.
+static void field_val(AppState *st, int which, char *out, size_t n, const char *fmt, double v) {
+    if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
+    else                          snprintf(out, n, fmt, v);
+}
+static void field_val_i(AppState *st, int which, char *out, size_t n, int v) {
+    if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
+    else                          snprintf(out, n, "%d", v);
 }
 
-// --- UI OVERLAYS (Buttons & Windows) ---
+// A labelled numeric row inside a panel: caption on the left, field on the right.
+static void panel_row(SDL_Renderer *ren, AppState *st, const char *label,
+                      SDL_Rect field, int which, const char *value) {
+    SDL_Rect lab = {field.x - 200, field.y, 190, field.h};
+    ui_text_v(ren, UI_FONT_SANS, label, field.x - 135, lab, UI_DIM);
+    ui_field(ren, field, NULL, value, (int)st->input_state == which);
+}
+
+// --- INSPECTOR PANELS ---
+// Every rectangle below is also written in controller.c's hit-testing; the two
+// must stay identical.
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
-    int mx, my; 
+    (void)font; (void)l;
+    int mx, my;
     int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-    int by = UI_TOOLBAR_Y + 5;
+    char buf[128];
 
-    // 1. TOOLBAR BUTTONS  (icons come from the Arial Unicode icon font)
-    int right_x = l->win_w - 18;
-    Button btn_bar  = {{12,  by, 58, 24}, "Bar",   {14, 58, 71, 255}, 1, BTN_NORMAL,  "\xE2\x86\x91"}; // up
-    Button btn_sync = {{76,  by, 70, 24}, "Sync",  {14, 58, 71, 255}, 1, BTN_NORMAL,  "\xE2\x86\xBB"}; // clockwise
-    Button btn_del  = {{156, by, 58, 24}, "Del",   {70, 28, 30, 255}, 0, BTN_DANGER,  "\xE2\x9C\x95"}; // x
-    Button btn_list = {{236, by, 64, 24}, "List",  {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xE2\x98\xB0"}; // trigram
-    Button btn_peak = {{306, by, 68, 24}, "Peak",  {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xCE\x9B"};     // lambda
-    Button btn_roll = {{380, by, 62, 24}, "Avg",   {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xE2\x88\xBF"}; // sine
-    Button btn_broad = {{448, by, 82, 24}, "Broad", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x88\xA7"}; // wedge
-    Button btn_cut = {{552, by, 58, 24}, "Cut",   {30, 34, 48, 255}, 0, BTN_NORMAL,  "\xE2\x86\x94"}; // leftright
-    Button btn_jump = {{616, by, 78, 24}, "Jump",  {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x86\x92"}; // right
-    Button btn_filt = {{700, by, 72, 24}, "Filter", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x96\xBD"}; // down triangle
-    Button btn_spec = {{778, by, 72, 24}, "Spec", {30, 34, 48, 255}, 0, BTN_NORMAL, "\xE2\x98\xB0"};
-
-    SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
-    SDL_RenderDrawLine(ren, 224, by + 4, 224, by + 20);
-    SDL_RenderDrawLine(ren, 540, by + 4, 540, by + 20);
-
-    draw_button(ren, font, &btn_bar, mx, my, m_down, state->bar_active);
-    draw_button(ren, font, &btn_sync, mx, my, m_down, state->sync_active);
-    draw_button(ren, font, &btn_del, mx, my, m_down, 0);
-    draw_button(ren, font, &btn_list, mx, my, m_down, state->win_as.visible);
-    draw_button(ren, font, &btn_peak, mx, my, m_down, state->win_pf.visible);
-    if (l->win_w > 450) draw_button(ren, font, &btn_roll, mx, my, m_down, state->win_avg.visible);
-    if (l->win_w > 540) draw_button(ren, font, &btn_broad, mx, my, m_down, state->win_br.visible || state->broadening_active);
-    if (l->win_w > 620) draw_button(ren, font, &btn_cut, mx, my, m_down, state->win_cut.visible);
-    if (l->win_w > 700) draw_button(ren, font, &btn_jump, mx, my, m_down, state->win_jump.visible);
-    if (l->win_w > 790) draw_button(ren, font, &btn_filt, mx, my, m_down, state->win_filt.visible || state->filter_active);
-    if (l->win_w > 870) draw_button(ren, font, &btn_spec, mx, my, m_down, state->win_spec.visible || state->n_spectra > 1);
-
-    if (l->win_w > 900) {
-        int input_w = 122;
-        SDL_Rect r_off = {right_x - input_w, by, input_w, 24};
-        right_x = r_off.x - 64;
-        draw_text(ren, font, "Offset", r_off.x - 56, r_off.y + 4, COL_TXT_DIM);
-
-        fill_rounded_rect(ren, r_off, 5, COL_INPUT_BG);
-        SDL_Color border = (state->input_state == INPUT_OFFSET) ? COL_ACCENT : COL_INPUT_BORDER;
-        SDL_SetRenderDrawColor(ren, border.r, border.g, border.b, border.a);
-        SDL_RenderDrawRect(ren, &r_off);
-
-        char buf[32];
-        if(state->input_state == INPUT_OFFSET) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-        else snprintf(buf, sizeof(buf), "%.4f", state->exp_offset);
-        draw_text(ren, font, buf, r_off.x + 7, r_off.y + 4, COL_TXT);
-    }
-
-    if (l->win_w > 980) {
-        Button btn_export = {{right_x - 88, by, 82, 24}, "Export", {26, 58, 70, 255}, 0, BTN_PRIMARY, "\xE2\x86\x93"}; // down
-        Button btn_help = {{right_x - 154, by, 60, 24}, "Help", {30, 34, 48, 255}, 0, BTN_NORMAL, "?"};
-        SDL_SetRenderDrawColor(ren, 42, 47, 61, 255);
-        SDL_RenderDrawLine(ren, right_x - 166, by + 4, right_x - 166, by + 20);
-        draw_button(ren, font, &btn_help, mx, my, m_down, state->show_help);
-        draw_button(ren, font, &btn_export, mx, my, m_down, 0);
-    }
-
-    // 2. BROADENING WINDOW
-    if(state->win_br.anim > 0.01f) {
+    // 1. BROADENING
+    if (state->win_br.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_br.clip);
-        draw_draggable_window(ren, font, &state->win_br);
+        draw_inspector_section(ren, &state->win_br, UI_ICON_BELL, mx, my);
         int wx = state->win_br.rect.x, wy = state->win_br.rect.y;
-        char buf[64];
 
-        // --- Mode selector: Analytic (L/G/V) vs Kaiser-FFT lineshape ---
-        Button btn_an = {{wx+15,  wy+40, 125, 26}, "Analytic",   {30,34,48,255}, 0};
-        Button btn_ka = {{wx+150, wy+40, 125, 26}, "Kaiser FFT", {30,34,48,255}, 0};
-        draw_button(ren, font, &btn_an, mx, my, m_down, state->broaden_mode == 0);
-        draw_button(ren, font, &btn_ka, mx, my, m_down, state->broaden_mode == 1);
+        static const char *modes[2] = {"Analytic", "Kaiser FFT"};
+        ui_segmented(ren, (SDL_Rect){wx + 15, wy + 40, 260, 26}, modes, 2, state->broaden_mode == 1);
 
         if (state->broaden_mode == 0) {
-            // --- Lorentzian HWHM field ---
-            draw_text(ren, font, "Lorentz (MHz):", wx+20, wy+87, COL_TXT_DIM);
-            SDL_Rect r_lor = {wx+155, wy+82, 75, 28};
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-            SDL_RenderFillRect(ren, &r_lor);
-            SDL_Color bl = (state->input_state == INPUT_GAMMA) ? COL_ACCENT : COL_INPUT_BORDER;
-            SDL_SetRenderDrawColor(ren, bl.r, bl.g, bl.b, 255);
-            SDL_RenderDrawRect(ren, &r_lor);
-            if (state->input_state == INPUT_GAMMA) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-            else snprintf(buf, sizeof(buf), "%.2f", state->lorentz_gamma);
-            draw_text(ren, font, buf, r_lor.x + 5, r_lor.y + 5, COL_TXT);
+            field_val(state, INPUT_GAMMA, buf, sizeof(buf), "%.2f", state->lorentz_gamma);
+            panel_row(ren, state, "Lorentz HWHM", (SDL_Rect){wx + 155, wy + 82, 120, 28}, INPUT_GAMMA, buf);
+            field_val(state, INPUT_GAUSS, buf, sizeof(buf), "%.2f", state->gauss_gamma);
+            panel_row(ren, state, "Gauss HWHM", (SDL_Rect){wx + 155, wy + 122, 120, 28}, INPUT_GAUSS, buf);
 
-            // --- Gaussian HWHM field ---
-            draw_text(ren, font, "Gauss (MHz):", wx+20, wy+127, COL_TXT_DIM);
-            SDL_Rect r_gau = {wx+155, wy+122, 75, 28};
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-            SDL_RenderFillRect(ren, &r_gau);
-            SDL_Color bg = (state->input_state == INPUT_GAUSS) ? COL_ACCENT : COL_INPUT_BORDER;
-            SDL_SetRenderDrawColor(ren, bg.r, bg.g, bg.b, 255);
-            SDL_RenderDrawRect(ren, &r_gau);
-            if (state->input_state == INPUT_GAUSS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-            else snprintf(buf, sizeof(buf), "%.2f", state->gauss_gamma);
-            draw_text(ren, font, buf, r_gau.x + 5, r_gau.y + 5, COL_TXT);
-
-            // --- Resulting shape indicator (derived from which widths are set) ---
             const char *shape;
-            if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Shape: Voigt (L+G)";
-            else if (state->lorentz_gamma > 0.0)                        shape = "Shape: Lorentzian";
-            else if (state->gauss_gamma  > 0.0)                         shape = "Shape: Gaussian";
-            else                                                        shape = "Shape: -- (set a width)";
-            draw_text(ren, font, shape, wx+20, wy+165, COL_ACCENT);
+            if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Profile: Voigt";
+            else if (state->lorentz_gamma > 0.0)                        shape = "Profile: Lorentzian";
+            else if (state->gauss_gamma  > 0.0)                         shape = "Profile: Gaussian";
+            else                                                        shape = "Set a width to see a profile";
+            ui_text(ren, UI_FONT_SANS_SM, shape, wx + 20, wy + 168, UI_FAINT);
         } else {
-            // --- Kaiser beta field ---
-            draw_text(ren, font, "Kaiser beta:", wx+20, wy+87, COL_TXT_DIM);
-            SDL_Rect r_beta = {wx+155, wy+82, 75, 28};
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-            SDL_RenderFillRect(ren, &r_beta);
-            SDL_Color bb = (state->input_state == INPUT_KBETA) ? COL_ACCENT : COL_INPUT_BORDER;
-            SDL_SetRenderDrawColor(ren, bb.r, bb.g, bb.b, 255);
-            SDL_RenderDrawRect(ren, &r_beta);
-            if (state->input_state == INPUT_KBETA) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-            else snprintf(buf, sizeof(buf), "%.2f", state->kaiser_beta);
-            draw_text(ren, font, buf, r_beta.x + 5, r_beta.y + 5, COL_TXT);
+            field_val(state, INPUT_KBETA, buf, sizeof(buf), "%.2f", state->kaiser_beta);
+            panel_row(ren, state, "Kaiser beta", (SDL_Rect){wx + 155, wy + 82, 120, 28}, INPUT_KBETA, buf);
+            field_val_i(state, INPUT_KCEROS, buf, sizeof(buf), state->kaiser_ceros);
+            panel_row(ren, state, "Zero-pad", (SDL_Rect){wx + 155, wy + 122, 120, 28}, INPUT_KCEROS, buf);
+            field_val(state, INPUT_KINTR, buf, sizeof(buf), "%.3f", state->kaiser_intrinsic);
+            panel_row(ren, state, "Intrinsic FWHM", (SDL_Rect){wx + 155, wy + 162, 120, 28}, INPUT_KINTR, buf);
 
-            // --- ceros (zero-pad factor) field ---
-            draw_text(ren, font, "ceros:", wx+20, wy+127, COL_TXT_DIM);
-            SDL_Rect r_cer = {wx+155, wy+122, 75, 28};
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-            SDL_RenderFillRect(ren, &r_cer);
-            SDL_Color bc = (state->input_state == INPUT_KCEROS) ? COL_ACCENT : COL_INPUT_BORDER;
-            SDL_SetRenderDrawColor(ren, bc.r, bc.g, bc.b, 255);
-            SDL_RenderDrawRect(ren, &r_cer);
-            if (state->input_state == INPUT_KCEROS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-            else snprintf(buf, sizeof(buf), "%d", state->kaiser_ceros);
-            draw_text(ren, font, buf, r_cer.x + 5, r_cer.y + 5, COL_TXT);
-
-            // --- intrinsic (molecular) FWHM field ---
-            draw_text(ren, font, "intrinsic MHz:", wx+20, wy+167, COL_TXT_DIM);
-            SDL_Rect r_int = {wx+155, wy+162, 75, 28};
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-            SDL_RenderFillRect(ren, &r_int);
-            SDL_Color bi = (state->input_state == INPUT_KINTR) ? COL_ACCENT : COL_INPUT_BORDER;
-            SDL_SetRenderDrawColor(ren, bi.r, bi.g, bi.b, 255);
-            SDL_RenderDrawRect(ren, &r_int);
-            if (state->input_state == INPUT_KINTR) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-            else snprintf(buf, sizeof(buf), "%.3f", state->kaiser_intrinsic);
-            draw_text(ren, font, buf, r_int.x + 5, r_int.y + 5, COL_TXT);
-
-            // --- Derived resolution readout (from spectrum bin) ---
             double df = spectrum_df(state);
             int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
             if (df > 0.0) {
-                snprintf(buf, sizeof(buf), "bin df = %.5g MHz", df);
-                draw_text(ren, font, buf, wx+20, wy+202, COL_TXT_DIM);
-                snprintf(buf, sizeof(buf), "res = ceros*df = %.4g MHz", cer * df);
-                draw_text(ren, font, buf, wx+20, wy+220, COL_ACCENT);
+                snprintf(buf, sizeof(buf), "bin df   %.5g MHz", df);
+                ui_text(ren, UI_FONT_MONO_SM, buf, wx + 20, wy + 202, UI_FAINT);
+                snprintf(buf, sizeof(buf), "res = ceros x df   %.4g MHz", cer * df);
+                ui_text(ren, UI_FONT_MONO_SM, buf, wx + 20, wy + 220, UI_ACCENT_TEXT);
             } else {
-                draw_text(ren, font, "load a spectrum for the bin step", wx+20, wy+205, COL_TXT_DIM);
+                ui_text(ren, UI_FONT_SANS_SM, "Load a spectrum for the bin step", wx + 20, wy + 205, UI_FAINT);
             }
         }
-
-        Button btn_br_tog = {{wx+50, wy+255, 200, 30}, "", {60, 60, 70, 255}, 1};
-        snprintf(btn_br_tog.label, 32, state->broadening_active ? "ENABLED" : "DISABLED");
-        draw_button(ren, font, &btn_br_tog, mx, my, m_down, state->broadening_active);
+        ui_toggle_row(ren, (SDL_Rect){wx + 50, wy + 255, 200, 30}, "Simulated profile",
+                      state->broadening_active, mx, my);
     }
 
-    // 3. ROLLING AVG WINDOW
-    if(state->win_avg.anim > 0.01f) {
+    // 2. ROLLING AVERAGE
+    if (state->win_avg.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_avg.clip);
-        draw_draggable_window(ren, font, &state->win_avg);
+        draw_inspector_section(ren, &state->win_avg, UI_ICON_WAVE, mx, my);
         int wx = state->win_avg.rect.x, wy = state->win_avg.rect.y;
-        draw_text(ren, font, "Window (pts):", wx+20, wy+65, COL_TXT_DIM);
 
-        SDL_Rect r_win = {wx+130, wy+60, 80, 28};
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255);
-        SDL_RenderFillRect(ren, &r_win);
-
-        SDL_Color border = (state->input_state == INPUT_AVG_PTS) ? COL_ACCENT : COL_INPUT_BORDER;
-        SDL_SetRenderDrawColor(ren, border.r, border.g, border.b, 255);
-        SDL_RenderDrawRect(ren, &r_win);
-
-        char buf[64];
-        if (state->input_state == INPUT_AVG_PTS) snprintf(buf, sizeof(buf), "%s_", state->text_input_buf);
-        else snprintf(buf, sizeof(buf), "%d", state->rolling_avg_window);
-        draw_text(ren, font, buf, r_win.x + 5, r_win.y + 5, COL_TXT);
-        
-        Button btn_avg_tog = {{wx+50, wy+120, 200, 30}, "", {60, 60, 70, 255}, 1};
-        snprintf(btn_avg_tog.label, 32, state->rolling_avg_active ? "ENABLED" : "DISABLED");
-        draw_button(ren, font, &btn_avg_tog, mx, my, m_down, state->rolling_avg_active);
+        field_val_i(state, INPUT_AVG_PTS, buf, sizeof(buf), state->rolling_avg_window);
+        panel_row(ren, state, "Window (pts)", (SDL_Rect){wx + 130, wy + 60, 145, 28}, INPUT_AVG_PTS, buf);
+        ui_toggle_row(ren, (SDL_Rect){wx + 50, wy + 120, 200, 30}, "Smoothing",
+                      state->rolling_avg_active, mx, my);
+        ui_text(ren, UI_FONT_SANS_SM, "Active trace only. The raw data is kept.",
+                wx + 20, wy + 160, UI_FAINT);
     }
 
-    // 4. PEAK FINDER WINDOW
-    if(state->win_pf.anim > 0.01f) {
+    // 3. PEAK FINDER
+    if (state->win_pf.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_pf.clip);
-        draw_draggable_window(ren, font, &state->win_pf);
+        draw_inspector_section(ren, &state->win_pf, UI_ICON_PEAK, mx, my);
         int wx = state->win_pf.rect.x, wy = state->win_pf.rect.y;
-        SDL_Rect r_sig = {wx+190, wy+50, 80, 26};
-        SDL_Rect r_noi = {wx+190, wy+90, 80, 26};
-        SDL_Rect r_thr = {wx+190, wy+130, 80, 26};
 
-        draw_text(ren, font, "Search Width:", wx+20, wy+55, COL_TXT_DIM);
-        draw_text(ren, font, "Noise Window:", wx+20, wy+95, COL_TXT_DIM);
-        draw_text(ren, font, "Threshold (x):", wx+20, wy+135, COL_TXT_DIM);
-        
-        // Signal Input
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_sig);
-        SDL_SetRenderDrawColor(ren, (state->input_state == INPUT_PF_SIG)?COL_ACCENT.r:COL_INPUT_BORDER.r, (state->input_state == INPUT_PF_SIG)?COL_ACCENT.g:COL_INPUT_BORDER.g, (state->input_state == INPUT_PF_SIG)?COL_ACCENT.b:COL_INPUT_BORDER.b, 255); SDL_RenderDrawRect(ren, &r_sig);
-        char buf1[32]; if(state->input_state==INPUT_PF_SIG) snprintf(buf1,32,"%s_",state->text_input_buf); else snprintf(buf1,32,"%d",state->pf_sig_pts);
-        draw_text(ren, font, buf1, r_sig.x+5, r_sig.y+4, COL_TXT);
+        field_val_i(state, INPUT_PF_SIG, buf, sizeof(buf), state->pf_sig_pts);
+        panel_row(ren, state, "Search width", (SDL_Rect){wx + 190, wy + 50, 85, 26}, INPUT_PF_SIG, buf);
+        field_val_i(state, INPUT_PF_NOISE, buf, sizeof(buf), state->pf_noise_pts);
+        panel_row(ren, state, "Noise window", (SDL_Rect){wx + 190, wy + 90, 85, 26}, INPUT_PF_NOISE, buf);
+        field_val(state, INPUT_PF_THRESH, buf, sizeof(buf), "%.1f", state->pf_thresh);
+        panel_row(ren, state, "Threshold", (SDL_Rect){wx + 190, wy + 130, 85, 26}, INPUT_PF_THRESH, buf);
 
-        // Noise Input
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_noi);
-        SDL_SetRenderDrawColor(ren, (state->input_state == INPUT_PF_NOISE)?COL_ACCENT.r:COL_INPUT_BORDER.r, (state->input_state == INPUT_PF_NOISE)?COL_ACCENT.g:COL_INPUT_BORDER.g, (state->input_state == INPUT_PF_NOISE)?COL_ACCENT.b:COL_INPUT_BORDER.b, 255); SDL_RenderDrawRect(ren, &r_noi);
-        char buf2[32]; if(state->input_state==INPUT_PF_NOISE) snprintf(buf2,32,"%s_",state->text_input_buf); else snprintf(buf2,32,"%d",state->pf_noise_pts);
-        draw_text(ren, font, buf2, r_noi.x+5, r_noi.y+4, COL_TXT);
-
-        // Threshold Input
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); SDL_RenderFillRect(ren, &r_thr);
-        SDL_SetRenderDrawColor(ren, (state->input_state == INPUT_PF_THRESH)?COL_ACCENT.r:COL_INPUT_BORDER.r, (state->input_state == INPUT_PF_THRESH)?COL_ACCENT.g:COL_INPUT_BORDER.g, (state->input_state == INPUT_PF_THRESH)?COL_ACCENT.b:COL_INPUT_BORDER.b, 255); SDL_RenderDrawRect(ren, &r_thr);
-        char buf3[32]; if(state->input_state==INPUT_PF_THRESH) snprintf(buf3,32,"%s_",state->text_input_buf); else snprintf(buf3,32,"%.1f",state->pf_thresh);
-        draw_text(ren, font, buf3, r_thr.x+5, r_thr.y+4, COL_TXT);
-
-        // Buttons
-        Button btn_run = {{wx+50, wy+200, 200, 30}, "FIND PEAKS", {0, 150, 0, 255}, 0, BTN_PRIMARY};
-        draw_button(ren, font, &btn_run, mx, my, m_down, 0);
-        Button btn_exp = {{wx+50, wy+240, 200, 30}, "EXPORT LIST", {0, 100, 200, 255}, 0, BTN_PRIMARY};
-        draw_button(ren, font, &btn_exp, mx, my, m_down, 0);
+        ui_button(ren, (SDL_Rect){wx + 50, wy + 200, 200, 30}, "Find peaks", UI_ICON_PEAK,
+                  UI_BTN_PRIMARY, 0, mx, my, m_down);
+        ui_button(ren, (SDL_Rect){wx + 50, wy + 240, 200, 30}, "Export list", UI_ICON_EXPORT,
+                  UI_BTN_QUIET, 0, mx, my, m_down);
+        snprintf(buf, sizeof(buf), "%d peak%s found", state->n_peaks, state->n_peaks == 1 ? "" : "s");
+        ui_text(ren, UI_FONT_SANS_SM, buf, wx + 20, wy + 278, UI_FAINT);
     }
 
-    // 5. ASSIGNMENT WINDOW
-    if(state->win_as.anim > 0.01f) {
+    // 4. ASSIGNMENTS
+    if (state->win_as.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_as.clip);
-        draw_draggable_window(ren, font, &state->win_as);
+        draw_inspector_section(ren, &state->win_as, UI_ICON_LIST, mx, my);
         int wx = state->win_as.rect.x, wy = state->win_as.rect.y;
-        int ty = wy + 60;
-        
-        SDL_Rect table_head = {wx + 14, ty - 6, state->win_as.rect.w - 28, 28};
-        fill_rounded_rect(ren, table_head, 5, (SDL_Color){18, 21, 25, 220});
-        draw_text(ren, font, "Quantum numbers", wx+24, ty, COL_TXT_DIM);
-        draw_text(ren, font, "Exp Freq", wx+300, ty, COL_TXT_DIM);
-        ty += 30;
-        
+        int tw = state->win_as.rect.w;
+
+        SDL_Rect head = {wx + 15, wy + 64, tw - 30, 20};
+        ui_fill(ren, head, UI_INPUT);
+        ui_text_v(ren, UI_FONT_SANS_SM, "J Ka Kc", head.x + 8, head, UI_FAINT);
+        ui_text_right(ren, UI_FONT_SANS_SM, "exp freq / MHz", head.x + head.w - 8,
+                      head.y + (head.h - ui_text_h(UI_FONT_SANS_SM)) / 2, UI_FAINT);
+
         int visible_rows = 13;
         int start_idx = state->assignments_scroll;
-        if (start_idx < 0) start_idx = 0;
         if (start_idx > state->n_assignments - visible_rows) start_idx = state->n_assignments - visible_rows;
         if (start_idx < 0) start_idx = 0;
         int end_idx = start_idx + visible_rows;
         if (end_idx > state->n_assignments) end_idx = state->n_assignments;
 
-        for(int k=start_idx; k<end_idx; k++) {
+        for (int k = start_idx; k < end_idx; k++) {
             PredLine p = state->assignments[k].pred;
-            char row[256];
-            SDL_Rect row_bg = {wx + 14, ty - 2, state->win_as.rect.w - 28, 19};
-            if (k == state->selected_assignment) {
-                fill_rounded_rect(ren, row_bg, 4, (SDL_Color){0, 120, 135, 190});
-            } else if ((k - start_idx) % 2 == 0) {
-                SDL_SetRenderDrawColor(ren, 30, 34, 40, 130);
-                SDL_RenderFillRect(ren, &row_bg);
-            }
-            snprintf(row, sizeof(row), "  %2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %9.3f ",
-                 p.Ju, p.Kau, p.Kcu,p.M1u,p.M2u,p.M3u, p.Jl, p.Kal, p.Kcl,p.M1l,p.M2l,p.M3l,
-                 state->assignments[k].exp_freq);
-            draw_text(ren, font, row, wx+20, ty, COL_TXT);
-            ty += 20;
+            SDL_Rect row = {wx + 15, wy + 88 + (k - start_idx) * 20, tw - 30, 18};
+            int sel = (k == state->selected_assignment);
+            if (sel) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
+            else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
+
+            snprintf(buf, sizeof(buf), "%d %d %d <- %d %d %d",
+                     p.Ju, p.Kau, p.Kcu, p.Jl, p.Kal, p.Kcl);
+            ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 8, row, sel ? UI_ACCENT_TEXT : UI_DIM);
+            fmt_mhz(buf, sizeof(buf), state->assignments[k].exp_freq, 4);
+            ui_text_right(ren, UI_FONT_MONO_SM, buf, row.x + row.w - 8,
+                          row.y + (row.h - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_TEXT);
         }
 
+        if (state->n_assignments == 0) {
+            ui_text(ren, UI_FONT_SANS_SM, "Left-drag a peak while a predicted", wx + 20, wy + 96, UI_FAINT);
+            ui_text(ren, UI_FONT_SANS_SM, "line is selected to assign it.", wx + 20, wy + 112, UI_FAINT);
+        }
+
+        /* hyperfine detail of the selected row, which no longer fits in the table */
+        if (state->selected_assignment >= 0 && state->selected_assignment < state->n_assignments) {
+            PredLine p = state->assignments[state->selected_assignment].pred;
+            snprintf(buf, sizeof(buf), "F  %d %d %d <- %d %d %d",
+                     p.M1u, p.M2u, p.M3u, p.M1l, p.M2l, p.M3l);
+            ui_text(ren, UI_FONT_MONO_SM, buf, wx + 15, wy + 334, UI_FAINT);
+            fmt_mhz(buf, sizeof(buf), p.freq_mhz, 4);
+            ui_text(ren, UI_FONT_MONO_SM, buf, wx + 15, wy + 350, UI_FAINT);
+            ui_text(ren, UI_FONT_SANS_SM, "predicted", wx + 125, wy + 350, UI_FAINT);
+        }
         if (state->n_assignments > visible_rows) {
-            char count[64];
-            snprintf(count, sizeof(count), "%d-%d / %d", start_idx + 1, end_idx, state->n_assignments);
-            draw_text(ren, font, count, wx + state->win_as.rect.w - 115, wy + 360, COL_TXT_DIM);
+            snprintf(buf, sizeof(buf), "%d-%d / %d", start_idx + 1, end_idx, state->n_assignments);
+            ui_text_right(ren, UI_FONT_MONO_SM, buf, wx + tw - 15, wy + 334, UI_FAINT);
         }
 
-        Button btn_save = {{wx+10, wy+360, 100, 30}, "Save All", {0, 100, 200, 255}, 0, BTN_PRIMARY};
-        draw_button(ren, font, &btn_save, mx, my, m_down, 0);
-        Button btn_del_as = {{wx+120, wy+360, 110, 30}, "Delete", {170, 60, 60, 255}, 0, BTN_DANGER};
-        draw_button(ren, font, &btn_del_as, mx, my, m_down, state->selected_assignment >= 0);
+        ui_button(ren, (SDL_Rect){wx + 10, wy + 360, 100, 30}, "Save all", -1,
+                  UI_BTN_PRIMARY, 0, mx, my, m_down);
+        ui_button(ren, (SDL_Rect){wx + 120, wy + 360, 110, 30}, "Delete", UI_ICON_TRASH,
+                  UI_BTN_DANGER, 0, mx, my, m_down);
     }
-    
-    // NEW: 6. INTENSITY CUT WINDOW (Triggered by 'C')
-    if(state->win_cut.anim > 0.01f) {
+
+    // 5. INTENSITY RANGE
+    if (state->win_cut.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_cut.clip);
-        draw_draggable_window(ren, font, &state->win_cut);
+        draw_inspector_section(ren, &state->win_cut, UI_ICON_RANGE, mx, my);
         int wx = state->win_cut.rect.x, wy = state->win_cut.rect.y;
-        
-        // Labels
-        draw_text(ren, font, "Min Log(I):", wx+20, wy+55, COL_TXT_DIM);
-        draw_text(ren, font, "Max Log(I):", wx+20, wy+95, COL_TXT_DIM);
 
-        SDL_Rect r_min = {wx+120, wy+50, 80, 28};
-        SDL_Rect r_max = {wx+120, wy+90, 80, 28};
-
-        // Draw Min Input Field
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); 
-        SDL_RenderFillRect(ren, &r_min);
-        
-        if(state->input_state == INPUT_PRED_MIN) {
-            SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255);
-            SDL_RenderDrawRect(ren, &r_min);
-            char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf);
-            draw_text(ren, font, buf, r_min.x+5, r_min.y+4, COL_TXT);
-        } else {
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255);
-            SDL_RenderDrawRect(ren, &r_min);
-            char buf[32]; snprintf(buf, 32, "%.1f", state->pred_min_log_int);
-            draw_text(ren, font, buf, r_min.x+5, r_min.y+4, COL_TXT);
-        }
-
-        // Draw Max Input Field
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); 
-        SDL_RenderFillRect(ren, &r_max);
-        
-        if(state->input_state == INPUT_PRED_MAX) {
-            SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255);
-            SDL_RenderDrawRect(ren, &r_max);
-            char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf);
-            draw_text(ren, font, buf, r_max.x+5, r_max.y+4, COL_TXT);
-        } else {
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255);
-            SDL_RenderDrawRect(ren, &r_max);
-            char buf[32]; snprintf(buf, 32, "%.1f", state->pred_max_log_int);
-            draw_text(ren, font, buf, r_max.x+5, r_max.y+4, COL_TXT);
-        }
+        field_val(state, INPUT_PRED_MIN, buf, sizeof(buf), "%.1f", state->pred_min_log_int);
+        panel_row(ren, state, "Min log I", (SDL_Rect){wx + 120, wy + 50, 155, 28}, INPUT_PRED_MIN, buf);
+        field_val(state, INPUT_PRED_MAX, buf, sizeof(buf), "%.1f", state->pred_max_log_int);
+        panel_row(ren, state, "Max log I", (SDL_Rect){wx + 120, wy + 90, 155, 28}, INPUT_PRED_MAX, buf);
+        ui_text(ren, UI_FONT_SANS_SM, "Weak lines are hidden, not unloaded.", wx + 20, wy + 128, UI_FAINT);
     }
-    // --- 7. FREQ JUMP WINDOW (Triggered by 'F') ---
-    if(state->win_jump.anim > 0.01f) {
+
+    // 6. FREQUENCY JUMP
+    if (state->win_jump.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_jump.clip);
-        draw_draggable_window(ren, font, &state->win_jump);
+        draw_inspector_section(ren, &state->win_jump, UI_ICON_JUMP, mx, my);
         int wx = state->win_jump.rect.x, wy = state->win_jump.rect.y;
-        
-        draw_text(ren, font, "Start Freq:", wx+20, wy+55, COL_TXT_DIM);
-        draw_text(ren, font, "End Freq:",   wx+20, wy+95, COL_TXT_DIM);
 
-        SDL_Rect r_start = {wx+120, wy+50, 80, 28};
-        SDL_Rect r_end   = {wx+120, wy+90, 80, 28};
-
-        // Draw Start Field
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); 
-        SDL_RenderFillRect(ren, &r_start);
-        
-        if(state->input_state == INPUT_JUMP_MIN) {
-            SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255);
-            SDL_RenderDrawRect(ren, &r_start);
-            char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf);
-            draw_text(ren, font, buf, r_start.x+5, r_start.y+4, COL_TXT);
-        } else {
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255);
-            SDL_RenderDrawRect(ren, &r_start);
-            char buf[32]; snprintf(buf, 32, "%.1f", state->vxmin);
-            draw_text(ren, font, buf, r_start.x+5, r_start.y+4, COL_TXT);
-        }
-
-        // Draw End Field
-        SDL_SetRenderDrawColor(ren, COL_INPUT_BG.r, COL_INPUT_BG.g, COL_INPUT_BG.b, 255); 
-        SDL_RenderFillRect(ren, &r_end);
-        
-        if(state->input_state == INPUT_JUMP_MAX) {
-            SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255);
-            SDL_RenderDrawRect(ren, &r_end);
-            char buf[32]; snprintf(buf, 32, "%s_", state->text_input_buf);
-            draw_text(ren, font, buf, r_end.x+5, r_end.y+4, COL_TXT);
-        } else {
-            SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 255);
-            SDL_RenderDrawRect(ren, &r_end);
-            char buf[32]; snprintf(buf, 32, "%.1f", state->vxmax);
-            draw_text(ren, font, buf, r_end.x+5, r_end.y+4, COL_TXT);
-        }
+        field_val(state, INPUT_JUMP_MIN, buf, sizeof(buf), "%.1f", state->vxmin);
+        panel_row(ren, state, "Start", (SDL_Rect){wx + 120, wy + 50, 155, 28}, INPUT_JUMP_MIN, buf);
+        field_val(state, INPUT_JUMP_MAX, buf, sizeof(buf), "%.1f", state->vxmax);
+        panel_row(ren, state, "End", (SDL_Rect){wx + 120, wy + 90, 155, 28}, INPUT_JUMP_MAX, buf);
     }
 
-    // --- 8. FILTER WINDOW (Triggered by 'B') ---
-    if(state->win_filt.anim > 0.01f) {
+    // 7. TRANSITION FILTER
+    if (state->win_filt.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_filt.clip);
-        draw_draggable_window(ren, font, &state->win_filt);
+        draw_inspector_section(ren, &state->win_filt, UI_ICON_FILTER, mx, my);
         int wx = state->win_filt.rect.x, wy = state->win_filt.rect.y;
 
-        // Master enable
-        Button btn_master = {{wx+15, wy+44, 230, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_master.label, 32, state->filter_active ? "FILTER: ON" : "FILTER: OFF");
-        draw_button(ren, font, &btn_master, mx, my, m_down, state->filter_active);
+        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 44, 230, 26}, "Filter", state->filter_active, mx, my);
 
-        // Dipole (mu) toggles
-        draw_text(ren, font, "Dipole (mu)", wx+20, wy+80, COL_TXT_DIM);
-        const char *mu_lbl[3] = {"a", "b", "c"};
+        ui_text(ren, UI_FONT_SANS_SM, "Dipole", wx + 20, wy + 80, UI_FAINT);
+        static const char *mu_lbl[3] = {"mu a", "mu b", "mu c"};
+        for (int i = 0; i < 3; i++)
+            ui_button(ren, (SDL_Rect){wx + 15 + i * 80, wy + 98, 70, 26}, mu_lbl[i], -1,
+                      UI_BTN_QUIET, state->filt_mu[i], mx, my, m_down);
+
+        ui_text(ren, UI_FONT_SANS_SM, "Branch", wx + 20, wy + 134, UI_FAINT);
+        static const char *br_lbl[3] = {"P", "Q", "R"};
+        for (int i = 0; i < 3; i++)
+            ui_button(ren, (SDL_Rect){wx + 15 + i * 80, wy + 152, 70, 26}, br_lbl[i], -1,
+                      UI_BTN_QUIET, state->filt_br[i], mx, my, m_down);
+
+        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 190, 230, 26}, "Quantum number range",
+                      state->filt_use_range, mx, my);
+        ui_text(ren, UI_FONT_SANS_SM, "min", wx + 126, wy + 220, UI_FAINT);
+        ui_text(ren, UI_FONT_SANS_SM, "max", wx + 196, wy + 220, UI_FAINT);
+        const char *qn_lbl[3] = {"J", "Ka", "Kc"};
+        int qn_lo[3] = {state->filt_j_min, state->filt_ka_min, state->filt_kc_min};
+        int qn_hi[3] = {state->filt_j_max, state->filt_ka_max, state->filt_kc_max};
+        int qn_in_lo[3] = {INPUT_FILT_JMIN, INPUT_FILT_KAMIN, INPUT_FILT_KCMIN};
+        int qn_in_hi[3] = {INPUT_FILT_JMAX, INPUT_FILT_KAMAX, INPUT_FILT_KCMAX};
         for (int i = 0; i < 3; i++) {
-            Button bm = {{wx+15+i*80, wy+98, 70, 26}, "", {60,60,70,255}, 1};
-            snprintf(bm.label, 32, "mu %s", mu_lbl[i]);
-            draw_button(ren, font, &bm, mx, my, m_down, state->filt_mu[i]);
+            int ry = wy + 236 + i * 30;
+            ui_text(ren, UI_FONT_MONO_SM, qn_lbl[i], wx + 25, ry + 5, UI_DIM);
+            field_val_i(state, qn_in_lo[i], buf, sizeof(buf), qn_lo[i]);
+            ui_field(ren, (SDL_Rect){wx + 110, ry, 55, 24}, NULL, buf, (int)state->input_state == qn_in_lo[i]);
+            field_val_i(state, qn_in_hi[i], buf, sizeof(buf), qn_hi[i]);
+            ui_field(ren, (SDL_Rect){wx + 180, ry, 55, 24}, NULL, buf, (int)state->input_state == qn_in_hi[i]);
         }
 
-        // Branch toggles
-        draw_text(ren, font, "Branch", wx+20, wy+134, COL_TXT_DIM);
-        const char *br_lbl[3] = {"P", "Q", "R"};
+        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 332, 230, 26}, "Quantum number jump",
+                      state->filt_use_delta, mx, my);
+        const char *d_lbl[3] = {"dJ", "dKa", "dKc"};
+        int d_val[3] = {state->filt_dj, state->filt_dka, state->filt_dkc};
+        int d_in[3]  = {INPUT_FILT_DJ, INPUT_FILT_DKA, INPUT_FILT_DKC};
+        int d_lx[3]  = {18, 92, 172};
+        int d_fx[3]  = {44, 124, 204};
         for (int i = 0; i < 3; i++) {
-            Button bb = {{wx+15+i*80, wy+152, 70, 26}, "", {60,60,70,255}, 1};
-            snprintf(bb.label, 32, "%s", br_lbl[i]);
-            draw_button(ren, font, &bb, mx, my, m_down, state->filt_br[i]);
+            ui_text(ren, UI_FONT_MONO_SM, d_lbl[i], wx + d_lx[i], wy + 369, UI_DIM);
+            field_val_i(state, d_in[i], buf, sizeof(buf), d_val[i]);
+            ui_field(ren, (SDL_Rect){wx + d_fx[i], wy + 364, 36, 24}, NULL, buf, (int)state->input_state == d_in[i]);
         }
-
-        // Quantum-number range gate
-        Button btn_range = {{wx+15, wy+190, 230, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_range.label, 32, state->filt_use_range ? "RANGE: ON" : "RANGE: OFF");
-        draw_button(ren, font, &btn_range, mx, my, m_down, state->filt_use_range);
-
-        draw_text(ren, font, "min", wx+128, wy+220, COL_TXT_DIM);
-        draw_text(ren, font, "max", wx+198, wy+220, COL_TXT_DIM);
-        draw_text(ren, font, "J",  wx+25, wy+240, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+236, 55, 24}, INPUT_FILT_JMIN,  state->filt_j_min);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+236, 55, 24}, INPUT_FILT_JMAX,  state->filt_j_max);
-        draw_text(ren, font, "Ka", wx+25, wy+270, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+266, 55, 24}, INPUT_FILT_KAMIN, state->filt_ka_min);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+266, 55, 24}, INPUT_FILT_KAMAX, state->filt_ka_max);
-        draw_text(ren, font, "Kc", wx+25, wy+300, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+110, wy+296, 55, 24}, INPUT_FILT_KCMIN, state->filt_kc_min);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+180, wy+296, 55, 24}, INPUT_FILT_KCMAX, state->filt_kc_max);
-
-        // Quantum-number jump (delta) gate
-        Button btn_delta = {{wx+15, wy+332, 230, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_delta.label, 32, state->filt_use_delta ? "DELTA: ON" : "DELTA: OFF");
-        draw_button(ren, font, &btn_delta, mx, my, m_down, state->filt_use_delta);
-
-        draw_text(ren, font, "dJ",  wx+18,  wy+368, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+44,  wy+364, 36, 24}, INPUT_FILT_DJ,  state->filt_dj);
-        draw_text(ren, font, "dKa", wx+90,  wy+368, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+124, wy+364, 36, 24}, INPUT_FILT_DKA, state->filt_dka);
-        draw_text(ren, font, "dKc", wx+170, wy+368, COL_TXT_DIM);
-        draw_int_field(ren, font, state, (SDL_Rect){wx+204, wy+364, 36, 24}, INPUT_FILT_DKC, state->filt_dkc);
     }
 
-    // --- SPECTRA PANEL (multi-spectrum management) ---
-    if(state->win_spec.anim > 0.01f) {
+    // 8. SPECTRA
+    if (state->win_spec.anim > 0.01f) {
         SDL_RenderSetClipRect(ren, &state->win_spec.clip);
-        draw_draggable_window(ren, font, &state->win_spec);
+        draw_inspector_section(ren, &state->win_spec, UI_ICON_LAYERS, mx, my);
         int wx = state->win_spec.rect.x, wy = state->win_spec.rect.y;
 
-        Button btn_layout = {{wx+15, wy+44, 130, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_layout.label, 32, state->multi_layout ? "Stack" : "Overlay");
-        draw_button(ren, font, &btn_layout, mx, my, m_down, state->multi_layout);
+        ui_button(ren, (SDL_Rect){wx + 15, wy + 44, 130, 26},
+                  state->multi_layout ? "Stack" : "Overlay", -1, UI_BTN_QUIET,
+                  state->multi_layout, mx, my, m_down);
+        ui_button(ren, (SDL_Rect){wx + 155, wy + 44, 130, 26},
+                  state->multi_ynorm ? "Normalised Y" : "Shared Y", -1, UI_BTN_QUIET,
+                  state->multi_ynorm, mx, my, m_down);
+        ui_button(ren, (SDL_Rect){wx + 15, wy + 76, 270, 26},
+                  state->multi_indiv_int ? "Intensity: active trace" : "Intensity: all traces",
+                  -1, UI_BTN_QUIET, state->multi_indiv_int, mx, my, m_down);
 
-        Button btn_ynorm = {{wx+155, wy+44, 130, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_ynorm.label, 32, state->multi_ynorm ? "Y: Norm" : "Y: Shared");
-        draw_button(ren, font, &btn_ynorm, mx, my, m_down, state->multi_ynorm);
-
-        // Intensity control mode: all spectra together vs only the active one.
-        Button btn_int = {{wx+15, wy+76, 270, 26}, "", {60,60,70,255}, 1};
-        snprintf(btn_int.label, 32, state->multi_indiv_int ? "Intensity: per-spectrum (active)" : "Intensity: all together");
-        draw_button(ren, font, &btn_int, mx, my, m_down, state->multi_indiv_int);
-
-        draw_text(ren, font, "Loaded spectra (click name = active)", wx+18, wy+110, COL_TXT_DIM);
+        ui_text(ren, UI_FONT_SANS_SM, "Click a name to make it active", wx + 18, wy + 108, UI_FAINT);
 
         for (int i = 0; i < state->n_spectra; i++) {
             Spectrum *sp = &state->spectra[i];
-            int rowy = wy + 124 + i*30;
-            int is_active = (i == state->active_spec);
+            int rowy = wy + 124 + i * 30;
+            SDL_Rect row = {wx + 10, rowy - 2, 278, 26};
+            if (i == state->active_spec) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
+            else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
-            if (is_active) {
-                SDL_Rect hl = {wx+10, rowy-2, 278, 26};
-                fill_rounded_rect(ren, hl, 4, (SDL_Color){40, 56, 70, 180});
-            }
-            // colour swatch
-            SDL_Rect sw = {wx+12, rowy+3, 14, 14};
-            fill_rounded_rect(ren, sw, 3, sp->color);
-            // name (truncated)
-            char nm[18];
-            snprintf(nm, sizeof(nm), "%.16s", sp->name);
-            draw_text(ren, font, nm, wx+32, rowy+4, sp->visible ? COL_TXT : COL_TXT_DIM);
+            fill_rounded_rect(ren, (SDL_Rect){wx + 14, rowy + 6, 9, 9}, 2, sp->color);
+            char nm[20]; snprintf(nm, sizeof(nm), "%.14s", sp->name);
+            ui_text(ren, UI_FONT_SANS, nm, wx + 30, rowy + 4, sp->visible ? UI_TEXT : UI_FAINT);
 
-            Button bvm = {{wx+150, rowy, 24, 22}, "-", {60,60,70,255}, 0};
-            Button bvp = {{wx+176, rowy, 24, 22}, "+", {60,60,70,255}, 0};
-            draw_button(ren, font, &bvm, mx, my, m_down, 0);
-            draw_button(ren, font, &bvp, mx, my, m_down, 0);
-
-            Button bvis = {{wx+204, rowy, 34, 22}, "", {60,60,70,255}, 1};
-            snprintf(bvis.label, 32, sp->visible ? "vis" : "hid");
-            draw_button(ren, font, &bvis, mx, my, m_down, sp->visible);
-
-            Button bdel = {{wx+244, rowy, 26, 22}, "x", {70,28,30,255}, 0, BTN_DANGER};
-            draw_button(ren, font, &bdel, mx, my, m_down, 0);
+            ui_button(ren, (SDL_Rect){wx + 150, rowy, 24, 22}, "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, (SDL_Rect){wx + 176, rowy, 24, 22}, "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, (SDL_Rect){wx + 204, rowy, 34, 22}, "", UI_ICON_EYE, UI_BTN_QUIET,
+                      sp->visible, mx, my, m_down);
+            ui_button(ren, (SDL_Rect){wx + 244, rowy, 26, 22}, "", UI_ICON_CLOSE, UI_BTN_DANGER,
+                      0, mx, my, m_down);
         }
 
-        if (state->n_spectra == 0)
-            draw_text(ren, font, "Drop a .txt spectrum to add one.", wx+18, wy+128, COL_TXT_DIM);
-        else {
-            int ty = wy + 128 + state->n_spectra*30;
-            draw_text(ren, font, "- / + : shift a trace vertically", wx+18, ty, COL_TXT_DIM);
-            draw_text(ren, font, "W / Z : intensity (Y:Norm gain / shared zoom)", wx+18, ty+16, COL_TXT_DIM);
+        if (state->n_spectra == 0) {
+            ui_text(ren, UI_FONT_SANS_SM, "Drop a spectrum file to add one.", wx + 18, wy + 128, UI_FAINT);
+        } else {
+            int ty = wy + 128 + state->n_spectra * 30;
+            ui_text(ren, UI_FONT_SANS_SM, "- / +  shift a trace vertically", wx + 18, ty, UI_FAINT);
+            ui_text(ren, UI_FONT_SANS_SM, "W / Z  intensity", wx + 18, ty + 16, UI_FAINT);
         }
     }
 
@@ -1268,54 +1230,109 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
 }
 
 static void draw_onboarding(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
-    SDL_Rect panel = {l->win_w / 2 - 330, l->win_h / 2 - 150, 660, 300};
-    if (panel.x < 24) panel.x = 24;
-    if (panel.w > l->win_w - 48) panel.w = l->win_w - 48;
+    (void)font;
+    SDL_Rect card = {l->win_w / 2 - 280, l->win_h / 2 - 150, 560, 268};
+    if (card.x < 24) card.x = 24;
+    if (card.w > l->win_w - 48) card.w = l->win_w - 48;
 
-    fill_rounded_rect(ren, panel, 10, (SDL_Color){22, 25, 29, 245});
-    SDL_SetRenderDrawColor(ren, COL_INPUT_BORDER.r, COL_INPUT_BORDER.g, COL_INPUT_BORDER.b, 180);
-    SDL_RenderDrawRect(ren, &panel);
+    fill_rounded_rect(ren, card, 8, (SDL_Color){16, 17, 19, 255});
+    ui_frame(ren, card, UI_LINE);
 
-    draw_text(ren, font, "SpectraVisual", panel.x + 28, panel.y + 24, COL_TXT);
-    draw_text(ren, font, "Drop a spectrum file and a pred.cat file anywhere in this window.", panel.x + 28, panel.y + 62, COL_TXT_DIM);
-    draw_text(ren, font, "Or launch from Terminal:", panel.x + 28, panel.y + 100, COL_TXT_DIM);
-    draw_text(ren, font, "spectravisual spectrum.txt pred.cat", panel.x + 48, panel.y + 126, COL_ACCENT);
-    draw_text(ren, font, "Add --verbose only when you want terminal logs.", panel.x + 28, panel.y + 164, COL_TXT_DIM);
-    draw_text(ren, font, "Press H for shortcuts. Press X after loading to export the current view.", panel.x + 28, panel.y + 202, COL_TXT_DIM);
+    int x = card.x + 34, y = card.y + 30;
+    ui_text(ren, UI_FONT_TITLE, "Drop a spectrum and a prediction", x, y, UI_TEXT);
+    y += 28;
+    ui_text(ren, UI_FONT_SANS, "SpectraVisual opens a .txt or .csv trace together with a Pickett", x, y, UI_DIM);
+    y += 18;
+    ui_text(ren, UI_FONT_SANS, ".cat prediction. Either one on its own works too.", x, y, UI_DIM);
+    y += 30;
+
+    SDL_Rect cmd = {x, y, card.w - 68, 30};
+    fill_rounded_rect(ren, cmd, 4, UI_INPUT);
+    ui_frame(ren, cmd, UI_LINE);
+    ui_text_v(ren, UI_FONT_MONO, "spectravisual spectrum.txt pred.cat", cmd.x + 10, cmd, UI_ACCENT_TEXT);
+    y += 48;
+
+    const char *hints[3] = {
+        "Drop more spectra any time to overlay or stack them",
+        "Press H for the shortcut list",
+        "Add --verbose to keep terminal logs"
+    };
+    for (int i = 0; i < 3; i++) {
+        SDL_Rect dot = {x + 1, y + 6, 4, 4};
+        fill_rounded_rect(ren, dot, 2, UI_FAINT);
+        ui_text(ren, UI_FONT_SANS_SM, hints[i], x + 14, y, UI_FAINT);
+        y += 20;
+    }
 
     if (state->exp_path[0] || state->pred_path[0]) {
         char buf[512];
-        snprintf(buf, sizeof(buf), "Spectrum: %s", state->exp_path[0] ? state->exp_path : "waiting...");
-        draw_text(ren, font, buf, panel.x + 28, panel.y + 238, state->exp_path[0] ? COL_TXT_DIM : COL_ACCENT);
-        snprintf(buf, sizeof(buf), "Prediction: %s", state->pred_path[0] ? state->pred_path : "waiting...");
-        draw_text(ren, font, buf, panel.x + 28, panel.y + 260, state->pred_path[0] ? COL_TXT_DIM : COL_ACCENT);
+        snprintf(buf, sizeof(buf), "spectrum: %s", state->exp_path[0] ? short_path(state->exp_path) : "waiting");
+        ui_text(ren, UI_FONT_MONO_SM, buf, x, card.y + card.h - 40, state->exp_path[0] ? UI_DIM : UI_ACCENT_TEXT);
+        snprintf(buf, sizeof(buf), "prediction: %s", state->pred_path[0] ? short_path(state->pred_path) : "waiting");
+        ui_text(ren, UI_FONT_MONO_SM, buf, x, card.y + card.h - 24, state->pred_path[0] ? UI_DIM : UI_ACCENT_TEXT);
     }
 }
 
+// Keyboard and mouse reference, grouped the way the work is done.
 static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
-    (void)state;
-    SDL_Rect panel = {l->win_w / 2 - 330, 82, 660, 420};
-    if (panel.x < 24) panel.x = 24;
-    if (panel.w > l->win_w - 48) panel.w = l->win_w - 48;
+    (void)font; (void)state;
+    SDL_SetRenderDrawColor(ren, 6, 7, 8, 160);
+    SDL_RenderFillRect(ren, &(SDL_Rect){0, 0, l->win_w, l->win_h});
 
-    fill_rounded_rect(ren, panel, 10, (SDL_Color){12, 14, 17, 238});
-    SDL_SetRenderDrawColor(ren, COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 190);
-    SDL_RenderDrawRect(ren, &panel);
+    SDL_Rect card = {l->win_w / 2 - 340, 86, 680, 440};
+    if (card.x < 24) card.x = 24;
+    if (card.w > l->win_w - 48) card.w = l->win_w - 48;
+    fill_rounded_rect(ren, card, 8, (SDL_Color){19, 20, 22, 250});
+    ui_frame(ren, card, UI_LINE);
 
-    int x = panel.x + 28;
-    int y = panel.y + 24;
-    draw_text(ren, font, "Shortcuts", x, y, COL_TXT);
-    y += 36;
-    draw_text(ren, font, "Mouse: left-drag zoom, right-drag peak pick, Option-left-drag slides spectrum onto prediction", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "A/S pan, Q/E zoom, Tab autoscale intensity, R reset view", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "Shift + W/Z or arrows scales predicted intensity", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "K/L move bar, G measure, H or ? help, X export BMP", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "N assignments, P peak finder, T rolling average, M broadening", x, y, COL_TXT_DIM); y += 28;
-    draw_text(ren, font, "C intensity cut, F frequency jump, B filter, Delete removes latest peak", x, y, COL_TXT_DIM); y += 42;
-    draw_text(ren, font, "Input fields", x, y, COL_TXT); y += 30;
-    draw_text(ren, font, "Enter confirms, Esc cancels, clicking elsewhere confirms and continues.", x, y, COL_TXT_DIM); y += 42;
-    draw_text(ren, font, "Export", x, y, COL_TXT); y += 30;
-    draw_text(ren, font, "X or Export saves spectravisual_export.bmp in the current directory.", x, y, COL_TXT_DIM);
+    SDL_Rect head = {card.x, card.y, card.w, 38};
+    ui_text_v(ren, UI_FONT_TITLE, "Keyboard and mouse", head.x + 20, head, UI_TEXT);
+    ui_hline(ren, card.x, card.x + card.w, card.y + 38, UI_LINE);
+
+    struct { const char *group; const char *key; const char *what; } rows[] = {
+        {"Navigate",  "Q  E",      "Zoom out / in on frequency"},
+        {NULL,        "A  S",      "Pan left / right"},
+        {NULL,        "W  Z",      "Scale experimental intensity"},
+        {NULL,        "Tab",       "Autoscale intensity to the view"},
+        {NULL,        "R",         "Reset the view"},
+        {NULL,        "Up Down",   "Shift the spectrum vertically"},
+        {"Measure",   "K  L",      "Move the bar"},
+        {NULL,        "G",         "Distance between two points"},
+        {NULL,        "Delete",    "Remove the latest peak"},
+        {NULL,        "X",         "Export the view as BMP"},
+        {NULL,        "H  ?",      "This list"},
+        {"Tools",     "N",         "Assignments"},
+        {NULL,        "P",         "Peak finder"},
+        {NULL,        "T",         "Rolling average"},
+        {NULL,        "M",         "Broadening"},
+        {NULL,        "C",         "Intensity range"},
+        {NULL,        "F",         "Frequency jump"},
+        {NULL,        "B",         "Transition filter"},
+        {"Mouse",     "left drag", "Zoom into a frequency range"},
+        {NULL,        "right drag","Pick the peak in the range"},
+        {NULL,        "alt drag",  "Slide the spectrum onto the prediction"},
+        {NULL,        "click",     "Select a predicted transition"},
+        {NULL,        "cmd click", "Add to the selection"},
+        {"Fields",    "Enter",     "Confirm the value"},
+        {NULL,        "Esc",       "Cancel the edit"},
+        {NULL,        "shift+key", "Without Sync, acts on the prediction only"}
+    };
+    int n = (int)(sizeof(rows) / sizeof(rows[0]));
+    int col_w = (card.w - 60) / 2;
+    int x = card.x + 24, y = card.y + 58;
+    for (int i = 0; i < n; i++) {
+        if (i == 11) { x = card.x + 30 + col_w; y = card.y + 58; }   /* second column starts at Tools */
+        if (rows[i].group) {
+            if (i != 0 && i != 11) y += 10;
+            ui_text(ren, UI_FONT_SANS_SM, rows[i].group, x, y, UI_FAINT);
+            y += 20;
+        }
+        SDL_Rect kb = {x, y - 1, ui_text_w(UI_FONT_MONO_SM, rows[i].key) + 12, 17};
+        fill_rounded_rect(ren, kb, 3, UI_RAISED);
+        ui_text_v(ren, UI_FONT_MONO_SM, rows[i].key, kb.x + 6, kb, UI_TEXT);
+        ui_text(ren, UI_FONT_SANS_SM, rows[i].what, x + 96, y, UI_DIM);
+        y += 22;
+    }
 }
 
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
