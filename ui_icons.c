@@ -1,4 +1,5 @@
 #include "ui_chrome.h"
+#include "layout.h"
 #include <math.h>
 
 /*
@@ -56,7 +57,7 @@ static void stroke_icon(SDL_Renderer *ren, const signed char *d, int ox, int oy)
     for (int i = 0; ; i += 2) {
         if (d[i] == STOP) { if (n > 1) SDL_RenderDrawLines(ren, pts, n); break; }
         if (d[i] == END)  { if (n > 1) SDL_RenderDrawLines(ren, pts, n); n = 0; i -= 1; continue; }
-        if (n < 32) { pts[n].x = ox + d[i]; pts[n].y = oy + d[i + 1]; n++; }
+        if (n < 32) { pts[n].x = ox + ui_dev(d[i]); pts[n].y = oy + ui_dev(d[i + 1]); n++; }
     }
 }
 
@@ -74,26 +75,35 @@ static void arc(SDL_Renderer *ren, double cx, double cy, double r,
 
 void ui_draw_icon(SDL_Renderer *ren, int icon, SDL_Rect box, SDL_Color c) {
     if (icon < 0 || icon >= UI_ICON_COUNT) return;
-    int ox = box.x + (box.w - 16) / 2;
-    int oy = box.y + (box.h - 16) / 2;
+
+    // Drawn on the device grid: at 2x the 16-unit grid becomes 32 real pixels
+    // with one-pixel strokes, instead of a doubled 16-pixel drawing.
+    ui_dev_begin(ren);
+    int ox = ui_dev(box.x + (box.w - 16) / 2);
+    int oy = ui_dev(box.y + (box.h - 16) / 2);
 
     SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
 
+    double u = ui_dev(1000) / 1000.0;   /* device pixels per icon unit */
     if (icon == UI_ICON_HELP) {
-        arc(ren, ox + 8.0, oy + 8.0, 6.3, 0, 2 * M_PI, 28);
-        arc(ren, ox + 8.0, oy + 6.3, 2.0, M_PI, 2.15 * M_PI, 10);
-        SDL_RenderDrawLine(ren, ox + 8, oy + 8, ox + 8, oy + 10);
-        SDL_RenderDrawPoint(ren, ox + 8, oy + 12);
-        SDL_RenderDrawPoint(ren, ox + 8, oy + 13);
+        arc(ren, ox + 8 * u, oy + 8 * u, 6.3 * u, 0, 2 * M_PI, (int)(28 * u));
+        arc(ren, ox + 8 * u, oy + 6.3 * u, 2.0 * u, M_PI, 2.15 * M_PI, (int)(12 * u));
+        SDL_RenderDrawLine(ren, (int)(ox + 8 * u), (int)(oy + 8 * u),
+                                (int)(ox + 8 * u), (int)(oy + 10 * u));
+        for (int k = 0; k < (int)u + 1; k++)
+            SDL_RenderDrawPoint(ren, (int)(ox + 8 * u), (int)(oy + 12 * u) + k);
+        ui_dev_end(ren);
         return;
     }
     if (icon == UI_ICON_EYE) {
-        arc(ren, ox + 8.0, oy + 12.0, 7.0, 1.15 * M_PI, 1.85 * M_PI, 14);
-        arc(ren, ox + 8.0, oy + 4.0,  7.0, 0.15 * M_PI, 0.85 * M_PI, 14);
-        arc(ren, ox + 8.0, oy + 8.0,  2.1, 0, 2 * M_PI, 14);
+        arc(ren, ox + 8 * u, oy + 12 * u, 7.0 * u, 1.15 * M_PI, 1.85 * M_PI, (int)(16 * u));
+        arc(ren, ox + 8 * u, oy + 4 * u,  7.0 * u, 0.15 * M_PI, 0.85 * M_PI, (int)(16 * u));
+        arc(ren, ox + 8 * u, oy + 8 * u,  2.1 * u, 0, 2 * M_PI, (int)(16 * u));
+        ui_dev_end(ren);
         return;
     }
     stroke_icon(ren, ICON_DATA[icon], ox, oy);
+    ui_dev_end(ren);
 }
 
 const char *ui_tool_title(int tool) {

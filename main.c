@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "types.h"
 #include "loader.h"
@@ -331,6 +332,18 @@ int main(int argc, char *argv[])
 
     while(running) {
         int w, h; SDL_GetWindowSize(win, &w, &h);
+        {   // the window can be moved to a display with a different density
+            int dw = 0, dh = 0;
+            SDL_GetRendererOutputSize(ren, &dw, &dh);
+            float now = (w > 0 && dw > 0) ? (float)dw / (float)w : 1.0f;
+            if (fabs(now - ui_dpi) > 0.01f) {
+                ui_dpi = now;
+                SDL_RenderSetScale(ren, ui_dpi, ui_dpi);
+                ui_fonts_close();
+                ui_fonts_init(ui_dpi);
+                font = ui_font(UI_FONT_SANS);
+            }
+        }
         layout.win_w = w; layout.win_h = h;
         layout.plot_x = UI_RAIL_W + UI_PLOT_GUTTER;
         layout.gap = UI_PANEL_HEADER_H;

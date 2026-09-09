@@ -1,6 +1,7 @@
 #include "layout.h"
 #include "ui_theme.h"
 #include "ui_chrome.h"
+#include "ui_panels.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -71,45 +72,67 @@ int pred_passes_filter(const AppState *s, int idx) {
     return 1;
 }
 
-// --- HELPER: Anti-Aliased Rounded Rect ---
-// This makes the corners look smooth, not jagged.
-void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c) {
-    // 1. Draw Body
-    SDL_Rect r_mid = {dst.x, dst.y + radius, dst.w, dst.h - 2 * radius};
-    SDL_Rect r_top = {dst.x + radius, dst.y, dst.w - 2 * radius, radius};
-    SDL_Rect r_bot = {dst.x + radius, dst.y + dst.h - radius, dst.w - 2 * radius, radius};
+// --- DEVICE-PIXEL SHAPES ---
+// Text is rendered at the backing scale and blitted 1:1, but shapes are built
+// pixel by pixel here. Drawing them through the renderer's logical scale would
+// compute one pixel of anti-aliasing per LOGICAL pixel and then stretch it, so
+// corners and hairlines look stepped on a Retina display. These helpers switch
+// the renderer to device pixels for the duration of one shape.
+static float    g_dev_scale = 1.0f;   /* mirror of the font scale, set together */
+static SDL_Rect g_saved_clip;
+static SDL_bool g_had_clip;
 
-    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
-    SDL_RenderFillRect(ren, &r_mid);
-    SDL_RenderFillRect(ren, &r_top);
-    SDL_RenderFillRect(ren, &r_bot);
+int ui_dev(int v) { return (int)lround(v * (double)g_dev_scale); }
 
-    // 2. Draw Smooth Corners
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    
-    // Safety check for radius
-    if (radius < 1) return;
-
-    for (int dy = 0; dy < radius; dy++) {
-        for (int dx = 0; dx < radius; dx++) {
-            double dist = sqrt((dx + 0.5) * (dx + 0.5) + (dy + 0.5) * (dy + 0.5));
-            double alpha = 1.0; 
-
-            if (dist > radius) alpha = 0.0;
-            else if (dist > radius - 1.0) alpha = 1.0 - (dist - (radius - 1.0));
-            
-            if (alpha > 0.0) {
-                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, (Uint8)(c.a * alpha));
-                // TL, TR, BL, BR
-                SDL_RenderDrawPoint(ren, dst.x + radius - 1 - dx, dst.y + radius - 1 - dy);
-                SDL_RenderDrawPoint(ren, dst.x + dst.w - radius + dx, dst.y + radius - 1 - dy);
-                SDL_RenderDrawPoint(ren, dst.x + radius - 1 - dx, dst.y + dst.h - radius + dy);
-                SDL_RenderDrawPoint(ren, dst.x + dst.w - radius + dx, dst.y + dst.h - radius + dy);
-            }
-        }
+void ui_dev_begin(SDL_Renderer *ren) {
+    g_had_clip = SDL_RenderIsClipEnabled(ren);
+    if (g_had_clip) {
+        SDL_RenderGetClipRect(ren, &g_saved_clip);
+        SDL_RenderSetScale(ren, 1.0f, 1.0f);
+        SDL_Rect d = {ui_dev(g_saved_clip.x), ui_dev(g_saved_clip.y),
+                      ui_dev(g_saved_clip.w), ui_dev(g_saved_clip.h)};
+        SDL_RenderSetClipRect(ren, &d);
+    } else {
+        SDL_RenderSetScale(ren, 1.0f, 1.0f);
     }
 }
 
+void ui_dev_end(SDL_Renderer *ren) {
+    SDL_RenderSetScale(ren, g_dev_scale, g_dev_scale);
+    if (g_had_clip) SDL_RenderSetClipRect(ren, &g_saved_clip);
+    else            SDL_RenderSetClipRect(ren, NULL);
+}
+
+// Rounded rectangle with anti-aliased corners, drawn on the device grid.
+void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c) {
+    ui_dev_begin(ren);
+    SDL_Rect d = {ui_dev(dst.x), ui_dev(dst.y), ui_dev(dst.w), ui_dev(dst.h)};
+    int r = ui_dev(radius);
+    if (r * 2 > d.w) r = d.w / 2;
+    if (r * 2 > d.h) r = d.h / 2;
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+    SDL_RenderFillRect(ren, &(SDL_Rect){d.x, d.y + r, d.w, d.h - 2 * r});
+    SDL_RenderFillRect(ren, &(SDL_Rect){d.x + r, d.y, d.w - 2 * r, r});
+    SDL_RenderFillRect(ren, &(SDL_Rect){d.x + r, d.y + d.h - r, d.w - 2 * r, r});
+
+    for (int dy = 0; dy < r; dy++) {
+        for (int dx = 0; dx < r; dx++) {
+            double dist = sqrt((dx + 0.5) * (dx + 0.5) + (dy + 0.5) * (dy + 0.5));
+            double alpha = 1.0;
+            if (dist > r) alpha = 0.0;
+            else if (dist > r - 1.0) alpha = 1.0 - (dist - (r - 1.0));
+            if (alpha <= 0.0) continue;
+            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, (Uint8)(c.a * alpha));
+            SDL_RenderDrawPoint(ren, d.x + r - 1 - dx,         d.y + r - 1 - dy);
+            SDL_RenderDrawPoint(ren, d.x + d.w - r + dx,       d.y + r - 1 - dy);
+            SDL_RenderDrawPoint(ren, d.x + r - 1 - dx,         d.y + d.h - r + dy);
+            SDL_RenderDrawPoint(ren, d.x + d.w - r + dx,       d.y + d.h - r + dy);
+        }
+    }
+    ui_dev_end(ren);
+}
 
 // ============================================================================
 //  FONTS
@@ -150,6 +173,7 @@ int ui_fonts_init(float scale) {
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
     };
     g_scale = (scale > 0.1f) ? scale : 1.0f;
+    g_dev_scale = g_scale;
     for (int r = 0; r < UI_FONT_COUNT; r++) {
         int px = (int)lround(UI_FONT_SIZE[r] * g_scale);
         int is_mono = (r == UI_FONT_MONO || r == UI_FONT_MONO_SM);
@@ -282,8 +306,8 @@ int ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int ki
     if (active) {
         fill = UI_ACCENT_SOFT; border = UI_ACCENT_LINE; text = UI_ACCENT_TEXT;
     } else if (kind == UI_BTN_DANGER) {
-        has_fill = hover; has_border = hover;
-        fill = UI_DANGER_BG; border = (SDL_Color){58, 37, 35, 255}; text = hover ? UI_DANGER_TEXT : UI_DIM;
+        has_fill = hover;
+        fill = UI_DANGER_BG; border = (SDL_Color){58, 37, 35, 255}; text = UI_DANGER_TEXT;
     } else if (kind == UI_BTN_PRIMARY) {
         fill = (SDL_Color){29, 62, 99, 255}; border = (SDL_Color){44, 90, 140, 255}; text = (SDL_Color){187, 216, 255, 255};
     } else {                       /* quiet: only a hover surface */
@@ -322,6 +346,21 @@ void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *valu
     int h = ui_text_h(UI_FONT_MONO);
     ui_text_right(ren, UI_FONT_MONO, value, r.x + r.w - 8, r.y + (r.h - h) / 2,
                   focused ? UI_TEXT : UI_TEXT);
+}
+
+// Numeric field with a unit suffix: the value stays right-aligned on the unit,
+// so a column of fields lines up on the same two edges.
+void ui_field_u(SDL_Renderer *ren, SDL_Rect r, const char *value, const char *unit, int focused) {
+    filled_border(ren, r, UI_RADIUS, focused ? UI_ACCENT_LINE : UI_LINE, UI_INPUT, 1);
+    int right = r.x + r.w - 8;
+    int y_mono = r.y + (r.h - ui_text_h(UI_FONT_MONO)) / 2;
+    if (unit && *unit) {
+        int uw = ui_text_w(UI_FONT_SANS_SM, unit);
+        ui_text(ren, UI_FONT_SANS_SM, unit, right - uw,
+                r.y + (r.h - ui_text_h(UI_FONT_SANS_SM)) / 2, UI_FAINT);
+        right -= uw + 6;
+    }
+    ui_text_right(ren, UI_FONT_MONO, value, right, y_mono, UI_TEXT);
 }
 
 // Small on/off switch, used for the "enabled" state of a tool.
@@ -380,25 +419,23 @@ void update_sidebars(AppState *s, Layout *l) {
         &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
     };
     const int TOP = UI_CONTENT_Y;
-    const float SPEED = 0.26f;
 
     int vp_bottom = l->win_h - UI_STATUS_H;
     if (vp_bottom < TOP + 60) vp_bottom = TOP + 60;
+    int view_h = vp_bottom - TOP;
 
+    // Panels open and close immediately. A slide-in looked laboured on a panel
+    // the user has just asked for, and it made the column jump while reading.
     int any = 0;
     double total = 0.0;
-    double e_arr[UI_TOOL_COUNT];
     for (int i = 0; i < UI_TOOL_COUNT; i++) {
         DraggableWindow *p = panels[i];
-        double target = p->visible ? 1.0 : 0.0;
-        p->anim += (float)((target - p->anim) * SPEED);
-        if (target > 0.5 && p->anim > 0.999f) p->anim = 1.0f;
-        if (target < 0.5 && p->anim < 0.001f) p->anim = 0.0f;
-        e_arr[i] = ui_smoothstep(p->anim);
-        if (e_arr[i] > 0.01) { any = 1; total += p->rect.h * e_arr[i]; }
+        p->anim = p->visible ? 1.0f : 0.0f;
+        p->rect.w = UI_INSPECTOR_W;
+        p->rect.h = ui_panel_height(i, s);
+        if (p->visible) { any = 1; total += p->rect.h; }
     }
 
-    int view_h = vp_bottom - TOP;
     double max_scroll = total - view_h;
     if (max_scroll < 0) max_scroll = 0;
     if (s->sidebar_scroll < 0) s->sidebar_scroll = 0;
@@ -409,9 +446,7 @@ void update_sidebars(AppState *s, Layout *l) {
 
     for (int i = 0; i < UI_TOOL_COUNT; i++) {
         DraggableWindow *p = panels[i];
-        double e = e_arr[i];
-        p->rect.w = UI_INSPECTOR_W;
-        if (e < 0.01) {                      /* closed: park off-screen */
+        if (!p->visible) {
             p->rect.x = l->win_w + 80;
             p->rect.y = TOP;
             p->clip = (SDL_Rect){0, 0, 0, 0};
@@ -420,15 +455,13 @@ void update_sidebars(AppState *s, Layout *l) {
         p->rect.x = col_x;
         p->rect.y = (int)y;
 
-        int cy = (int)y, ch = p->rect.h;
+        int cy = p->rect.y, ch = p->rect.h;
         if (cy < TOP) { ch -= (TOP - cy); cy = TOP; }
         if (cy + ch > vp_bottom) ch = vp_bottom - cy;
         if (ch < 0) ch = 0;
-        /* slide in from the right while opening */
-        int vis_w = (int)(UI_INSPECTOR_W * e);
-        p->clip = (SDL_Rect){l->win_w - vis_w, cy, vis_w, ch};
+        p->clip = (SDL_Rect){col_x, cy, UI_INSPECTOR_W, ch};
 
-        y += p->rect.h * e;
+        y += p->rect.h;
     }
 
     l->inspector_open = any;
@@ -437,9 +470,7 @@ void update_sidebars(AppState *s, Layout *l) {
 
 // Header of one inspector section: icon, title, close button, hairline.
 void draw_inspector_section(SDL_Renderer *ren, DraggableWindow *win, int icon, int mx, int my) {
-    double a = ui_smoothstep(win->anim);
-    if (a <= 0.01) return;
-
+    if (!win->visible) return;
     SDL_Rect body = win->rect;
     ui_fill(ren, body, UI_PANEL);
 

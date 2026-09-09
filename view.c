@@ -2,6 +2,7 @@
 #include "layout.h"
 #include "ui_theme.h"
 #include "ui_chrome.h"
+#include "ui_panels.h"
 #include "algorithms.h"
 #include <math.h>
 #include <stdio.h>
@@ -939,291 +940,286 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
 // otherwise the stored value.
 static void field_val(AppState *st, int which, char *out, size_t n, const char *fmt, double v) {
     if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
-    else                          snprintf(out, n, fmt, v);
+    else                               snprintf(out, n, fmt, v);
 }
 static void field_val_i(AppState *st, int which, char *out, size_t n, int v) {
     if ((int)st->input_state == which) snprintf(out, n, "%s_", st->text_input_buf);
-    else                          snprintf(out, n, "%d", v);
+    else                               snprintf(out, n, "%d", v);
 }
 
-// A labelled numeric row inside a panel: caption on the left, field on the right.
-static void panel_row(SDL_Renderer *ren, AppState *st, const char *label,
-                      SDL_Rect field, int which, const char *value) {
-    SDL_Rect lab = {field.x - 200, field.y, 190, field.h};
-    ui_text_v(ren, UI_FONT_SANS, label, field.x - 135, lab, UI_DIM);
-    ui_field(ren, field, NULL, value, (int)st->input_state == which);
+// One row of a panel: caption on the left, value field on the right edge.
+static void panel_field(SDL_Renderer *ren, AppState *st, SDL_Rect panel, const char *label,
+                        SDL_Rect field, int which, const char *value, const char *unit) {
+    ui_text_v(ren, UI_FONT_SANS, label, panel.x + UI_P_PAD, field, UI_DIM);
+    ui_field_u(ren, field, value, unit, (int)st->input_state == which);
+}
+
+// A line of explanatory text under a group of controls, and its continuation.
+static void panel_hint(SDL_Renderer *ren, SDL_Rect row, const char *text) {
+    ui_text(ren, UI_FONT_SANS_SM, text, row.x, row.y + 4, UI_FAINT);
+}
+static void panel_hint2(SDL_Renderer *ren, SDL_Rect row, const char *text) {
+    ui_text(ren, UI_FONT_SANS_SM, text, row.x, row.y + 20, UI_FAINT);
 }
 
 // --- INSPECTOR PANELS ---
-// Every rectangle below is also written in controller.c's hit-testing; the two
-// must stay identical.
+// Every rectangle comes from ui_panels.h, which controller.c also reads, so a
+// control and its click target cannot drift apart.
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     (void)font; (void)l;
     int mx, my;
     int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     char buf[128];
 
-    // 1. BROADENING
-    if (state->win_br.anim > 0.01f) {
-        SDL_RenderSetClipRect(ren, &state->win_br.clip);
-        draw_inspector_section(ren, &state->win_br, UI_ICON_BELL, mx, my);
-        int wx = state->win_br.rect.x, wy = state->win_br.rect.y;
-
-        static const char *modes[2] = {"Analytic", "Kaiser FFT"};
-        ui_segmented(ren, (SDL_Rect){wx + 15, wy + 40, 260, 26}, modes, 2, state->broaden_mode == 1);
-
-        if (state->broaden_mode == 0) {
-            field_val(state, INPUT_GAMMA, buf, sizeof(buf), "%.2f", state->lorentz_gamma);
-            panel_row(ren, state, "Lorentz HWHM", (SDL_Rect){wx + 155, wy + 82, 120, 28}, INPUT_GAMMA, buf);
-            field_val(state, INPUT_GAUSS, buf, sizeof(buf), "%.2f", state->gauss_gamma);
-            panel_row(ren, state, "Gauss HWHM", (SDL_Rect){wx + 155, wy + 122, 120, 28}, INPUT_GAUSS, buf);
-
-            const char *shape;
-            if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Profile: Voigt";
-            else if (state->lorentz_gamma > 0.0)                        shape = "Profile: Lorentzian";
-            else if (state->gauss_gamma  > 0.0)                         shape = "Profile: Gaussian";
-            else                                                        shape = "Set a width to see a profile";
-            ui_text(ren, UI_FONT_SANS_SM, shape, wx + 20, wy + 168, UI_FAINT);
-        } else {
-            field_val(state, INPUT_KBETA, buf, sizeof(buf), "%.2f", state->kaiser_beta);
-            panel_row(ren, state, "Kaiser beta", (SDL_Rect){wx + 155, wy + 82, 120, 28}, INPUT_KBETA, buf);
-            field_val_i(state, INPUT_KCEROS, buf, sizeof(buf), state->kaiser_ceros);
-            panel_row(ren, state, "Zero-pad", (SDL_Rect){wx + 155, wy + 122, 120, 28}, INPUT_KCEROS, buf);
-            field_val(state, INPUT_KINTR, buf, sizeof(buf), "%.3f", state->kaiser_intrinsic);
-            panel_row(ren, state, "Intrinsic FWHM", (SDL_Rect){wx + 155, wy + 162, 120, 28}, INPUT_KINTR, buf);
-
-            double df = spectrum_df(state);
-            int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
-            if (df > 0.0) {
-                snprintf(buf, sizeof(buf), "bin df   %.5g MHz", df);
-                ui_text(ren, UI_FONT_MONO_SM, buf, wx + 20, wy + 202, UI_FAINT);
-                snprintf(buf, sizeof(buf), "res = ceros x df   %.4g MHz", cer * df);
-                ui_text(ren, UI_FONT_MONO_SM, buf, wx + 20, wy + 220, UI_ACCENT_TEXT);
-            } else {
-                ui_text(ren, UI_FONT_SANS_SM, "Load a spectrum for the bin step", wx + 20, wy + 205, UI_FAINT);
-            }
-        }
-        ui_toggle_row(ren, (SDL_Rect){wx + 50, wy + 255, 200, 30}, "Simulated profile",
-                      state->broadening_active, mx, my);
-    }
-
-    // 2. ROLLING AVERAGE
-    if (state->win_avg.anim > 0.01f) {
-        SDL_RenderSetClipRect(ren, &state->win_avg.clip);
-        draw_inspector_section(ren, &state->win_avg, UI_ICON_WAVE, mx, my);
-        int wx = state->win_avg.rect.x, wy = state->win_avg.rect.y;
-
-        field_val_i(state, INPUT_AVG_PTS, buf, sizeof(buf), state->rolling_avg_window);
-        panel_row(ren, state, "Window (pts)", (SDL_Rect){wx + 130, wy + 60, 145, 28}, INPUT_AVG_PTS, buf);
-        ui_toggle_row(ren, (SDL_Rect){wx + 50, wy + 120, 200, 30}, "Smoothing",
-                      state->rolling_avg_active, mx, my);
-        ui_text(ren, UI_FONT_SANS_SM, "Active trace only. The raw data is kept.",
-                wx + 20, wy + 160, UI_FAINT);
-    }
-
-    // 3. PEAK FINDER
-    if (state->win_pf.anim > 0.01f) {
-        SDL_RenderSetClipRect(ren, &state->win_pf.clip);
-        draw_inspector_section(ren, &state->win_pf, UI_ICON_PEAK, mx, my);
-        int wx = state->win_pf.rect.x, wy = state->win_pf.rect.y;
-
-        field_val_i(state, INPUT_PF_SIG, buf, sizeof(buf), state->pf_sig_pts);
-        panel_row(ren, state, "Search width", (SDL_Rect){wx + 190, wy + 50, 85, 26}, INPUT_PF_SIG, buf);
-        field_val_i(state, INPUT_PF_NOISE, buf, sizeof(buf), state->pf_noise_pts);
-        panel_row(ren, state, "Noise window", (SDL_Rect){wx + 190, wy + 90, 85, 26}, INPUT_PF_NOISE, buf);
-        field_val(state, INPUT_PF_THRESH, buf, sizeof(buf), "%.1f", state->pf_thresh);
-        panel_row(ren, state, "Threshold", (SDL_Rect){wx + 190, wy + 130, 85, 26}, INPUT_PF_THRESH, buf);
-
-        ui_button(ren, (SDL_Rect){wx + 50, wy + 200, 200, 30}, "Find peaks", UI_ICON_PEAK,
-                  UI_BTN_PRIMARY, 0, mx, my, m_down);
-        ui_button(ren, (SDL_Rect){wx + 50, wy + 240, 200, 30}, "Export list", UI_ICON_EXPORT,
-                  UI_BTN_QUIET, 0, mx, my, m_down);
-        snprintf(buf, sizeof(buf), "%d peak%s found", state->n_peaks, state->n_peaks == 1 ? "" : "s");
-        ui_text(ren, UI_FONT_SANS_SM, buf, wx + 20, wy + 278, UI_FAINT);
-    }
-
-    // 4. ASSIGNMENTS
-    if (state->win_as.anim > 0.01f) {
+    // 1. ASSIGNMENTS
+    if (state->win_as.visible) {
         SDL_RenderSetClipRect(ren, &state->win_as.clip);
         draw_inspector_section(ren, &state->win_as, UI_ICON_LIST, mx, my);
-        int wx = state->win_as.rect.x, wy = state->win_as.rect.y;
-        int tw = state->win_as.rect.w;
+        SDL_Rect w = state->win_as.rect;
 
-        SDL_Rect head = {wx + 15, wy + 64, tw - 30, 20};
-        ui_fill(ren, head, UI_INPUT);
-        ui_text_v(ren, UI_FONT_SANS_SM, "J Ka Kc", head.x + 8, head, UI_FAINT);
-        ui_text_right(ren, UI_FONT_SANS_SM, "exp freq / MHz", head.x + head.w - 8,
+        SDL_Rect head = ui_as_head(w);
+        ui_text_v(ren, UI_FONT_SANS_SM, "J Ka Kc", head.x + 6, head, UI_FAINT);
+        ui_text_right(ren, UI_FONT_SANS_SM, "exp freq / MHz", head.x + head.w - 6,
                       head.y + (head.h - ui_text_h(UI_FONT_SANS_SM)) / 2, UI_FAINT);
+        ui_hline(ren, head.x, head.x + head.w, head.y + head.h - 1, UI_LINE);
 
-        int visible_rows = 13;
+        int rows = ui_as_rows(state);
         int start_idx = state->assignments_scroll;
-        if (start_idx > state->n_assignments - visible_rows) start_idx = state->n_assignments - visible_rows;
+        if (start_idx > state->n_assignments - rows) start_idx = state->n_assignments - rows;
         if (start_idx < 0) start_idx = 0;
-        int end_idx = start_idx + visible_rows;
-        if (end_idx > state->n_assignments) end_idx = state->n_assignments;
 
-        for (int k = start_idx; k < end_idx; k++) {
+        for (int i = 0; i < rows; i++) {
+            int k = start_idx + i;
+            SDL_Rect row = ui_as_row(w, i);
+            if (k >= state->n_assignments) continue;
             PredLine p = state->assignments[k].pred;
-            SDL_Rect row = {wx + 15, wy + 88 + (k - start_idx) * 20, tw - 30, 18};
             int sel = (k == state->selected_assignment);
             if (sel) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
             else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
             snprintf(buf, sizeof(buf), "%d %d %d <- %d %d %d",
                      p.Ju, p.Kau, p.Kcu, p.Jl, p.Kal, p.Kcl);
-            ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 8, row, sel ? UI_ACCENT_TEXT : UI_DIM);
+            ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 6, row, sel ? UI_ACCENT_TEXT : UI_DIM);
             fmt_mhz(buf, sizeof(buf), state->assignments[k].exp_freq, 4);
-            ui_text_right(ren, UI_FONT_MONO_SM, buf, row.x + row.w - 8,
+            ui_text_right(ren, UI_FONT_MONO_SM, buf, row.x + row.w - 6,
                           row.y + (row.h - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_TEXT);
         }
-
         if (state->n_assignments == 0) {
-            ui_text(ren, UI_FONT_SANS_SM, "Left-drag a peak while a predicted", wx + 20, wy + 96, UI_FAINT);
-            ui_text(ren, UI_FONT_SANS_SM, "line is selected to assign it.", wx + 20, wy + 112, UI_FAINT);
+            SDL_Rect row = ui_as_row(w, 0);
+            panel_hint(ren, row, "Drag a peak while a predicted line is");
+            row = ui_as_row(w, 1);
+            panel_hint(ren, row, "selected to record an assignment.");
         }
 
-        /* hyperfine detail of the selected row, which no longer fits in the table */
-        if (state->selected_assignment >= 0 && state->selected_assignment < state->n_assignments) {
-            PredLine p = state->assignments[state->selected_assignment].pred;
-            snprintf(buf, sizeof(buf), "F  %d %d %d <- %d %d %d",
-                     p.M1u, p.M2u, p.M3u, p.M1l, p.M2l, p.M3l);
-            ui_text(ren, UI_FONT_MONO_SM, buf, wx + 15, wy + 334, UI_FAINT);
-            fmt_mhz(buf, sizeof(buf), p.freq_mhz, 4);
-            ui_text(ren, UI_FONT_MONO_SM, buf, wx + 15, wy + 350, UI_FAINT);
-            ui_text(ren, UI_FONT_SANS_SM, "predicted", wx + 125, wy + 350, UI_FAINT);
-        }
-        if (state->n_assignments > visible_rows) {
-            snprintf(buf, sizeof(buf), "%d-%d / %d", start_idx + 1, end_idx, state->n_assignments);
-            ui_text_right(ren, UI_FONT_MONO_SM, buf, wx + tw - 15, wy + 334, UI_FAINT);
-        }
+        ui_button(ren, ui_as_save(state, w), "Save all", -1, UI_BTN_PRIMARY, 0, mx, my, m_down);
+        ui_button(ren, ui_as_delete(state, w), "Delete selected", -1, UI_BTN_DANGER, 0, mx, my, m_down);
 
-        ui_button(ren, (SDL_Rect){wx + 10, wy + 360, 100, 30}, "Save all", -1,
-                  UI_BTN_PRIMARY, 0, mx, my, m_down);
-        ui_button(ren, (SDL_Rect){wx + 120, wy + 360, 110, 30}, "Delete", UI_ICON_TRASH,
-                  UI_BTN_DANGER, 0, mx, my, m_down);
+        SDL_Rect save = ui_as_save(state, w);
+        ui_text(ren, UI_FONT_SANS_SM, "Written to assignments.txt and assigned.lin.",
+                save.x, save.y + save.h + 10, UI_FAINT);
+    }
+
+    // 2. PEAK FINDER
+    if (state->win_pf.visible) {
+        SDL_RenderSetClipRect(ren, &state->win_pf.clip);
+        draw_inspector_section(ren, &state->win_pf, UI_ICON_PEAK, mx, my);
+        SDL_Rect w = state->win_pf.rect;
+
+        field_val_i(state, INPUT_PF_SIG, buf, sizeof(buf), state->pf_sig_pts);
+        panel_field(ren, state, w, "Search width", ui_pf_sig(w), INPUT_PF_SIG, buf, "pts");
+        field_val_i(state, INPUT_PF_NOISE, buf, sizeof(buf), state->pf_noise_pts);
+        panel_field(ren, state, w, "Noise window", ui_pf_noise(w), INPUT_PF_NOISE, buf, "pts");
+        field_val(state, INPUT_PF_THRESH, buf, sizeof(buf), "%.1f", state->pf_thresh);
+        panel_field(ren, state, w, "Threshold", ui_pf_thresh(w), INPUT_PF_THRESH, buf, "x sigma");
+
+        ui_button(ren, ui_pf_find(w), "Find peaks", -1, UI_BTN_PRIMARY, 0, mx, my, m_down);
+        ui_button(ren, ui_pf_export(w), "Export list", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+
+        snprintf(buf, sizeof(buf), "%d peak%s in the current view. Right-drag on",
+                 state->n_peaks, state->n_peaks == 1 ? "" : "s");
+        panel_hint(ren, ui_p_row(w, 4), buf);
+        panel_hint2(ren, ui_p_row(w, 4), "the spectrum picks one by hand.");
+    }
+
+    // 3. ROLLING AVERAGE
+    if (state->win_avg.visible) {
+        SDL_RenderSetClipRect(ren, &state->win_avg.clip);
+        draw_inspector_section(ren, &state->win_avg, UI_ICON_WAVE, mx, my);
+        SDL_Rect w = state->win_avg.rect;
+
+        field_val_i(state, INPUT_AVG_PTS, buf, sizeof(buf), state->rolling_avg_window);
+        panel_field(ren, state, w, "Window", ui_avg_field(w), INPUT_AVG_PTS, buf, "pts");
+        ui_toggle_row(ren, ui_avg_toggle(w), "Smoothing", state->rolling_avg_active, mx, my);
+        panel_hint(ren, ui_p_row(w, 2), "Active trace only. The raw data is kept.");
+    }
+
+    // 4. BROADENING
+    if (state->win_br.visible) {
+        SDL_RenderSetClipRect(ren, &state->win_br.clip);
+        draw_inspector_section(ren, &state->win_br, UI_ICON_BELL, mx, my);
+        SDL_Rect w = state->win_br.rect;
+        int kaiser = (state->broaden_mode == 1);
+
+        static const char *modes[2] = {"Analytic", "Kaiser FFT"};
+        ui_segmented(ren, ui_br_mode(w), modes, 2, kaiser);
+
+        if (!kaiser) {
+            field_val(state, INPUT_GAMMA, buf, sizeof(buf), "%.2f", state->lorentz_gamma);
+            panel_field(ren, state, w, "Lorentz HWHM", ui_br_f1(w), INPUT_GAMMA, buf, "MHz");
+            field_val(state, INPUT_GAUSS, buf, sizeof(buf), "%.2f", state->gauss_gamma);
+            panel_field(ren, state, w, "Gauss HWHM", ui_br_f2(w), INPUT_GAUSS, buf, "MHz");
+
+            const char *shape;
+            if (state->lorentz_gamma > 0.0 && state->gauss_gamma > 0.0) shape = "Profile: Voigt (both widths set)";
+            else if (state->lorentz_gamma > 0.0)                        shape = "Profile: Lorentzian";
+            else if (state->gauss_gamma  > 0.0)                         shape = "Profile: Gaussian";
+            else                                                        shape = "Set a width to see a profile";
+            panel_hint(ren, ui_p_row(w, 3), shape);
+        } else {
+            field_val(state, INPUT_KBETA, buf, sizeof(buf), "%.2f", state->kaiser_beta);
+            panel_field(ren, state, w, "Kaiser beta", ui_br_f1(w), INPUT_KBETA, buf, "");
+            field_val_i(state, INPUT_KCEROS, buf, sizeof(buf), state->kaiser_ceros);
+            panel_field(ren, state, w, "Zero-pad", ui_br_f2(w), INPUT_KCEROS, buf, "x");
+            field_val(state, INPUT_KINTR, buf, sizeof(buf), "%.3f", state->kaiser_intrinsic);
+            panel_field(ren, state, w, "Intrinsic FWHM", ui_br_f3(w), INPUT_KINTR, buf, "MHz");
+
+            double df = spectrum_df(state);
+            int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
+            if (df > 0.0) {
+                snprintf(buf, sizeof(buf), "bin df %.5g MHz", df);
+                panel_hint(ren, ui_p_row(w, 4), buf);
+                snprintf(buf, sizeof(buf), "resolution = ceros x df = %.4g MHz", cer * df);
+                ui_text(ren, UI_FONT_SANS_SM, buf, ui_p_row(w, 5).x, ui_p_row(w, 5).y + 4, UI_ACCENT_TEXT);
+            } else {
+                panel_hint(ren, ui_p_row(w, 4), "Load a spectrum for the bin step.");
+            }
+        }
+        ui_toggle_row(ren, ui_br_toggle(w, kaiser), "Simulated profile", state->broadening_active, mx, my);
     }
 
     // 5. INTENSITY RANGE
-    if (state->win_cut.anim > 0.01f) {
+    if (state->win_cut.visible) {
         SDL_RenderSetClipRect(ren, &state->win_cut.clip);
         draw_inspector_section(ren, &state->win_cut, UI_ICON_RANGE, mx, my);
-        int wx = state->win_cut.rect.x, wy = state->win_cut.rect.y;
+        SDL_Rect w = state->win_cut.rect;
 
         field_val(state, INPUT_PRED_MIN, buf, sizeof(buf), "%.1f", state->pred_min_log_int);
-        panel_row(ren, state, "Min log I", (SDL_Rect){wx + 120, wy + 50, 155, 28}, INPUT_PRED_MIN, buf);
+        panel_field(ren, state, w, "Min log I", ui_cut_min(w), INPUT_PRED_MIN, buf, "");
         field_val(state, INPUT_PRED_MAX, buf, sizeof(buf), "%.1f", state->pred_max_log_int);
-        panel_row(ren, state, "Max log I", (SDL_Rect){wx + 120, wy + 90, 155, 28}, INPUT_PRED_MAX, buf);
-        ui_text(ren, UI_FONT_SANS_SM, "Weak lines are hidden, not unloaded.", wx + 20, wy + 128, UI_FAINT);
+        panel_field(ren, state, w, "Max log I", ui_cut_max(w), INPUT_PRED_MAX, buf, "");
+
+        int shown = 0;
+        for (int i = 0; i < state->n_pred; i++) if (pred_passes_filter(state, i)) shown++;
+        panel_hint(ren, ui_p_row(w, 2), "Hides predicted lines outside the range.");
+        snprintf(buf, sizeof(buf), "%d of %d lines shown.", shown, state->n_pred);
+        panel_hint2(ren, ui_p_row(w, 2), buf);
     }
 
     // 6. FREQUENCY JUMP
-    if (state->win_jump.anim > 0.01f) {
+    if (state->win_jump.visible) {
         SDL_RenderSetClipRect(ren, &state->win_jump.clip);
         draw_inspector_section(ren, &state->win_jump, UI_ICON_JUMP, mx, my);
-        int wx = state->win_jump.rect.x, wy = state->win_jump.rect.y;
+        SDL_Rect w = state->win_jump.rect;
 
         field_val(state, INPUT_JUMP_MIN, buf, sizeof(buf), "%.1f", state->vxmin);
-        panel_row(ren, state, "Start", (SDL_Rect){wx + 120, wy + 50, 155, 28}, INPUT_JUMP_MIN, buf);
+        panel_field(ren, state, w, "Start", ui_jump_start(w), INPUT_JUMP_MIN, buf, "MHz");
         field_val(state, INPUT_JUMP_MAX, buf, sizeof(buf), "%.1f", state->vxmax);
-        panel_row(ren, state, "End", (SDL_Rect){wx + 120, wy + 90, 155, 28}, INPUT_JUMP_MAX, buf);
+        panel_field(ren, state, w, "End", ui_jump_end(w), INPUT_JUMP_MAX, buf, "MHz");
     }
 
     // 7. TRANSITION FILTER
-    if (state->win_filt.anim > 0.01f) {
+    if (state->win_filt.visible) {
         SDL_RenderSetClipRect(ren, &state->win_filt.clip);
         draw_inspector_section(ren, &state->win_filt, UI_ICON_FILTER, mx, my);
-        int wx = state->win_filt.rect.x, wy = state->win_filt.rect.y;
+        SDL_Rect w = state->win_filt.rect;
 
-        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 44, 230, 26}, "Filter", state->filter_active, mx, my);
+        ui_toggle_row(ren, ui_filt_master(w), "Filter", state->filter_active, mx, my);
 
-        ui_text(ren, UI_FONT_SANS_SM, "Dipole", wx + 20, wy + 80, UI_FAINT);
+        SDL_Rect row = ui_p_row(w, 1);
+        ui_text_v(ren, UI_FONT_SANS, "Dipole", row.x + 4, row, UI_DIM);
         static const char *mu_lbl[3] = {"mu a", "mu b", "mu c"};
         for (int i = 0; i < 3; i++)
-            ui_button(ren, (SDL_Rect){wx + 15 + i * 80, wy + 98, 70, 26}, mu_lbl[i], -1,
-                      UI_BTN_QUIET, state->filt_mu[i], mx, my, m_down);
+            ui_button(ren, ui_filt_mu(w, i), mu_lbl[i], -1, UI_BTN_QUIET, state->filt_mu[i], mx, my, m_down);
 
-        ui_text(ren, UI_FONT_SANS_SM, "Branch", wx + 20, wy + 134, UI_FAINT);
+        row = ui_p_row(w, 2);
+        ui_text_v(ren, UI_FONT_SANS, "Branch", row.x + 4, row, UI_DIM);
         static const char *br_lbl[3] = {"P", "Q", "R"};
         for (int i = 0; i < 3; i++)
-            ui_button(ren, (SDL_Rect){wx + 15 + i * 80, wy + 152, 70, 26}, br_lbl[i], -1,
-                      UI_BTN_QUIET, state->filt_br[i], mx, my, m_down);
+            ui_button(ren, ui_filt_br(w, i), br_lbl[i], -1, UI_BTN_QUIET, state->filt_br[i], mx, my, m_down);
 
-        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 190, 230, 26}, "Quantum number range",
-                      state->filt_use_range, mx, my);
-        ui_text(ren, UI_FONT_SANS_SM, "min", wx + 126, wy + 220, UI_FAINT);
-        ui_text(ren, UI_FONT_SANS_SM, "max", wx + 196, wy + 220, UI_FAINT);
+        ui_toggle_row(ren, ui_filt_range(w), "Quantum number range", state->filt_use_range, mx, my);
+
+        SDL_Rect hdr = ui_filt_delta_hdr(w);
+        SDL_Rect c0 = ui_filt_qn(w, 0, 0), c1 = ui_filt_qn(w, 0, 1);
+        ui_text(ren, UI_FONT_SANS_SM, "min", c0.x + (c0.w - ui_text_w(UI_FONT_SANS_SM, "min")) / 2, hdr.y + 10, UI_FAINT);
+        ui_text(ren, UI_FONT_SANS_SM, "max", c1.x + (c1.w - ui_text_w(UI_FONT_SANS_SM, "max")) / 2, hdr.y + 10, UI_FAINT);
+
         const char *qn_lbl[3] = {"J", "Ka", "Kc"};
         int qn_lo[3] = {state->filt_j_min, state->filt_ka_min, state->filt_kc_min};
         int qn_hi[3] = {state->filt_j_max, state->filt_ka_max, state->filt_kc_max};
         int qn_in_lo[3] = {INPUT_FILT_JMIN, INPUT_FILT_KAMIN, INPUT_FILT_KCMIN};
         int qn_in_hi[3] = {INPUT_FILT_JMAX, INPUT_FILT_KAMAX, INPUT_FILT_KCMAX};
         for (int i = 0; i < 3; i++) {
-            int ry = wy + 236 + i * 30;
-            ui_text(ren, UI_FONT_MONO_SM, qn_lbl[i], wx + 25, ry + 5, UI_DIM);
+            SDL_Rect lo = ui_filt_qn(w, i, 0), hi = ui_filt_qn(w, i, 1);
+            ui_text_v(ren, UI_FONT_SANS, qn_lbl[i], ui_p_row(w, 5 + i).x + 4, lo, UI_DIM);
             field_val_i(state, qn_in_lo[i], buf, sizeof(buf), qn_lo[i]);
-            ui_field(ren, (SDL_Rect){wx + 110, ry, 55, 24}, NULL, buf, (int)state->input_state == qn_in_lo[i]);
+            ui_field_u(ren, lo, buf, "", (int)state->input_state == qn_in_lo[i]);
             field_val_i(state, qn_in_hi[i], buf, sizeof(buf), qn_hi[i]);
-            ui_field(ren, (SDL_Rect){wx + 180, ry, 55, 24}, NULL, buf, (int)state->input_state == qn_in_hi[i]);
+            ui_field_u(ren, hi, buf, "", (int)state->input_state == qn_in_hi[i]);
         }
 
-        ui_toggle_row(ren, (SDL_Rect){wx + 15, wy + 332, 230, 26}, "Quantum number jump",
-                      state->filt_use_delta, mx, my);
+        ui_toggle_row(ren, ui_filt_jump(w), "Quantum number jump", state->filt_use_delta, mx, my);
         const char *d_lbl[3] = {"dJ", "dKa", "dKc"};
         int d_val[3] = {state->filt_dj, state->filt_dka, state->filt_dkc};
         int d_in[3]  = {INPUT_FILT_DJ, INPUT_FILT_DKA, INPUT_FILT_DKC};
-        int d_lx[3]  = {18, 92, 172};
-        int d_fx[3]  = {44, 124, 204};
         for (int i = 0; i < 3; i++) {
-            ui_text(ren, UI_FONT_MONO_SM, d_lbl[i], wx + d_lx[i], wy + 369, UI_DIM);
+            SDL_Rect f = ui_filt_delta(w, i);
+            ui_text_v(ren, UI_FONT_SANS, d_lbl[i], f.x - ui_text_w(UI_FONT_SANS, d_lbl[i]) - 6, f, UI_DIM);
             field_val_i(state, d_in[i], buf, sizeof(buf), d_val[i]);
-            ui_field(ren, (SDL_Rect){wx + d_fx[i], wy + 364, 36, 24}, NULL, buf, (int)state->input_state == d_in[i]);
+            ui_field_u(ren, f, buf, "", (int)state->input_state == d_in[i]);
         }
     }
 
     // 8. SPECTRA
-    if (state->win_spec.anim > 0.01f) {
+    if (state->win_spec.visible) {
         SDL_RenderSetClipRect(ren, &state->win_spec.clip);
         draw_inspector_section(ren, &state->win_spec, UI_ICON_LAYERS, mx, my);
-        int wx = state->win_spec.rect.x, wy = state->win_spec.rect.y;
+        SDL_Rect w = state->win_spec.rect;
 
-        ui_button(ren, (SDL_Rect){wx + 15, wy + 44, 130, 26},
-                  state->multi_layout ? "Stack" : "Overlay", -1, UI_BTN_QUIET,
-                  state->multi_layout, mx, my, m_down);
-        ui_button(ren, (SDL_Rect){wx + 155, wy + 44, 130, 26},
-                  state->multi_ynorm ? "Normalised Y" : "Shared Y", -1, UI_BTN_QUIET,
-                  state->multi_ynorm, mx, my, m_down);
-        ui_button(ren, (SDL_Rect){wx + 15, wy + 76, 270, 26},
-                  state->multi_indiv_int ? "Intensity: active trace" : "Intensity: all traces",
-                  -1, UI_BTN_QUIET, state->multi_indiv_int, mx, my, m_down);
-
-        ui_text(ren, UI_FONT_SANS_SM, "Click a name to make it active", wx + 18, wy + 108, UI_FAINT);
+        static const char *lay[2] = {"Overlay", "Stack"};
+        static const char *yy[2]  = {"Shared Y", "Normalised"};
+        ui_segmented(ren, ui_spec_layout(w), lay, 2, state->multi_layout);
+        ui_segmented(ren, ui_spec_ynorm(w), yy, 2, state->multi_ynorm);
+        ui_toggle_row(ren, ui_spec_indiv(w), "Intensity keys act on the active trace only",
+                      state->multi_indiv_int, mx, my);
 
         for (int i = 0; i < state->n_spectra; i++) {
             Spectrum *sp = &state->spectra[i];
-            int rowy = wy + 124 + i * 30;
-            SDL_Rect row = {wx + 10, rowy - 2, 278, 26};
+            SDL_Rect row = ui_spec_row(w, i);
             if (i == state->active_spec) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
             else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
-            fill_rounded_rect(ren, (SDL_Rect){wx + 14, rowy + 6, 9, 9}, 2, sp->color);
-            char nm[20]; snprintf(nm, sizeof(nm), "%.14s", sp->name);
-            ui_text(ren, UI_FONT_SANS, nm, wx + 30, rowy + 4, sp->visible ? UI_TEXT : UI_FAINT);
-
-            ui_button(ren, (SDL_Rect){wx + 150, rowy, 24, 22}, "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
-            ui_button(ren, (SDL_Rect){wx + 176, rowy, 24, 22}, "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
-            ui_button(ren, (SDL_Rect){wx + 204, rowy, 34, 22}, "", UI_ICON_EYE, UI_BTN_QUIET,
-                      sp->visible, mx, my, m_down);
-            ui_button(ren, (SDL_Rect){wx + 244, rowy, 26, 22}, "", UI_ICON_CLOSE, UI_BTN_DANGER,
-                      0, mx, my, m_down);
+            fill_rounded_rect(ren, (SDL_Rect){row.x + 6, row.y + 9, 9, 9}, 2, sp->color);
+            SDL_Rect name = ui_spec_name(w, i);
+            char nm[24]; snprintf(nm, sizeof(nm), "%.16s", sp->name);
+            ui_text_v(ren, UI_FONT_SANS, nm, row.x + 22, row, sp->visible ? UI_TEXT : UI_FAINT);
+            if (sp->voffset != 0.0) {
+                snprintf(nm, sizeof(nm), "%+.2f", sp->voffset);
+                ui_text_right(ren, UI_FONT_MONO_SM, nm, name.x + name.w,
+                              row.y + (row.h - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_FAINT);
+            }
+            ui_button(ren, ui_spec_minus(w, i), "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, ui_spec_plus(w, i),  "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, ui_spec_vis(w, i), "", UI_ICON_EYE, UI_BTN_QUIET, sp->visible, mx, my, m_down);
+            ui_button(ren, ui_spec_del(w, i), "", UI_ICON_CLOSE, UI_BTN_DANGER, 0, mx, my, m_down);
         }
 
-        if (state->n_spectra == 0) {
-            ui_text(ren, UI_FONT_SANS_SM, "Drop a spectrum file to add one.", wx + 18, wy + 128, UI_FAINT);
-        } else {
-            int ty = wy + 128 + state->n_spectra * 30;
-            ui_text(ren, UI_FONT_SANS_SM, "- / +  shift a trace vertically", wx + 18, ty, UI_FAINT);
-            ui_text(ren, UI_FONT_SANS_SM, "W / Z  intensity", wx + 18, ty + 16, UI_FAINT);
-        }
+        SDL_Rect last = ui_spec_row(w, state->n_spectra > 0 ? state->n_spectra : 0);
+        if (state->n_spectra == 0)
+            ui_text(ren, UI_FONT_SANS_SM, "Drop a spectrum file to add one.", last.x + 6, last.y + 4, UI_FAINT);
+        else
+            ui_text(ren, UI_FONT_SANS_SM, "Drop a file to add a trace. - / + shift it.",
+                    last.x + 6, last.y + 6, UI_FAINT);
     }
 
     SDL_RenderSetClipRect(ren, NULL);
@@ -1335,133 +1331,147 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
     }
 }
 
+// A floating card: dark ground, hairline, header strip.
+static SDL_Rect ui_card(SDL_Renderer *ren, SDL_Rect r, const char *title, SDL_Color title_c,
+                        const char *note) {
+    fill_rounded_rect(ren, r, 5, (SDL_Color){12, 13, 15, 240});
+    ui_frame(ren, r, UI_LINE);
+    SDL_Rect head = {r.x, r.y, r.w, 22};
+    ui_text_v(ren, UI_FONT_SANS, title, head.x + 10, head, title_c);
+    if (note) {
+        int nw = ui_text_w(UI_FONT_SANS_SM, note);
+        ui_text_v(ren, UI_FONT_SANS_SM, note, head.x + head.w - 10 - nw, head, UI_FAINT);
+    }
+    ui_hline(ren, r.x + 1, r.x + r.w - 1, r.y + 22, UI_LINE_SOFT);
+    return head;
+}
+
+// One transition row inside a card: branch tag, quantum numbers, frequency.
+static void ui_card_row(SDL_Renderer *ren, SDL_Rect r, int i, const PredLine *p) {
+    char buf[128];
+    int y = r.y + 22 + i * 19;
+    SDL_Rect row = {r.x, y, r.w, 19};
+    snprintf(buf, sizeof(buf), "%c%c", p->branch, p->mu);
+    ui_text_v(ren, UI_FONT_MONO_SM, buf, r.x + 10, row, color_for_pred(p->branch, p->mu));
+    snprintf(buf, sizeof(buf), "%d %d %d <- %d %d %d",
+             p->Ju, p->Kau, p->Kcu, p->Jl, p->Kal, p->Kcl);
+    ui_text_v(ren, UI_FONT_MONO_SM, buf, r.x + 38, row, UI_TEXT);
+    fmt_mhz(buf, sizeof(buf), p->freq_mhz, 4);
+    ui_text_right(ren, UI_FONT_MONO_SM, buf, r.x + r.w - 10,
+                  y + (19 - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_ACCENT);
+}
+
+// A compact readout that follows the pointer.
+static void ui_tag(SDL_Renderer *ren, int x, int y, const char *text, SDL_Color c) {
+    int tw = ui_text_w(UI_FONT_MONO_SM, text);
+    SDL_Rect r = {x, y, tw + 16, 20};
+    fill_rounded_rect(ren, r, 4, (SDL_Color){8, 9, 10, 235});
+    ui_frame(ren, r, UI_LINE);
+    ui_text_v(ren, UI_FONT_MONO_SM, text, r.x + 8, r, c);
+}
+
 static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    (void)font;
     int mx, my;
+    char buf[160];
     SDL_GetMouseState(&mx, &my);
+    int in_exp = point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h});
 
     if (state->dragging_offset) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Offset %.4f MHz", state->exp_offset);
-        SDL_Rect badge = {l->exp_x + l->exp_w - 190, l->exp_y + 42, 180, 26};
-        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 24, 30, 225});
-        draw_text(ren, font, buf, badge.x + 10, badge.y + 5, COL_ACCENT);
+        snprintf(buf, sizeof(buf), "offset %+.4f MHz", state->exp_offset);
+        ui_tag(ren, l->exp_x + l->exp_w - 190, l->exp_y + 10, buf, UI_ACCENT);
     }
 
     if (state->selecting_left || state->selecting_right) {
-        double x0 = state->vxmin + (double)(state->sel_start.x - l->exp_x)/l->exp_w * (state->vxmax - state->vxmin);
-        double x1 = state->vxmin + (double)(state->sel_cur.x - l->exp_x)/l->exp_w * (state->vxmax - state->vxmin);
+        double x0 = state->vxmin + (double)(state->sel_start.x - l->exp_x) / l->exp_w * (state->vxmax - state->vxmin);
+        double x1 = state->vxmin + (double)(state->sel_cur.x - l->exp_x) / l->exp_w * (state->vxmax - state->vxmin);
         if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
+        snprintf(buf, sizeof(buf), "%s  %.4f MHz", state->selecting_right ? "peak search" : "zoom", x1 - x0);
+        int bx = state->sel_cur.x + 12, by = state->sel_cur.y - 30;
+        if (bx + 190 > l->exp_x + l->exp_w) bx = state->sel_cur.x - 190;
+        if (by < l->exp_y + 6) by = l->exp_y + 6;
+        ui_tag(ren, bx, by, buf, state->selecting_right ? UI_WARN : UI_ACCENT);
+    }
 
-        char buf[96];
-        snprintf(buf, sizeof(buf), "%s %.4f MHz", state->selecting_right ? "Peak search" : "Zoom", x1 - x0);
-        SDL_Rect badge = {state->sel_cur.x + 10, state->sel_cur.y - 34, 170, 26};
-        if (badge.x + badge.w > l->exp_x + l->exp_w) badge.x = state->sel_cur.x - badge.w - 10;
-        if (badge.y < l->exp_y) badge.y = l->exp_y + 8;
-        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 10, 12, 225});
-        draw_text(ren, font, buf, badge.x + 10, badge.y + 5, state->selecting_right ? (SDL_Color){245,210,75,255} : COL_ACCENT);
+    // Pointer readout, next to the cursor as in the plot's own coordinates.
+    if (in_exp && !state->selecting_left && !state->selecting_right) {
+        double fx = (mx - l->exp_x) / (double)l->exp_w;
+        double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
+        double cx = state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset;
+        double cy = state->vymin + fy * (state->vymax - state->vymin);
+        char freq[48]; fmt_mhz(freq, sizeof(freq), cx, 4);
+        snprintf(buf, sizeof(buf), "f %s MHz   I %.1e", freq, cy);
+        int bx = mx + 14, by = my - 30;
+        if (bx + 230 > l->exp_x + l->exp_w) bx = mx - 230;
+        if (by < l->exp_y + 6) by = l->exp_y + 6;
+        ui_tag(ren, bx, by, buf, UI_TEXT);
+
+        SDL_SetRenderDrawColor(ren, UI_ACCENT.r, UI_ACCENT.g, UI_ACCENT.b, 150);
+        SDL_RenderDrawLine(ren, mx, l->exp_y, mx, l->exp_y + l->exp_h);
     }
 
     if (state->n_peaks > 0 && !state->selecting_right) {
         Peak *last = &state->peaks[state->n_peaks - 1];
         if (last->x + state->exp_offset >= state->vxmin && last->x + state->exp_offset <= state->vxmax) {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "Last peak %.4f", last->x);
-            SDL_Rect badge = {l->exp_x + 10, l->exp_y + l->exp_h - 34, 155, 24};
-            fill_rounded_rect(ren, badge, 5, (SDL_Color){34, 30, 12, 190});
-            draw_text(ren, font, buf, badge.x + 9, badge.y + 4, (SDL_Color){245,210,75,255});
+            char freq[48]; fmt_mhz(freq, sizeof(freq), last->x, 4);
+            snprintf(buf, sizeof(buf), "last peak %s", freq);
+            ui_tag(ren, l->exp_x + 10, l->exp_y + l->exp_h - 30, buf, UI_WARN);
         }
     }
 
-    // 1. Mouse Position Info
-    if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
-        double fx = (mx - l->exp_x) / (double)l->exp_w;
-        double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
-        double cx = state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset;  // true freq
-        double cy = state->vymin + fy * (state->vymax - state->vymin);
-
-        char c[128];
-        snprintf(c, sizeof(c), "f %.3f MHz   I %.2e", cx, cy);
-
-        SDL_Rect badge = {l->exp_x + 10, l->exp_y + 10, 230, 26};
-        fill_rounded_rect(ren, badge, 5, (SDL_Color){8, 10, 12, 205});
-        draw_text(ren, font, c, badge.x + 8, badge.y + 5, COL_TXT_DIM);
-    }
-
-    // 2. Measure Tool Overlay
+    // Measure tool
     if (state->measure_active) {
-        SDL_Rect badge = {l->exp_x + l->exp_w - 155, l->exp_y + 10, 145, 26};
-        fill_rounded_rect(ren, badge, 5, (SDL_Color){55, 20, 75, 220});
-        draw_text(ren, font, "MEASURE", badge.x + 12, badge.y + 5, (SDL_Color){245, 185, 255, 255});
+        ui_tag(ren, l->exp_x + l->exp_w - 120, l->exp_y + 10, "measure", (SDL_Color){225, 160, 245, 255});
         if (state->measure_phase == 1) {
-            int px1 = l->exp_x + (state->measure_x1 + state->exp_offset - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-            SDL_SetRenderDrawColor(ren, 225, 100, 245, 210);
+            int px1 = l->exp_x + (state->measure_x1 + state->exp_offset - state->vxmin) /
+                                 (state->vxmax - state->vxmin) * l->exp_w;
+            SDL_SetRenderDrawColor(ren, 225, 130, 245, 210);
             SDL_RenderDrawLine(ren, px1, l->exp_y, px1, l->exp_y + l->exp_h);
             SDL_RenderDrawLine(ren, px1, my, mx, my);
-            if (point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h})) {
-                double curr_freq = state->vxmin + ((double)(mx - l->exp_x) / l->exp_w) * (state->vxmax - state->vxmin) - state->exp_offset;
-                double dist = fabs(curr_freq - state->measure_x1);
-                char buf[64]; snprintf(buf, 64, "%.4f MHz", dist);
-                draw_text(ren, font, buf, mx + 10, my - 20, (SDL_Color){245, 185, 255, 255});
+            if (in_exp) {
+                double curr = state->vxmin + ((double)(mx - l->exp_x) / l->exp_w) *
+                                             (state->vxmax - state->vxmin) - state->exp_offset;
+                snprintf(buf, sizeof(buf), "%.4f MHz", fabs(curr - state->measure_x1));
+                ui_tag(ren, mx + 12, my - 26, buf, (SDL_Color){235, 175, 250, 255});
             }
         }
     }
 
-    // 3. Selection Info
-    if(state->n_selected > 0) {
-        char title[64];
-        snprintf(title, sizeof(title), "Selected lines: %d", state->n_selected);
-        SDL_Rect panel = {l->pred_x + 10, l->pred_y + 10, 395, 34 + (state->n_selected < 4 ? state->n_selected : 4) * 18};
-        fill_rounded_rect(ren, panel, 5, (SDL_Color){8, 18, 12, 210});
-        draw_text(ren, font, title, panel.x + 10, panel.y + 7, (SDL_Color){105,235,145,255});
-
+    // Selected predicted transitions
+    if (state->n_selected > 0) {
         int show_n = state->n_selected < 4 ? state->n_selected : 4;
-        for (int row_i = 0; row_i < show_n; row_i++) {
-            PredLine *p = &state->pred_lines[state->selected_indices[row_i]];
-            char row[192];
-            snprintf(row, sizeof(row), "%2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %.4f",
-                     p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
-                     p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
-                     p->freq_mhz);
-            draw_text(ren, font, row, panel.x + 10, panel.y + 28 + row_i * 18, (SDL_Color){115,235,150,255});
-        }
+        SDL_Rect card = {l->pred_x + l->pred_w - 372, l->pred_y + 10, 362, 22 + show_n * 19 + 6};
+        if (card.x < l->pred_x + 10) card.x = l->pred_x + 10;
+        snprintf(buf, sizeof(buf), "%d line%s selected", state->n_selected, state->n_selected == 1 ? "" : "s");
+        ui_card(ren, card, buf, UI_TEXT, "ctrl-click to add");
+        for (int i = 0; i < show_n; i++)
+            ui_card_row(ren, card, i, &state->pred_lines[state->selected_indices[i]]);
+        return;
     }
-    
-    // 4. Hover Info
-    if(state->bar_active) {
-        int p_hover_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pbar_x - 1.0);
-        int p_hover_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pbar_x + 1.0);
-        if(p_hover_start < 0) p_hover_start = 0; 
-        if(p_hover_end >= state->n_pred) p_hover_end = state->n_pred - 1;
 
-        double closest_dist = 1e99; int closest_idx = -1;
-        int hover_idx[4];
-        int hover_n = 0;
-        double freq_tolerance = (state->pvxmax - state->pvxmin) * 0.01; 
+    // Transitions near the bar
+    if (state->bar_active && state->n_pred > 0) {
+        int p0 = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pbar_x - 1.0);
+        int p1 = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pbar_x + 1.0);
+        if (p0 < 0) p0 = 0;
+        if (p1 >= state->n_pred) p1 = state->n_pred - 1;
 
-        for(int i=p_hover_start; i<=p_hover_end; i++) {
-            // Check cut + active filters
+        double tol = (state->pvxmax - state->pvxmin) * 0.01;
+        double closest = 1e99;
+        int hover_idx[4], hover_n = 0;
+        for (int i = p0; i <= p1; i++) {
             if (!pred_passes_filter(state, i)) continue;
-
             double d = fabs(state->pred_lines[i].freq_mhz - state->pbar_x);
-            if(d < closest_dist) { closest_dist = d; closest_idx = i; }
-            if (d < freq_tolerance && hover_n < 4) hover_idx[hover_n++] = i;
+            if (d < closest) closest = d;
+            if (d < tol && hover_n < 4) hover_idx[hover_n++] = i;
         }
-
-        if(closest_idx >= 0 && closest_dist < freq_tolerance && state->n_selected == 0) {
-            char htitle[64];
-            snprintf(htitle, sizeof(htitle), "Near bar: %d line%s", hover_n, hover_n == 1 ? "" : "s");
-            SDL_Rect panel = {l->pred_x + 10, l->pred_y + 10, 395, 34 + hover_n * 18};
-            fill_rounded_rect(ren, panel, 5, (SDL_Color){28, 17, 8, 210});
-            draw_text(ren, font, htitle, panel.x + 10, panel.y + 7, (SDL_Color){245,175,80,255});
-            for (int row_i = 0; row_i < hover_n; row_i++) {
-                PredLine *p = &state->pred_lines[hover_idx[row_i]];
-                char h1[160];
-                snprintf(h1, sizeof(h1), "%2d %2d %2d %2d %2d %2d -> %2d %2d %2d %2d %2d %2d  %.4f",
-                    p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u,
-                    p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l,
-                    p->freq_mhz);
-                draw_text(ren, font, h1, panel.x + 10, panel.y + 28 + row_i * 18, (SDL_Color){245,190,105,255});
-            }
+        if (hover_n > 0 && closest < tol) {
+            SDL_Rect card = {l->pred_x + l->pred_w - 372, l->pred_y + 10, 362, 22 + hover_n * 19 + 6};
+            if (card.x < l->pred_x + 10) card.x = l->pred_x + 10;
+            snprintf(buf, sizeof(buf), "%d line%s near the bar", hover_n, hover_n == 1 ? "" : "s");
+            ui_card(ren, card, buf, UI_WARN, NULL);
+            for (int i = 0; i < hover_n; i++)
+                ui_card_row(ren, card, i, &state->pred_lines[hover_idx[i]]);
         }
     }
 }

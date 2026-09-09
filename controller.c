@@ -3,6 +3,7 @@
 #include "loader.h"
 #include "layout.h"
 #include "ui_chrome.h"
+#include "ui_panels.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <math.h>
@@ -91,283 +92,209 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
 static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     int mx = b->x; 
     int my = b->y;
-    int handled = 0;
-    (void)handled;
 
-    // 1. Check Floating Windows
-    // Helper macro to reduce boilerplate for window drag checks
-    #define CHECK_WIN_DRAG(win) \
-        if ((win).visible && point_in_rect(mx, my, (win).rect)) { \
-            handled = 1; \
-            if (my < (win).rect.y + 30) { \
-                if (mx > (win).rect.x + (win).rect.w - 30) { (win).visible = 0; } \
-                else { /* docked panel: not draggable */ } \
-                return; \
-            } \
-        }
+    // 1. Inspector panels.
+    //    The panels are docked in the right-hand column; every rectangle below
+    //    comes from ui_panels.h, the same header the renderer draws from.
+    {
+        DraggableWindow *panels[UI_TOOL_COUNT] = {
+            &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
+            &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+        };
+        for (int t = 0; t < UI_TOOL_COUNT; t++) {
+            DraggableWindow *p = panels[t];
+            if (!p->visible || !point_in_rect(mx, my, p->rect)) continue;
+            SDL_Rect w = p->rect;
 
-    // NEW: Intensity Cut Window
-        if (s->win_cut.visible && point_in_rect(mx, my, s->win_cut.rect)) {
-            handled = 1;
-            if (my < s->win_cut.rect.y + 30) {
-                if (mx > s->win_cut.rect.x + s->win_cut.rect.w - 30) s->win_cut.visible = 0;
-                else { /* docked panel: not draggable */ }
+            /* header: the only control is close */
+            if (my < w.y + UI_SECTION_HEAD_H) {
+                if (mx > w.x + w.w - 30) p->visible = 0;
                 return;
             }
-            SDL_Rect r_min = {s->win_cut.rect.x + 120, s->win_cut.rect.y + 50, 80, 28};
-            SDL_Rect r_max = {s->win_cut.rect.x + 120, s->win_cut.rect.y + 90, 80, 28};
-            if (point_in_rect(mx, my, r_min)) { s->input_state = INPUT_PRED_MIN; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->pred_min_log_int); } 
-            else if (point_in_rect(mx, my, r_max)) { s->input_state = INPUT_PRED_MAX; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->pred_max_log_int); }
-            return;
-        }
-    
-    // NEW: Frequency Jump Window
-    if (s->win_jump.visible && point_in_rect(mx, my, s->win_jump.rect)) {
-        handled = 1;
-        if (my < s->win_jump.rect.y + 30) {
-            if (mx > s->win_jump.rect.x + s->win_jump.rect.w - 30) s->win_jump.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        SDL_Rect r_start = {s->win_jump.rect.x + 120, s->win_jump.rect.y + 50, 80, 28};
-        SDL_Rect r_end   = {s->win_jump.rect.x + 120, s->win_jump.rect.y + 90, 80, 28};
-        if (point_in_rect(mx, my, r_start)) { s->input_state = INPUT_JUMP_MIN; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->vxmin); } 
-        else if (point_in_rect(mx, my, r_end)) { s->input_state = INPUT_JUMP_MAX; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->vxmax); }
-        return;
-    }
+            if (b->button != SDL_BUTTON_LEFT) return;
 
-    // FILTER Window (quantum-number / branch gating)
-    if (s->win_filt.visible && point_in_rect(mx, my, s->win_filt.rect)) {
-        handled = 1;
-        int wx = s->win_filt.rect.x, wy = s->win_filt.rect.y;
-        if (my < wy + 30) {
-            if (mx > wx + s->win_filt.rect.w - 30) s->win_filt.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        // Master enable
-        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 230, 26})) { s->filter_active = !s->filter_active; return; }
-        // Dipole (mu) toggles
-        for (int i = 0; i < 3; i++)
-            if (point_in_rect(mx, my, (SDL_Rect){wx+15+i*80, wy+98, 70, 26})) { s->filt_mu[i] = !s->filt_mu[i]; return; }
-        // Branch toggles
-        for (int i = 0; i < 3; i++)
-            if (point_in_rect(mx, my, (SDL_Rect){wx+15+i*80, wy+152, 70, 26})) { s->filt_br[i] = !s->filt_br[i]; return; }
-        // Range gate
-        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+190, 230, 26})) { s->filt_use_range = !s->filt_use_range; return; }
-        // Range input fields (J / Ka / Kc, min / max)
-        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+236, 55, 24})) { s->input_state=INPUT_FILT_JMIN;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_j_min);  return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+236, 55, 24})) { s->input_state=INPUT_FILT_JMAX;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_j_max);  return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+266, 55, 24})) { s->input_state=INPUT_FILT_KAMIN; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_ka_min); return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+266, 55, 24})) { s->input_state=INPUT_FILT_KAMAX; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_ka_max); return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+110, wy+296, 55, 24})) { s->input_state=INPUT_FILT_KCMIN; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_kc_min); return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+180, wy+296, 55, 24})) { s->input_state=INPUT_FILT_KCMAX; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_kc_max); return; }
-        // Delta gate
-        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+332, 230, 26})) { s->filt_use_delta = !s->filt_use_delta; return; }
-        // Delta input fields (dJ / dKa / dKc)
-        if (point_in_rect(mx, my, (SDL_Rect){wx+44,  wy+364, 36, 24})) { s->input_state=INPUT_FILT_DJ;  SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dj);  return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+124, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKA; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dka); return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+204, wy+364, 36, 24})) { s->input_state=INPUT_FILT_DKC; SDL_StartTextInput(); snprintf(s->text_input_buf,32,"%d",s->filt_dkc); return; }
-        return;
-    }
-
-    // SPECTRA Window (multi-spectrum management)
-    if (s->win_spec.visible && point_in_rect(mx, my, s->win_spec.rect)) {
-        handled = 1;
-        int wx = s->win_spec.rect.x, wy = s->win_spec.rect.y;
-        if (my < wy + 30) {
-            if (mx > wx + s->win_spec.rect.w - 30) s->win_spec.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+44, 130, 26})) { s->multi_layout = !s->multi_layout; return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+155, wy+44, 130, 26})) { s->multi_ynorm = !s->multi_ynorm; return; }
-        if (point_in_rect(mx, my, (SDL_Rect){wx+15, wy+76, 270, 26})) { s->multi_indiv_int = !s->multi_indiv_int; return; }
-        for (int i = 0; i < s->n_spectra; i++) {
-            int rowy = wy + 124 + i*30;
-            if (point_in_rect(mx, my, (SDL_Rect){wx+150, rowy, 24, 22})) { s->spectra[i].voffset -= 0.05; return; }
-            if (point_in_rect(mx, my, (SDL_Rect){wx+176, rowy, 24, 22})) { s->spectra[i].voffset += 0.05; return; }
-            if (point_in_rect(mx, my, (SDL_Rect){wx+204, rowy, 34, 22})) { s->spectra[i].visible = !s->spectra[i].visible; return; }
-            if (point_in_rect(mx, my, (SDL_Rect){wx+244, rowy, 26, 22})) { s->pending_remove = i; return; }
-            if (point_in_rect(mx, my, (SDL_Rect){wx+12, rowy, 134, 22})) { s->pending_select = i; return; }
-        }
-        return;
-    }
-
-    // A. Broadening Window
-    if (s->win_br.visible && point_in_rect(mx, my, s->win_br.rect)) {
-        handled = 1;
-        // Header / Close logic
-        if (my < s->win_br.rect.y + 30) {
-            if (mx > s->win_br.rect.x + s->win_br.rect.w - 30) s->win_br.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        // Content logic
-        SDL_Rect r_an  = {s->win_br.rect.x + 15,  s->win_br.rect.y + 40, 125, 26};
-        SDL_Rect r_ka  = {s->win_br.rect.x + 150, s->win_br.rect.y + 40, 125, 26};
-        SDL_Rect r_f1  = {s->win_br.rect.x + 155, s->win_br.rect.y + 82, 75, 28}; // Lorentz / beta
-        SDL_Rect r_f2  = {s->win_br.rect.x + 155, s->win_br.rect.y + 122, 75, 28}; // Gauss / ceros
-        SDL_Rect r_f3  = {s->win_br.rect.x + 155, s->win_br.rect.y + 162, 75, 28}; // intrinsic (Kaiser only)
-        SDL_Rect r_tog = {s->win_br.rect.x + 50,  s->win_br.rect.y + 255, 200, 30};
-
-        if (point_in_rect(mx, my, r_an)) {
-            s->broaden_mode = 0; s->input_state = INPUT_NONE;
-        }
-        else if (point_in_rect(mx, my, r_ka)) {
-            s->broaden_mode = 1; s->input_state = INPUT_NONE;
-        }
-        else if (point_in_rect(mx, my, r_f1)) {
-            if (s->broaden_mode == 0) {
-                s->input_state = INPUT_GAMMA; SDL_StartTextInput();
-                snprintf(s->text_input_buf, 64, "%.2f", s->lorentz_gamma);
-            } else {
-                s->input_state = INPUT_KBETA; SDL_StartTextInput();
-                snprintf(s->text_input_buf, 64, "%.2f", s->kaiser_beta);
+            switch (t) {
+            case UI_TOOL_ASSIGN: {
+                clamp_assignment_scroll(s);
+                int rows = ui_as_rows(s);
+                int start_idx = s->assignments_scroll;
+                if (start_idx > s->n_assignments - rows) start_idx = s->n_assignments - rows;
+                if (start_idx < 0) start_idx = 0;
+                for (int i = 0; i < rows; i++) {
+                    int k = start_idx + i;
+                    if (k >= s->n_assignments) break;
+                    if (point_in_rect(mx, my, ui_as_row(w, i))) { s->selected_assignment = k; return; }
+                }
+                if (point_in_rect(mx, my, ui_as_save(s, w))) {
+                    FILE *fp = fopen("assignments.txt", "w");
+                    if (fp) {
+                        fprintf(fp, "# PredFreq(MHz)  Ju Kau Kcu M1u M2u M3u  Jl Kal Kcl M1l M2l M3l  ExpFreq(MHz) ExpInt\n");
+                        for (int k = 0; k < s->n_assignments; k++) {
+                            PredLine p2 = s->assignments[k].pred;
+                            fprintf(fp, "%12.4f  %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d   %12.4f %12.4e\n",
+                                    p2.freq_mhz,
+                                    p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u,
+                                    p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l,
+                                    s->assignments[k].exp_freq, s->assignments[k].exp_int);
+                        }
+                        fclose(fp);
+                        printf("Saved assignments.txt\n");
+                    }
+                    return;
+                }
+                if (point_in_rect(mx, my, ui_as_delete(s, w))) { delete_assignment(s, s->selected_assignment); return; }
+                return;
             }
-        }
-        else if (point_in_rect(mx, my, r_f2)) {
-            if (s->broaden_mode == 0) {
-                s->input_state = INPUT_GAUSS; SDL_StartTextInput();
-                snprintf(s->text_input_buf, 64, "%.2f", s->gauss_gamma);
-            } else {
-                s->input_state = INPUT_KCEROS; SDL_StartTextInput();
-                snprintf(s->text_input_buf, 64, "%d", s->kaiser_ceros);
-            }
-        }
-        else if (s->broaden_mode == 1 && point_in_rect(mx, my, r_f3)) {
-            s->input_state = INPUT_KINTR; SDL_StartTextInput();
-            snprintf(s->text_input_buf, 64, "%.3f", s->kaiser_intrinsic);
-        }
-        else if (point_in_rect(mx, my, r_tog)) {
-            s->broadening_active = !s->broadening_active;
-        }
-        return;
-    }
 
-    // B. Rolling Avg Window
-    if (s->win_avg.visible && point_in_rect(mx, my, s->win_avg.rect)) {
-        handled = 1;
-        if (my < s->win_avg.rect.y + 30) {
-            if (mx > s->win_avg.rect.x + s->win_avg.rect.w - 30) s->win_avg.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        SDL_Rect r_in = {s->win_avg.rect.x + 130, s->win_avg.rect.y + 60, 80, 28};
-        SDL_Rect r_tog = {s->win_avg.rect.x + 50, s->win_avg.rect.y + 120, 200, 30};
-        
-        if (point_in_rect(mx, my, r_in)) {
-            s->input_state = INPUT_AVG_PTS; SDL_StartTextInput();
-            snprintf(s->text_input_buf, 64, "%d", s->rolling_avg_window);
-        }
-        else if (point_in_rect(mx, my, r_tog)) {
-            s->rolling_avg_active = !s->rolling_avg_active;
-            if(s->rolling_avg_active) {
-                apply_rolling_average(s->raw_pts, s->smooth_pts, s->n_pts, s->rolling_avg_window);
-                s->current_pts = s->smooth_pts;
-            } else {
-                s->current_pts = s->raw_pts;
-            }
-        }
-        return;
-    }
+            case UI_TOOL_PEAKS:
+                if (point_in_rect(mx, my, ui_pf_sig(w))) {
+                    s->input_state = INPUT_PF_SIG; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%d", s->pf_sig_pts);
+                } else if (point_in_rect(mx, my, ui_pf_noise(w))) {
+                    s->input_state = INPUT_PF_NOISE; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%d", s->pf_noise_pts);
+                } else if (point_in_rect(mx, my, ui_pf_thresh(w))) {
+                    s->input_state = INPUT_PF_THRESH; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.1f", s->pf_thresh);
+                } else if (point_in_rect(mx, my, ui_pf_find(w))) {
+                    run_peak_finder(s->current_pts, s->n_pts, s->vxmin, s->vxmax,
+                                    s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh, s->peaks, &s->n_peaks);
+                } else if (point_in_rect(mx, my, ui_pf_export(w))) {
+                    FILE *fp = fopen("linelist.csv", "w");
+                    if (fp) {
+                        fprintf(fp, "Freq,Int\n");
+                        for (int k = 0; k < s->n_peaks; k++)
+                            fprintf(fp, "%.6f,%.6e\n", s->peaks[k].x, s->peaks[k].y);
+                        fclose(fp);
+                        printf("Saved linelist.csv\n");
+                    }
+                }
+                return;
 
-    // C. Peak Finder Window
-    if (s->win_pf.visible && point_in_rect(mx, my, s->win_pf.rect)) {
-        handled = 1;
-        if (my < s->win_pf.rect.y + 30) {
-            if (mx > s->win_pf.rect.x + s->win_pf.rect.w - 30) s->win_pf.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        
-        int wx = s->win_pf.rect.x, wy = s->win_pf.rect.y;
-        if(point_in_rect(mx, my, (SDL_Rect){wx+190, wy+50, 80, 26})) {
-            s->input_state = INPUT_PF_SIG; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%d", s->pf_sig_pts);
-        } else if(point_in_rect(mx, my, (SDL_Rect){wx+190, wy+90, 80, 26})) {
-            s->input_state = INPUT_PF_NOISE; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%d", s->pf_noise_pts);
-        } else if(point_in_rect(mx, my, (SDL_Rect){wx+190, wy+130, 80, 26})) {
-            s->input_state = INPUT_PF_THRESH; SDL_StartTextInput(); snprintf(s->text_input_buf, 32, "%.1f", s->pf_thresh);
-        } else if(point_in_rect(mx, my, (SDL_Rect){wx+50, wy+200, 200, 30})) {
-            run_peak_finder(s->current_pts, s->n_pts, s->vxmin, s->vxmax, s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh, s->peaks, &s->n_peaks);
-        } else if(point_in_rect(mx, my, (SDL_Rect){wx+50, wy+240, 200, 30})) {
-            FILE *fp = fopen("linelist.csv", "w");
-            if(fp) {
-                fprintf(fp, "Freq,Int\n");
-                for(int k=0; k<s->n_peaks; k++) fprintf(fp, "%.6f,%.6e\n", s->peaks[k].x, s->peaks[k].y);
-                fclose(fp);
-                printf("Saved linelist.csv\n");
-            }
-        }
-        return;
-    }
+            case UI_TOOL_AVG:
+                if (point_in_rect(mx, my, ui_avg_field(w))) {
+                    s->input_state = INPUT_AVG_PTS; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%d", s->rolling_avg_window);
+                } else if (point_in_rect(mx, my, ui_avg_toggle(w))) {
+                    s->rolling_avg_active = !s->rolling_avg_active;
+                    if (s->rolling_avg_active) {
+                        apply_rolling_average(s->raw_pts, s->smooth_pts, s->n_pts, s->rolling_avg_window);
+                        s->current_pts = s->smooth_pts;
+                    } else {
+                        s->current_pts = s->raw_pts;
+                    }
+                }
+                return;
 
-    // D. Assignments Window
-    if (s->win_as.visible && point_in_rect(mx, my, s->win_as.rect)) {
-        handled = 1;
-        if (my < s->win_as.rect.y + 30) {
-            if (mx > s->win_as.rect.x + s->win_as.rect.w - 30) s->win_as.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
-        clamp_assignment_scroll(s);
-        int start_idx = s->assignments_scroll;
-        int end_idx = start_idx + 13;
-        if (end_idx > s->n_assignments) end_idx = s->n_assignments;
-        for (int k = start_idx; k < end_idx; k++) {
-            int row_y = s->win_as.rect.y + 90 + (k - start_idx) * 20;
-            SDL_Rect row_rect = {s->win_as.rect.x + 15, row_y - 2, s->win_as.rect.w - 30, 18};
-            if (point_in_rect(mx, my, row_rect)) {
-                s->selected_assignment = k;
+            case UI_TOOL_BROAD: {
+                SDL_Rect mode = ui_br_mode(w);
+                if (point_in_rect(mx, my, mode)) {
+                    s->broaden_mode = (mx < mode.x + mode.w / 2) ? 0 : 1;
+                    s->input_state = INPUT_NONE;
+                    return;
+                }
+                if (point_in_rect(mx, my, ui_br_f1(w))) {
+                    if (s->broaden_mode == 0) {
+                        s->input_state = INPUT_GAMMA; SDL_StartTextInput();
+                        snprintf(s->text_input_buf, 32, "%.2f", s->lorentz_gamma);
+                    } else {
+                        s->input_state = INPUT_KBETA; SDL_StartTextInput();
+                        snprintf(s->text_input_buf, 32, "%.2f", s->kaiser_beta);
+                    }
+                } else if (point_in_rect(mx, my, ui_br_f2(w))) {
+                    if (s->broaden_mode == 0) {
+                        s->input_state = INPUT_GAUSS; SDL_StartTextInput();
+                        snprintf(s->text_input_buf, 32, "%.2f", s->gauss_gamma);
+                    } else {
+                        s->input_state = INPUT_KCEROS; SDL_StartTextInput();
+                        snprintf(s->text_input_buf, 32, "%d", s->kaiser_ceros);
+                    }
+                } else if (s->broaden_mode == 1 && point_in_rect(mx, my, ui_br_f3(w))) {
+                    s->input_state = INPUT_KINTR; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.3f", s->kaiser_intrinsic);
+                } else if (point_in_rect(mx, my, ui_br_toggle(w, s->broaden_mode == 1))) {
+                    s->broadening_active = !s->broadening_active;
+                }
+                return;
+            }
+
+            case UI_TOOL_CUT:
+                if (point_in_rect(mx, my, ui_cut_min(w))) {
+                    s->input_state = INPUT_PRED_MIN; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.1f", s->pred_min_log_int);
+                } else if (point_in_rect(mx, my, ui_cut_max(w))) {
+                    s->input_state = INPUT_PRED_MAX; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.1f", s->pred_max_log_int);
+                }
+                return;
+
+            case UI_TOOL_JUMP:
+                if (point_in_rect(mx, my, ui_jump_start(w))) {
+                    s->input_state = INPUT_JUMP_MIN; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.1f", s->vxmin);
+                } else if (point_in_rect(mx, my, ui_jump_end(w))) {
+                    s->input_state = INPUT_JUMP_MAX; SDL_StartTextInput();
+                    snprintf(s->text_input_buf, 32, "%.1f", s->vxmax);
+                }
+                return;
+
+            case UI_TOOL_FILTER: {
+                if (point_in_rect(mx, my, ui_filt_master(w))) { s->filter_active = !s->filter_active; return; }
+                for (int i = 0; i < 3; i++)
+                    if (point_in_rect(mx, my, ui_filt_mu(w, i))) { s->filt_mu[i] = !s->filt_mu[i]; return; }
+                for (int i = 0; i < 3; i++)
+                    if (point_in_rect(mx, my, ui_filt_br(w, i))) { s->filt_br[i] = !s->filt_br[i]; return; }
+                if (point_in_rect(mx, my, ui_filt_range(w))) { s->filt_use_range = !s->filt_use_range; return; }
+
+                int   qn_in[3][2] = {{INPUT_FILT_JMIN,  INPUT_FILT_JMAX},
+                                     {INPUT_FILT_KAMIN, INPUT_FILT_KAMAX},
+                                     {INPUT_FILT_KCMIN, INPUT_FILT_KCMAX}};
+                int  *qn_val[3][2] = {{&s->filt_j_min,  &s->filt_j_max},
+                                      {&s->filt_ka_min, &s->filt_ka_max},
+                                      {&s->filt_kc_min, &s->filt_kc_max}};
+                for (int i = 0; i < 3; i++) {
+                    for (int c = 0; c < 2; c++) {
+                        if (point_in_rect(mx, my, ui_filt_qn(w, i, c))) {
+                            s->input_state = qn_in[i][c]; SDL_StartTextInput();
+                            snprintf(s->text_input_buf, 32, "%d", *qn_val[i][c]);
+                            return;
+                        }
+                    }
+                }
+                if (point_in_rect(mx, my, ui_filt_jump(w))) { s->filt_use_delta = !s->filt_use_delta; return; }
+                int  d_in[3]  = {INPUT_FILT_DJ, INPUT_FILT_DKA, INPUT_FILT_DKC};
+                int *d_val[3] = {&s->filt_dj, &s->filt_dka, &s->filt_dkc};
+                for (int i = 0; i < 3; i++) {
+                    if (point_in_rect(mx, my, ui_filt_delta(w, i))) {
+                        s->input_state = d_in[i]; SDL_StartTextInput();
+                        snprintf(s->text_input_buf, 32, "%d", *d_val[i]);
+                        return;
+                    }
+                }
+                return;
+            }
+
+            case UI_TOOL_SPECTRA: {
+                SDL_Rect lay = ui_spec_layout(w), yn = ui_spec_ynorm(w);
+                if (point_in_rect(mx, my, lay)) { s->multi_layout = (mx >= lay.x + lay.w / 2); return; }
+                if (point_in_rect(mx, my, yn))  { s->multi_ynorm  = (mx >= yn.x + yn.w / 2);  return; }
+                if (point_in_rect(mx, my, ui_spec_indiv(w))) { s->multi_indiv_int = !s->multi_indiv_int; return; }
+                for (int i = 0; i < s->n_spectra; i++) {
+                    if (point_in_rect(mx, my, ui_spec_minus(w, i))) { s->spectra[i].voffset -= 0.05; return; }
+                    if (point_in_rect(mx, my, ui_spec_plus(w, i)))  { s->spectra[i].voffset += 0.05; return; }
+                    if (point_in_rect(mx, my, ui_spec_vis(w, i)))   { s->spectra[i].visible = !s->spectra[i].visible; return; }
+                    if (point_in_rect(mx, my, ui_spec_del(w, i)))   { s->pending_remove = i; return; }
+                    if (point_in_rect(mx, my, ui_spec_name(w, i)))  { s->pending_select = i; return; }
+                }
+                return;
+            }
+
+            default:
                 return;
             }
         }
-        if(point_in_rect(mx, my, (SDL_Rect){s->win_as.rect.x+10, s->win_as.rect.y+360, 100, 30})) {
-             FILE *fp = fopen("assignments.txt", "w"); 
-             if(fp) {
-                 fprintf(fp, "# PredFreq(MHz)  Ju Kau Kcu M1u M2u M3u  Jl Kal Kcl M1l M2l M3l  ExpFreq(MHz) ExpInt\n");
-                 for(int k=0; k<s->n_assignments; k++) {
-                     PredLine p = s->assignments[k].pred;
-                     fprintf(fp, "%12.4f  %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d   %12.4f %12.4e\n",
-                         p.freq_mhz,
-                         p.Ju, p.Kau, p.Kcu,p.M1u,p.M2u,p.M3u, p.Jl, p.Kal, p.Kcl,p.M1l,p.M2l,p.M3l,
-                         s->assignments[k].exp_freq, s->assignments[k].exp_int);
-                 }
-                 fclose(fp);
-                 printf("Saved assignments.txt\n");
-             }
-        }
-        if(point_in_rect(mx, my, (SDL_Rect){s->win_as.rect.x+120, s->win_as.rect.y+360, 110, 30})) {
-            delete_assignment(s, s->selected_assignment);
-        }
-        return;
     }
-    // --- NEW: Intensity Cut Window ---
-    if (s->win_cut.visible && point_in_rect(mx, my, s->win_cut.rect)) {
-        handled = 1;
-        // Header (Drag/Close)
-        if (my < s->win_cut.rect.y + 30) {
-            if (mx > s->win_cut.rect.x + s->win_cut.rect.w - 30) s->win_cut.visible = 0;
-            else { /* docked panel: not draggable */ }
-            return;
-        }
 
-        // Content (Input Fields) - Coordinates match view.c
-        SDL_Rect r_min = {s->win_cut.rect.x + 120, s->win_cut.rect.y + 50, 80, 28};
-        SDL_Rect r_max = {s->win_cut.rect.x + 120, s->win_cut.rect.y + 90, 80, 28};
-
-        if (point_in_rect(mx, my, r_min)) {
-            s->input_state = INPUT_PRED_MIN; 
-            SDL_StartTextInput(); 
-            snprintf(s->text_input_buf, 32, "%.1f", s->pred_min_log_int);
-        } 
-        else if (point_in_rect(mx, my, r_max)) {
-            s->input_state = INPUT_PRED_MAX; 
-            SDL_StartTextInput(); 
-            snprintf(s->text_input_buf, 32, "%.1f", s->pred_max_log_int);
-        }
-        return;
-    }
     // 2. Rail and command bar.
     //    Both rectangles come from ui_chrome.h, the same source the renderer
     //    draws from, so a visual change cannot move the click targets away.

@@ -40,6 +40,12 @@ void ui_text_v(SDL_Renderer *ren, int role, const char *txt, int x, SDL_Rect box
 
 // --- PRIMITIVES ---
 void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c);
+
+// Switch the renderer to device pixels for one shape, so anti-aliasing and
+// hairlines are computed on the real pixel grid instead of being stretched.
+void ui_dev_begin(SDL_Renderer *ren);
+void ui_dev_end(SDL_Renderer *ren);
+int  ui_dev(int logical_px);
 void ui_fill(SDL_Renderer *ren, SDL_Rect r, SDL_Color c);
 void ui_frame(SDL_Renderer *ren, SDL_Rect r, SDL_Color c);
 void ui_hline(SDL_Renderer *ren, int x0, int x1, int y, SDL_Color c);
@@ -54,6 +60,7 @@ void ui_vline(SDL_Renderer *ren, int x, int y0, int y1, SDL_Color c);
 int  ui_button(SDL_Renderer *ren, SDL_Rect r, const char *label, int icon, int kind,
                int active, int mx, int my, int mdown);
 void ui_field(SDL_Renderer *ren, SDL_Rect r, const char *label, const char *value, int focused);
+void ui_field_u(SDL_Renderer *ren, SDL_Rect r, const char *value, const char *unit, int focused);
 void ui_switch(SDL_Renderer *ren, SDL_Rect r, int on);
 int  ui_toggle_row(SDL_Renderer *ren, SDL_Rect r, const char *label, int on, int mx, int my);
 void ui_segmented(SDL_Renderer *ren, SDL_Rect r, const char *const *labels, int n, int sel);
