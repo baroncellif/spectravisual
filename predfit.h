@@ -5,6 +5,9 @@
 
 void predfit_init(AppState *state);
 int predfit_calculate(AppState *state);
+/* Generate one catalogue for every configured species and present their
+   concentration-weighted union as the prediction. */
+int predfit_calculate_all_species(AppState *state);
 int predfit_fit(AppState *state);
 int predfit_undo_last_fit(AppState *state);
 void predfit_publish_shared_state(AppState *state);

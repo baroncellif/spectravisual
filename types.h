@@ -13,6 +13,7 @@
 #define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
 #define MAX_PICKETT_PARAMS 128
 #define MAX_PICKETT_LABEL 128
+#define MAX_PICKETT_SPECIES 16
 
 // --- DATA STRUCTURES ---
 
@@ -82,6 +83,17 @@ typedef struct {
     char label[MAX_PICKETT_LABEL];
 } PickettParameter;
 
+/* A state/species shares the model Hamiltonian (.par/.var) with the other
+   states, but owns its spectroscopy-intensity input (.int) and abundance. */
+typedef struct {
+    char name[64];
+    int state_index;          /* v=0,1,... in .lin; parameter suffix 00,11... */
+    int predict_enabled;      /* include this species when Calculate is pressed */
+    double mu[3];
+    double temp_k;
+    double concentration;     /* relative intensity scale; used by future int-fit */
+} PickettSpecies;
+
 /* A reversible point saved immediately before an SPFIT run.  It remains in
    RAM only, so closing the app intentionally starts a fresh fit history. */
 typedef struct {
@@ -92,6 +104,10 @@ typedef struct {
     double line_error_mhz;
     int n_param;
     PickettParameter param[MAX_PICKETT_PARAMS];
+    char hamiltonian_line[256]; /* shared third line of .par/.var */
+    PickettSpecies species[MAX_PICKETT_SPECIES];
+    int n_species;
+    int active_species;
     int n_assignments;
     unsigned char assignment_fit_enabled[MAX_ASSIGNMENTS];
 } PredFitSnapshot;
@@ -104,6 +120,10 @@ typedef struct {
     double line_error_mhz;
     int n_param;
     PickettParameter param[MAX_PICKETT_PARAMS];
+    char hamiltonian_line[256]; /* shared third line of .par/.var */
+    PickettSpecies species[MAX_PICKETT_SPECIES];
+    int n_species;
+    int active_species;
     int advanced_open;
     int advanced_tab;
     SDL_Window *advanced_window;
@@ -111,13 +131,15 @@ typedef struct {
     Uint32 advanced_window_id;
     int advanced_edit_param;  // -1 while no cell in the Parameters table is edited
     int advanced_edit_col;    // 0=id, 1=value, 2=parameter uncertainty
+    int advanced_edit_species;
     int advanced_edit_replace;
     int advanced_edit_caret;
     int advanced_edit_anchor;
     int advanced_param_scroll;
     int advanced_line_scroll;
+    int advanced_species_scroll;
     int advanced_hover_line;
-    char advanced_edit_buf[64];
+    char advanced_edit_buf[256];
     PredFitSnapshot *history;
     int history_count;
     int history_capacity;
