@@ -4,6 +4,7 @@
 #include "ui_chrome.h"
 #include "ui_panels.h"
 #include "settings.h"
+#include "plotgpu.h"
 #include "algorithms.h"
 #include <math.h>
 #include <stdio.h>
@@ -331,6 +332,7 @@ static SDL_FPoint *plot_buf(int n) {
 // leaves in the back buffer - which is how the export ended up saving a stale
 // frame.
 void render_app_frame(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
+    plotgpu_begin_frame(ren, ui_scale());
     // 1. Clear Screen
     SDL_SetRenderDrawColor(ren, COL_BG.r, COL_BG.g, COL_BG.b, 255);
     SDL_RenderClear(ren);
@@ -351,6 +353,11 @@ void render_app_frame(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout
     } else {
         draw_onboarding(ren, font, state, l);
     }
+
+    /* The queued spectrum geometry is drawn here: after the panes, so it sits on
+       their grid, and before the overlays and the panels, which must stay on
+       top of it. */
+    plotgpu_flush(ren);
 
     // 3. Draw Selection Rect (if dragging)
     if(state->data_loaded && (state->selecting_left || state->selecting_right)) {
@@ -445,15 +452,21 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         int n_samples = end_idx - start_idx + 1;
         float trace_w = (float)state->settings.trace_width;
 
-        if (n_samples > 2 * l->exp_w) {
-            /* One entry and one exit point per screen column, chained into a
-               single polyline. Drawing each column as its own bar left gaps
-               wherever two neighbouring columns did not overlap in y, which is
-               why the trace looked chopped up at intermediate zoom. */
-            int cap = 2 * (l->exp_w + 2);
+        /* Reduced on the DEVICE pixel grid, not the logical one: a Retina pane
+           is 2000 columns wide, and reducing to its 1000 logical columns threw
+           away half the horizontal resolution before drawing anything. */
+        double dev = ui_scale();
+        int dev_cols = (int)(l->exp_w * dev);
+        if (dev_cols < 1) dev_cols = 1;
+
+        if (n_samples > dev_cols) {
+            /* One entry and one exit point per column, chained into a single
+               polyline: drawing each column as its own bar left gaps wherever
+               two neighbours did not overlap in y. */
+            int cap = 2 * (dev_cols + 2);
             SDL_FPoint *buf = plot_buf(cap);
             int n = 0, col = INT_MIN;
-            double col_min = 0, col_max = 0, prev_y = 0;
+            double col_min = 0, col_max = 0, prev_min = 0, prev_max = 0;
             for (int i = start_idx; i <= end_idx + 1; i++) {
                 int last = (i > end_idx);
                 double px = 0, py = 0;
@@ -462,18 +475,19 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
                     px = l->exp_x + (sp->current_pts[i].x + sp->exp_offset - state->vxmin) * sx;
                     double f = (sp->current_pts[i].y - ymn)/(ymx - ymn) * gain;
                     py = area_y + (1.0 - f) * area_h - voff_px;
-                    c = (int)px;
+                    c = (int)(px * dev);
                 }
                 if ((last || c != col) && col != INT_MIN && buf && n + 2 <= cap) {
-                    /* enter the column from the side the previous one left on,
-                       so the ribbon stays continuous and keeps its shape */
-                    double first = col_min, second = col_max;
-                    if (n > 0 && fabs(col_max - prev_y) < fabs(col_min - prev_y)) {
-                        first = col_max; second = col_min;
+                    /* Touch the previous column, so the envelope never opens a
+                       gap where two neighbours do not overlap in y. */
+                    if (n > 0) {
+                        if (col_min > prev_max) col_min = prev_max;
+                        else if (col_max < prev_min) col_max = prev_min;
                     }
-                    buf[n++] = (SDL_FPoint){(float)col + 0.5f, (float)first};
-                    buf[n++] = (SDL_FPoint){(float)col + 0.5f, (float)second};
-                    prev_y = second;
+                    float cx = (float)((col + 0.5) / dev);
+                    buf[n++] = (SDL_FPoint){cx, (float)col_min};
+                    buf[n++] = (SDL_FPoint){cx, (float)col_max};
+                    prev_min = col_min; prev_max = col_max;
                 }
                 if (last) break;
                 if (c != col) { col = c; col_min = col_max = py; }
@@ -482,7 +496,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
                     if (py > col_max) col_max = py;
                 }
             }
-            if (buf) ui_plot_polyline(ren, buf, n, trace_w, trace_col);
+            if (buf) ui_plot_columns(ren, buf, n, trace_w, trace_col);
         } else {
             SDL_FPoint *buf = plot_buf(n_samples);
             int n = 0;

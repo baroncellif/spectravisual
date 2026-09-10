@@ -4,6 +4,19 @@ TARGET = spectravisual
 
 # --- Source and Object Files ---
 SRCS = main.c view.c controller.c algorithms.c layout.c loader.c intensity_fit.c predfit.c settings.c ui_icons.c
+
+# Dear ImGui draws the spectrum lines; ImPlot is compiled in and ready for the
+# panes themselves, which still use the application's own axes and decimation.
+IMGUI_DIR  = third_party/imgui
+IMPLOT_DIR = third_party/implot
+CXXSRCS = plotgpu.cpp \
+          $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_draw.cpp \
+          $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp \
+          $(IMGUI_DIR)/backends/imgui_impl_sdlrenderer2.cpp \
+          $(IMPLOT_DIR)/implot.cpp $(IMPLOT_DIR)/implot_items.cpp
+CXXOBJS = $(CXXSRCS:.cpp=.o)
+CXX = c++
+CXXFLAGS = -O2 -g -I$(IMGUI_DIR) -I$(IMGUI_DIR)/backends -I$(IMPLOT_DIR)
 OBJS = $(SRCS:.c=.o)
 
 # --- Header dependencies ---
@@ -47,8 +60,8 @@ SDL_LDFLAGS := $(shell sdl2-config --libs) -lSDL2_ttf
 all: $(TARGET)
 
 # Link the object files into the executable
-$(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET) $(SDL_LDFLAGS) $(LDFLAGS)
+$(TARGET): $(OBJS) $(CXXOBJS)
+	$(CXX) $(OBJS) $(CXXOBJS) -o $(TARGET) $(SDL_LDFLAGS) $(LDFLAGS)
 	codesign --force --sign - $(TARGET)
 	@echo "Build successful! Run with: ./$(TARGET) exp.csv pred.cat"
 
@@ -56,6 +69,9 @@ $(TARGET): $(OBJS)
 # This generic rule works for all .c files in the list
 %.o: %.c $(HDRS)
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) -c $< -o $@
+
+%.o: %.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -c $< -o $@
 
 # Clean up build files
 clean:

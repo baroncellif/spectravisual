@@ -14,6 +14,7 @@
 #include "controller.h"
 #include "predfit.h"
 #include "settings.h"
+#include "plotgpu.h"
 
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
@@ -339,6 +340,7 @@ int main(int argc, char *argv[])
         SDL_RenderSetScale(ren, ui_dpi, ui_dpi);
     }
     if (!ui_fonts_init(ui_dpi)) { fprintf(stderr, "No font found.\n"); return 1; }
+    if (!plotgpu_init(ren)) fprintf(stderr, "Plot renderer unavailable; spectra will not be drawn.\n");
     TTF_Font *font = ui_font(UI_FONT_SANS);
 
     if (pred_arg) set_predictions(&state, pred_arg);
@@ -444,6 +446,7 @@ int main(int argc, char *argv[])
 
     predfit_save_session(&state);
     free_dataset(&state);
+    plotgpu_shutdown();
     settings_dispose(&state);
     predfit_dispose(&state);
     ui_fonts_close();

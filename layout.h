@@ -56,6 +56,8 @@ void ui_thick_line(SDL_Renderer *ren, int x1, int y1, int x2, int y2, int width)
 // resolution instead of being a doubled one-pixel line.
 void ui_plot_polyline(SDL_Renderer *ren, const SDL_FPoint *pts, int n, float width, SDL_Color c);
 void ui_plot_segments(SDL_Renderer *ren, const SDL_FPoint *pts, int n_points, float width, SDL_Color c);
+// The dense min/max envelope, drawn crisp on the pixel grid.
+void ui_plot_columns(SDL_Renderer *ren, const SDL_FPoint *pts, int n_points, float width, SDL_Color c);
 void ui_vline(SDL_Renderer *ren, int x, int y0, int y1, SDL_Color c);
 
 // --- CONTROLS ---

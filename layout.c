@@ -2,6 +2,7 @@
 #include "ui_theme.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
+#include "plotgpu.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -319,169 +320,23 @@ void ui_frame(SDL_Renderer *ren, SDL_Rect r, SDL_Color c) {
  *  both sides, which is what anti-aliases the edge.  One draw call replaces
  *  thousands.
  * ------------------------------------------------------------------------- */
-static SDL_Vertex *g_verts = NULL;
-static int         g_vert_cap = 0;
-static int         g_vert_n = 0;
-
-#define UI_MAX_VERTS 600000
-
-static int verts_reserve(int extra) {
-    if (g_vert_n + extra > UI_MAX_VERTS) return 0;
-    if (g_vert_n + extra <= g_vert_cap) return 1;
-    int cap = g_vert_cap ? g_vert_cap * 2 : 4096;
-    while (cap < g_vert_n + extra) cap *= 2;
-    SDL_Vertex *grown = (SDL_Vertex *)realloc(g_verts, (size_t)cap * sizeof(SDL_Vertex));
-    if (!grown) return 0;
-    g_verts = grown;
-    g_vert_cap = cap;
-    return 1;
-}
-
-static void vert(float x, float y, SDL_Color c) {
-    g_verts[g_vert_n].position.x = x;
-    g_verts[g_vert_n].position.y = y;
-    g_verts[g_vert_n].color = c;
-    g_verts[g_vert_n].tex_coord.x = 0.0f;
-    g_verts[g_vert_n].tex_coord.y = 0.0f;
-    g_vert_n++;
-}
-
-static void quad(float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy,
-                 SDL_Color c1, SDL_Color c2) {
-    /* a-b along one edge, c-d along the other; c1 is the colour of the a-b
-       edge and c2 of the c-d edge, which is how the fringe fades out. */
-    vert(ax, ay, c1); vert(bx, by, c1); vert(cx, cy, c2);
-    vert(bx, by, c1); vert(dx, dy, c2); vert(cx, cy, c2);
-}
-
-/* One segment: core quad plus the two fading fringes. */
-static void emit_segment(float x0, float y0, float x1, float y1, float half, SDL_Color c) {
-    float dx = x1 - x0, dy = y1 - y0;
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len < 1e-6f) return;
-    float nx = -dy / len, ny = dx / len;         /* unit normal */
-    float FRINGE = 1.0f;                         /* device pixels of soft edge */
-    if (half < FRINGE) FRINGE = half > 0.0f ? half : 0.5f;
-    SDL_Color clear = c; clear.a = 0;
-
-    if (!verts_reserve(18)) return;
-    quad(x0 + nx * half, y0 + ny * half, x1 + nx * half, y1 + ny * half,
-         x0 - nx * half, y0 - ny * half, x1 - nx * half, y1 - ny * half, c, c);
-    quad(x0 + nx * (half + FRINGE), y0 + ny * (half + FRINGE),
-         x1 + nx * (half + FRINGE), y1 + ny * (half + FRINGE),
-         x0 + nx * half, y0 + ny * half, x1 + nx * half, y1 + ny * half, clear, c);
-    quad(x0 - nx * half, y0 - ny * half, x1 - nx * half, y1 - ny * half,
-         x0 - nx * (half + FRINGE), y0 - ny * (half + FRINGE),
-         x1 - nx * (half + FRINGE), y1 - ny * (half + FRINGE), c, clear);
-}
-
-static void flush_verts(SDL_Renderer *ren) {
-    if (g_vert_n > 0) SDL_RenderGeometry(ren, NULL, g_verts, g_vert_n, NULL, 0);
-    g_vert_n = 0;
-}
-
-/* Polyline through `n` points given in LOGICAL coordinates; `width` is in
-   logical pixels too, so callers keep working in the layout's units. */
-/* The width the caller asks for is the width the line ends up having: the soft
-   edge is taken OUT of it, not added around it.  Adding it made a one-pixel
-   trace two pixels wide, which is why 1 px looked too heavy. */
-static float half_width(float width, float scale, float *fringe) {
-    float total = width * scale;                 /* device pixels, edge included */
-    float f = 1.0f;
-    if (total < 2.0f * f) f = total * 0.5f;
-    if (f < 0.35f) f = 0.35f;
-    float core = total - 2.0f * f;
-    if (core < 0.0f) core = 0.0f;
-    *fringe = f;
-    return core * 0.5f;
-}
-
-/* Per-vertex offsets of the polyline's two edges.  Sharing them between
-   neighbouring quads is what makes the line one continuous ribbon: quads built
-   from each segment's own normal overlap at every turn, and the overlap of a
-   half-transparent fringe on the segment next to it is visible as a bead. */
-static SDL_FPoint *g_off = NULL;
-static int         g_off_cap = 0;
-
-static int offsets_reserve(int n) {
-    if (n <= g_off_cap) return 1;
-    int cap = g_off_cap ? g_off_cap : 1024;
-    while (cap < n) cap *= 2;
-    SDL_FPoint *grown = (SDL_FPoint *)realloc(g_off, (size_t)cap * sizeof(SDL_FPoint));
-    if (!grown) return 0;
-    g_off = grown;
-    g_off_cap = cap;
-    return 1;
-}
-
+/* The polyline of a spectrum is handed to Dear ImGui's draw list: building
+   anti-aliased triangles with correct joins and a correct width is exactly the
+   part that was written here by hand and kept being subtly wrong. Everything
+   else on screen is still drawn by this file. */
 void ui_plot_polyline(SDL_Renderer *ren, const SDL_FPoint *pts, int n, float width, SDL_Color c) {
-    if (n < 2) return;
-    if (n == 2) { ui_plot_segments(ren, pts, 2, width, c); return; }
-    float s = ui_scale();
-    float FRINGE = 1.0f;
-    float half = half_width(width, s, &FRINGE);
-    if (!offsets_reserve(n)) return;
-
-    /* miter normal at each vertex, clamped so a hairpin does not shoot out */
-    for (int i = 0; i < n; i++) {
-        float px = pts[i].x * s, py = pts[i].y * s;
-        float ax = px, ay = py, bx = px, by = py;
-        if (i > 0)     { ax = pts[i-1].x * s; ay = pts[i-1].y * s; }
-        if (i < n - 1) { bx = pts[i+1].x * s; by = pts[i+1].y * s; }
-        float d1x = px - ax, d1y = py - ay, l1 = sqrtf(d1x*d1x + d1y*d1y);
-        float d2x = bx - px, d2y = by - py, l2 = sqrtf(d2x*d2x + d2y*d2y);
-        if (l1 > 1e-6f) { d1x /= l1; d1y /= l1; } else { d1x = d2x; d1y = d2y; }
-        if (l2 > 1e-6f) { d2x /= l2; d2y /= l2; } else { d2x = d1x; d2y = d1y; }
-        float nx = -(d1y + d2y), ny = (d1x + d2x);
-        float ln = sqrtf(nx*nx + ny*ny);
-        if (ln < 1e-6f) { nx = -d2y; ny = d2x; ln = 1.0f; }
-        nx /= ln; ny /= ln;
-        float scale = nx * -d2y + ny * d2x;      /* cos of the half-angle */
-        /* Miter limit.  Where the line doubles back on itself - the tip of a
-           peak, which in a decimated trace is every column - an unlimited miter
-           shoots out well past the vertex and draws a spike above the peak. */
-        if (scale < 0.75f) scale = 0.75f;
-        g_off[i].x = nx / scale;
-        g_off[i].y = ny / scale;
-    }
-
-    ui_dev_begin(ren);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_Color clear = c; clear.a = 0;
-    g_vert_n = 0;
-    for (int i = 0; i + 1 < n; i++) {
-        float x0 = pts[i].x * s,   y0 = pts[i].y * s;
-        float x1 = pts[i+1].x * s, y1 = pts[i+1].y * s;
-        float o0x = g_off[i].x,   o0y = g_off[i].y;
-        float o1x = g_off[i+1].x, o1y = g_off[i+1].y;
-        if (!verts_reserve(18)) break;
-        quad(x0 + o0x*half, y0 + o0y*half, x1 + o1x*half, y1 + o1y*half,
-             x0 - o0x*half, y0 - o0y*half, x1 - o1x*half, y1 - o1y*half, c, c);
-        quad(x0 + o0x*(half+FRINGE), y0 + o0y*(half+FRINGE),
-             x1 + o1x*(half+FRINGE), y1 + o1y*(half+FRINGE),
-             x0 + o0x*half, y0 + o0y*half, x1 + o1x*half, y1 + o1y*half, clear, c);
-        quad(x0 - o0x*half, y0 - o0y*half, x1 - o1x*half, y1 - o1y*half,
-             x0 - o0x*(half+FRINGE), y0 - o0y*(half+FRINGE),
-             x1 - o1x*(half+FRINGE), y1 - o1y*(half+FRINGE), c, clear);
-    }
-    flush_verts(ren);
-    ui_dev_end(ren);
+    (void)ren;
+    plotgpu_polyline(pts, n, c, width);
 }
 
-/* Independent segments: pts[0]-pts[1], pts[2]-pts[3], ... (predicted sticks). */
 void ui_plot_segments(SDL_Renderer *ren, const SDL_FPoint *pts, int n_points, float width, SDL_Color c) {
-    if (n_points < 2) return;
-    float s = ui_scale();
-    float fringe = 1.0f;
-    float half = half_width(width, s, &fringe);
+    (void)ren;
+    plotgpu_segments(pts, n_points, c, width);
+}
 
-    ui_dev_begin(ren);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    g_vert_n = 0;
-    for (int i = 0; i + 1 < n_points; i += 2)
-        emit_segment(pts[i].x * s, pts[i].y * s, pts[i+1].x * s, pts[i+1].y * s, half, c);
-    flush_verts(ren);
-    ui_dev_end(ren);
+void ui_plot_columns(SDL_Renderer *ren, const SDL_FPoint *pts, int n_points, float width, SDL_Color c) {
+    (void)ren;
+    plotgpu_columns(pts, n_points, c, width);
 }
 
 /* SDL draws one-pixel lines. A thicker trace is drawn as parallel copies,
