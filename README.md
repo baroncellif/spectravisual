@@ -83,10 +83,9 @@ Prediction handling
 	•	Click on a predicted line: select a single transition
 	•	Ctrl / Cmd + click: select multiple predicted lines
 	•	m : apply Lorentzian broadening to predicted lines
-	•	d : open the Dipole moments panel
+	•	d : open the Intensity analysis panel
 	•	C : open a window to filter predicted transitions by intensity (log10(Int))
-	•	T cat and T rot: the fields beside Offset rescale Pickett .cat line intensities between the catalog-generation temperature and a requested LTE rotational temperature (K). A .cat does not record its generation temperature, so both must be entered manually. The rescaling uses ELO and the DR rigid-rotor partition-function approximation; it changes relative predicted intensities, not the experimental trace's absolute scale.
-	•	Dipole moments: enter the a/b/c dipoles used for the catalog (`mu cat`) and replacement values (`mu red`), in Debye. For each supplied component, the app recovers its line strength from the catalog intensity at T cat and predicts the intensity at T rot using the replacement dipole.
+	•	Intensity analysis: enter T cat/T rot plus a/b/c catalog and replacement dipoles, in Debye. Its Relative intensity fit section integrates the active trace around the assigned peaks. Select independently whether to fit T rot and which a/b/c dipoles to correct; the global scale is always fitted because experimental units are arbitrary. Export fit writes `intensity_fit.ifit` with all accepted and rejected lines.
 
 Analysis tools
 	•	f : select a frequency range to visualize
@@ -140,6 +139,16 @@ Handles data loading and parsing.
 	•	Reads spectral data from files
 	•	Parses input formats
 	•	Prepares data structures for rendering
+
+⸻
+
+intensity_fit.c
+
+Performs the single-species relative-intensity fit used by the Intensity analysis panel.
+	•	Integrates experimental assigned lines over a selectable local window
+	•	Fits the arbitrary global intensity scale and optionally rotational temperature
+	•	Rejects inconsistent/blended lines robustly and reports every decision
+	•	Fits dipole components only relative to one reference, because absolute dipole scale is inseparable from concentration/instrument gain
 
 ⸻
 

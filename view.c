@@ -1179,29 +1179,78 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         ui_toggle_row(ren, ui_br_toggle(w, kaiser), "Simulated profile", state->broadening_active, mx, my);
     }
 
-    // 5. DIPOLE MOMENTS
+    // 5. INTENSITY ANALYSIS
     if (state->win_dip.visible) {
         SDL_RenderSetClipRect(ren, &state->win_dip.clip);
         draw_inspector_section(ren, &state->win_dip, UI_ICON_DIPOLE, mx, my);
         SDL_Rect w = state->win_dip.rect;
+
+        ui_text(ren, UI_FONT_SANS_SM, "TEMPERATURES", ui_p_row(w, 0).x, ui_p_row(w, 0).y + 8, UI_ACCENT_TEXT);
+        field_val(state, INPUT_CAT_TEMP, buf, sizeof(buf), "%.2f", state->cat_temp_k);
+        panel_field(ren, state, w, "T cat", ui_int_cat_temp(w), INPUT_CAT_TEMP, buf, "K");
+        field_val(state, INPUT_ROT_TEMP, buf, sizeof(buf), "%.2f", state->rot_temp_k);
+        panel_field(ren, state, w, "T rot", ui_int_rot_temp(w), INPUT_ROT_TEMP, buf, "K");
+
+        ui_text(ren, UI_FONT_SANS_SM, "DIPOLE MOMENTS", ui_p_row(w, 3).x, ui_p_row(w, 3).y + 8, UI_ACCENT_TEXT);
         SDL_Rect cat = ui_dip_field(w, 0, 0), red = ui_dip_field(w, 0, 1);
         ui_text(ren, UI_FONT_SANS_SM, "mu cat", cat.x + (cat.w - ui_text_w(UI_FONT_SANS_SM, "mu cat")) / 2,
-                ui_p_row(w, 0).y + 8, UI_FAINT);
+                ui_p_row(w, 4).y + 8, UI_FAINT);
         ui_text(ren, UI_FONT_SANS_SM, "mu red", red.x + (red.w - ui_text_w(UI_FONT_SANS_SM, "mu red")) / 2,
-                ui_p_row(w, 0).y + 8, UI_ACCENT_TEXT);
+                ui_p_row(w, 4).y + 8, UI_ACCENT_TEXT);
 
         static const char *component[3] = {"a", "b", "c"};
         static const int cat_input[3] = {INPUT_MUCAT_A, INPUT_MUCAT_B, INPUT_MUCAT_C};
         static const int red_input[3] = {INPUT_MURED_A, INPUT_MURED_B, INPUT_MURED_C};
         for (int i = 0; i < 3; i++) {
             SDL_Rect cat_f = ui_dip_field(w, i, 0), red_f = ui_dip_field(w, i, 1);
-            ui_text_v(ren, UI_FONT_SANS, component[i], ui_p_row(w, 1 + i).x + 4, cat_f, UI_DIM);
+            ui_text_v(ren, UI_FONT_SANS, component[i], ui_p_row(w, 5 + i).x + 4, cat_f, UI_DIM);
             field_val(state, cat_input[i], buf, sizeof(buf), "%.4f", state->dipole_cat[i]);
             draw_field(ren, state, cat_f, NULL, buf, "D", cat_input[i]);
             field_val(state, red_input[i], buf, sizeof(buf), "%.4f", state->dipole_red[i]);
             draw_field(ren, state, red_f, NULL, buf, "D", red_input[i]);
         }
-        panel_hint(ren, ui_p_row(w, 4), "Set T cat/T rot, then mu cat and mu red.");
+        panel_hint(ren, ui_p_row(w, 8), "Set T cat/T rot, then mu cat and mu red.");
+
+        ui_text(ren, UI_FONT_SANS_SM, "RELATIVE INTENSITY FIT", ui_p_row(w, 9).x,
+                ui_p_row(w, 9).y + 8, UI_ACCENT_TEXT);
+        field_val(state, INPUT_FIT_WINDOW, buf, sizeof(buf), "%.4f", state->intfit_half_window_mhz);
+        panel_field(ren, state, w, "Area half-window", ui_fit_window(w), INPUT_FIT_WINDOW, buf, "MHz");
+        ui_toggle_row(ren, ui_fit_temperature(w), "Fit T rot", state->intfit_fit_temperature, mx, my);
+        ui_text_v(ren, UI_FONT_SANS, "Fit dipoles", ui_p_row(w, 12).x, ui_p_row(w, 12), UI_DIM);
+        static const char *dipole_label[3] = {"mu a", "mu b", "mu c"};
+        for (int i = 0; i < 3; i++)
+            ui_button(ren, ui_fit_dipole(w, i), dipole_label[i], -1, UI_BTN_QUIET,
+                      state->intfit_fit_dipole[i], mx, my, m_down);
+        ui_button(ren, ui_fit_run(w), "Run fit", -1, UI_BTN_PRIMARY, 0, mx, my, m_down);
+        ui_button(ren, ui_fit_export(w), "Export fit", UI_ICON_EXPORT, UI_BTN_QUIET, 0, mx, my, m_down);
+        if (state->intfit_has_result) {
+            ui_text(ren, UI_FONT_SANS_SM, "FIT RESULT", ui_p_row(w, 14).x,
+                    ui_p_row(w, 14).y + 8, UI_ACCENT_TEXT);
+            snprintf(buf, sizeof(buf), "T rot  %.2f K (%s)    scale  %.4g", state->rot_temp_k,
+                     state->intfit_fit_temperature ? "fitted" : "fixed", state->intfit_scale);
+            panel_hint(ren, ui_p_row(w, 15), buf);
+            snprintf(buf, sizeof(buf), "Lines  %d/%d used;  %d rejected;  RMS  %.3g",
+                     state->intfit_n_used, state->intfit_n_candidate,
+                     state->intfit_n_rejected, state->intfit_log_rms);
+            panel_hint(ren, ui_p_row(w, 16), buf);
+            snprintf(buf, sizeof(buf), "mu red / D:  a %.4g   b %.4g   c %.4g",
+                     state->dipole_red[0] != 0.0 ? state->dipole_red[0] : state->dipole_cat[0],
+                     state->dipole_red[1] != 0.0 ? state->dipole_red[1] : state->dipole_cat[1],
+                     state->dipole_red[2] != 0.0 ? state->dipole_red[2] : state->dipole_cat[2]);
+            panel_hint(ren, ui_p_row(w, 17), buf);
+            if (state->intfit_reference_component >= 0) {
+                static const char comp[] = {'a', 'b', 'c'};
+                snprintf(buf, sizeof(buf), "mu_%c reference; factors a %.3g  b %.3g  c %.3g",
+                         comp[state->intfit_reference_component], state->intfit_component_scale[0],
+                         state->intfit_component_scale[1], state->intfit_component_scale[2]);
+                panel_hint(ren, ui_p_row(w, 18), buf);
+            } else panel_hint(ren, ui_p_row(w, 18), "No relative dipole correction was determined.");
+        } else {
+            panel_hint(ren, ui_p_row(w, 15), "Uses areas around assigned experimental peaks.");
+            panel_hint(ren, ui_p_row(w, 16), "Use isolated lines; blends are rejected automatically.");
+        }
+        panel_hint(ren, ui_p_row(w, 19), state->intfit_message[0] ? state->intfit_message :
+                   "The global scale is always fitted (experimental units are arbitrary).");
     }
 
     // 6. INTENSITY RANGE

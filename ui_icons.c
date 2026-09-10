@@ -114,7 +114,7 @@ const char *ui_tool_title(int tool) {
         case UI_TOOL_PEAKS:   return "Peak finder";
         case UI_TOOL_AVG:     return "Rolling average";
         case UI_TOOL_BROAD:   return "Broadening";
-        case UI_TOOL_DIP:     return "Dipole moments";
+        case UI_TOOL_DIP:     return "Intensity analysis";
         case UI_TOOL_CUT:     return "Intensity range";
         case UI_TOOL_FILTER:  return "Transition filter";
         case UI_TOOL_JUMP:    return "Frequency jump";

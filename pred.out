@@ -1,0 +1,34 @@
+MoleculeName                                            Thu Sep 10 10:42:06 2026
+ID=    91 QSPINROT=       504.7740 MIN, MAX QN=   0  40
+MIN.LOG.STR=    -8.000 MIN.LOG.STR(FRQ/300GHZ)**2=    -8.000 MAX FREQ       18.0 GHZ, TEMP=     1.00
+     1    001    0.7472227      / a dipole moment
+     2    002    0.212373      / b dipole moment
+     3    003    -1.141963      / c dipole moment
+.VAR FILE TITLE : optimization of 1 ft42 CREST structure                 Mon Feb  9 14:25:06 2026
+                              PARAMETERS - A.PRIORI ERROR 
+     1      1         10000   1.1513604174731E+03    3.238521E-04   A  /
+     2      2         20000   3.1615111266308E+02    8.739823E-05   B  /
+     3      3         30000   3.1317423677891E+02    8.941343E-05   C  /
+3 parameters read, 3 independent parameters
+IQNFMT = 303
+ENERGY SORT OF WANG SUB-BLOCKS
+PROLATE ROTOR
+    V KMIN KMAX WTPL WTMN ESYMWT NSYM SPINS
+    0    0   40    1    1     99    2
+BLOCK - WT - SYM - V - TSP - N  -  other quanta  (rel. to F=0 )
+    1    1    x    0    0
+    2    1    c    0    0
+    3    1    b    0    0
+    4    1    a    0    0
+Maximum Dimension for Hamiltonian = 21
+INITIAL Q =       504.7740, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   2312
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      1.000       501.6555    2.7004

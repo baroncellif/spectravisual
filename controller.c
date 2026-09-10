@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "algorithms.h"
 #include "loader.h"
+#include "intensity_fit.h"
 #include "layout.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
@@ -343,6 +344,16 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             case UI_TOOL_DIP: {
                 static const int cat_input[3] = {INPUT_MUCAT_A, INPUT_MUCAT_B, INPUT_MUCAT_C};
                 static const int red_input[3] = {INPUT_MURED_A, INPUT_MURED_B, INPUT_MURED_C};
+                if (point_in_rect(mx, my, ui_int_cat_temp(w))) {
+                    snprintf(s->text_input_buf, 32, "%.2f", s->cat_temp_k);
+                    input_focus(s, INPUT_CAT_TEMP, mx);
+                    return;
+                }
+                if (point_in_rect(mx, my, ui_int_rot_temp(w))) {
+                    snprintf(s->text_input_buf, 32, "%.2f", s->rot_temp_k);
+                    input_focus(s, INPUT_ROT_TEMP, mx);
+                    return;
+                }
                 for (int i = 0; i < 3; i++) {
                     if (point_in_rect(mx, my, ui_dip_field(w, i, 0))) {
                         snprintf(s->text_input_buf, 32, "%.4f", s->dipole_cat[i]);
@@ -354,6 +365,37 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                         input_focus(s, red_input[i], mx);
                         return;
                     }
+                }
+                if (point_in_rect(mx, my, ui_fit_window(w))) {
+                    snprintf(s->text_input_buf, 32, "%.4f", s->intfit_half_window_mhz);
+                    input_focus(s, INPUT_FIT_WINDOW, mx);
+                    return;
+                }
+                if (point_in_rect(mx, my, ui_fit_temperature(w))) {
+                    s->intfit_fit_temperature = !s->intfit_fit_temperature;
+                    return;
+                }
+                for (int i = 0; i < 3; i++) {
+                    if (point_in_rect(mx, my, ui_fit_dipole(w, i))) {
+                        s->intfit_fit_dipole[i] = !s->intfit_fit_dipole[i];
+                        return;
+                    }
+                }
+                if (point_in_rect(mx, my, ui_fit_run(w))) {
+                    intensity_fit_run(s);
+                    if (s->pred_lines && s->n_pred > 0)
+                        rescale_predicted_intensities(s->pred_lines, s->n_pred,
+                                                      s->cat_temp_k, s->rot_temp_k,
+                                                      s->dipole_cat, s->dipole_red,
+                                                      &s->pred_global_max);
+                    return;
+                }
+                if (point_in_rect(mx, my, ui_fit_export(w))) {
+                    if (!intensity_fit_export(s, "intensity_fit.ifit"))
+                        snprintf(s->intfit_message, sizeof(s->intfit_message), "Run a fit before exporting.");
+                    else
+                        snprintf(s->intfit_message, sizeof(s->intfit_message), "Saved intensity_fit.ifit");
+                    return;
                 }
                 return;
             }
@@ -819,6 +861,10 @@ static void commit_text_input(AppState *s) {
                                           s->cat_temp_k, s->rot_temp_k,
                                           s->dipole_cat, s->dipole_red,
                                           &s->pred_global_max);
+    }
+    else if (s->input_state == INPUT_FIT_WINDOW) {
+        double width = atof(s->text_input_buf);
+        if (isfinite(width) && width > 0.0) s->intfit_half_window_mhz = width;
     }
     else if (s->input_state == INPUT_FILT_JMIN)  s->filt_j_min  = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_FILT_JMAX)  s->filt_j_max  = atoi(s->text_input_buf);

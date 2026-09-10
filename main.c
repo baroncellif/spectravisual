@@ -17,6 +17,15 @@ static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
     state->cat_temp_k = 0.0;
     state->rot_temp_k = 0.0;
+    state->intfit_half_window_mhz = 0.25;
+    state->intfit_fit_temperature = 1;
+    state->intfit_fit_dipole[0] = 1;
+    state->intfit_fit_dipole[1] = 1;
+    state->intfit_fit_dipole[2] = 1;
+    state->intfit_reference_component = -1;
+    state->intfit_component_scale[0] = 1.0;
+    state->intfit_component_scale[1] = 1.0;
+    state->intfit_component_scale[2] = 1.0;
     state->sync_active = 1;
     state->broaden_mode = 0;
     state->lorentz_gamma = 0.0;
@@ -52,7 +61,7 @@ static void init_app_defaults(AppState *state) {
     state->win_cut  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 152}, 0, "Intensity range"};
     state->win_jump = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 132}, 0, "Frequency jump"};
     state->win_filt = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 402}, 0, "Transition filter"};
-    state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 250}, 0, "Dipole moments"};
+    state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 620}, 0, "Intensity analysis"};
     state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
 
     state->n_spectra = 0;

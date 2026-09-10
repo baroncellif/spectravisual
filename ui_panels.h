@@ -51,14 +51,30 @@ static inline SDL_Rect ui_br_f3(SDL_Rect w)    { return ui_p_right(w, 3, UI_P_FI
 static inline SDL_Rect ui_br_toggle(SDL_Rect w, int kaiser) { return ui_p_row(w, kaiser ? 6 : 4); }
 static inline int      ui_br_rows(int kaiser)  { return kaiser ? 7 : 5; }
 
-/* --- Dipole moments --------------------------------------------------- */
+/* --- Intensity analysis ----------------------------------------------- */
+static inline SDL_Rect ui_int_cat_temp(SDL_Rect w) { return ui_p_right(w, 1, UI_P_FIELD + 24); }
+static inline SDL_Rect ui_int_rot_temp(SDL_Rect w) { return ui_p_right(w, 2, UI_P_FIELD + 24); }
 static inline SDL_Rect ui_dip_field(SDL_Rect w, int component, int reduced) {
-    SDL_Rect r = ui_p_row(w, 1 + component);
+    SDL_Rect r = ui_p_row(w, 5 + component);
     int red_x = r.x + r.w - UI_P_FIELD;
     int cat_x = red_x - 8 - UI_P_FIELD;
     return (SDL_Rect){reduced ? red_x : cat_x, r.y, UI_P_FIELD, UI_P_ROW};
 }
-#define UI_DIP_ROWS 5
+static inline SDL_Rect ui_fit_window(SDL_Rect w) { return ui_p_right(w, 10, UI_P_FIELD); }
+static inline SDL_Rect ui_fit_temperature(SDL_Rect w) { return ui_p_row(w, 11); }
+static inline SDL_Rect ui_fit_dipole(SDL_Rect w, int component) {
+    SDL_Rect r = ui_p_row(w, 12);
+    int pill_w = 44, gap = 6;
+    int group = 3 * pill_w + 2 * gap;
+    return (SDL_Rect){r.x + r.w - group + component * (pill_w + gap), r.y, pill_w, UI_P_ROW};
+}
+static inline SDL_Rect ui_fit_run(SDL_Rect w) {
+    SDL_Rect r = ui_p_row(w, 13); return (SDL_Rect){r.x, r.y, 102, UI_P_ROW};
+}
+static inline SDL_Rect ui_fit_export(SDL_Rect w) {
+    SDL_Rect r = ui_fit_run(w); r.x += r.w + 8; r.w = 112; return r;
+}
+#define UI_DIP_ROWS 20
 
 /* --- Rolling average -------------------------------------------------- */
 static inline SDL_Rect ui_avg_field(SDL_Rect w)  { return ui_p_right(w, 0, UI_P_FIELD); }

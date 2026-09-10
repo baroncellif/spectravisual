@@ -58,6 +58,19 @@ typedef struct {
     double exp_int;
 } Assignment;
 
+/* One fitted observation, retained so the intensity-fit report can be
+ * exported without re-measuring the experimental trace. */
+typedef struct {
+    int assignment_index;
+    int valid;
+    int used;
+    char component;
+    double exp_area;
+    double model_int;
+    double ratio;
+    double residual_log;
+} IntFitLine;
+
 typedef struct { 
     double x; 
     double y; 
@@ -115,6 +128,7 @@ typedef enum {
     INPUT_MURED_A,
     INPUT_MURED_B,
     INPUT_MURED_C,
+    INPUT_FIT_WINDOW,
     // Quantum-number / branch filter inputs
     INPUT_FILT_JMIN,
     INPUT_FILT_JMAX,
@@ -177,6 +191,24 @@ typedef struct {
     double rot_temp_k;       // requested rotational temperature; 0 = unset
     double dipole_cat[3];    // a/b/c dipoles used to generate the .cat (Debye)
     double dipole_red[3];    // manually requested a/b/c dipoles (Debye)
+
+    /* Single-species relative-intensity fit.  The scale absorbs arbitrary
+       experimental units and sample concentration; dipoles are therefore
+       only determined relative to the selected reference component. */
+    double intfit_half_window_mhz;
+    int    intfit_fit_temperature;
+    int    intfit_fit_dipole[3];
+    int    intfit_has_result;
+    int    intfit_n_candidate;
+    int    intfit_n_used;
+    int    intfit_n_rejected;
+    int    intfit_reference_component;  // 0=a, 1=b, 2=c; -1=no dipole result
+    int    intfit_component_n[3];
+    double intfit_scale;
+    double intfit_log_rms;
+    double intfit_component_scale[3];
+    char   intfit_message[128];
+    IntFitLine intfit_lines[MAX_ASSIGNMENTS];
     
     // Tools State
     int sync_active;
