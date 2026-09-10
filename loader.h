@@ -22,6 +22,15 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
                                    const double dipole_red[3],
                                    double *global_max_int);
 
+/* For a common multi-state SPCAT catalogue, rescale every diagonal-state
+   transition from its shared Tcat to that state's Tred, then apply the
+   species concentration.  State identity comes from the state QN printed by
+   SPCAT (the fourth QN in its standard multistate record). */
+void rescale_predicted_intensities_by_species(PredLine *lines, int n,
+                                              double cat_temp_k,
+                                              const PickettSpecies *species, int n_species,
+                                              double *global_max_int);
+
 // Reads a standard X Y data file
 int read_data(const char *fname, Point *pts, int maxpts,
               double *xmin, double *xmax, double *ymin, double *ymax);

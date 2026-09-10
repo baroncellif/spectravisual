@@ -12,6 +12,32 @@
 #include <limits.h>
 #include <stdlib.h>
 
+/* The CAT's QNFMT supplies NQN.  Present the same fields it supplied, without
+   assigning labels such as v/F/I in the UI. */
+static void format_pred_qn(char *out, size_t size, const PredLine *p) {
+    int n = p->n_qn;
+    if (n < 1 || n > 6) n = 3; /* display-only compatibility for old sessions */
+    const int upper[6] = {p->Ju, p->Kau, p->Kcu, p->M1u, p->M2u, p->M3u};
+    const int lower[6] = {p->Jl, p->Kal, p->Kcl, p->M1l, p->M2l, p->M3l};
+    size_t used = 0;
+    out[0] = '\0';
+    for (int i = 0; i < n && used < size; i++) {
+        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", upper[i]);
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+    if (used < size) {
+        int wrote = snprintf(out + used, size - used, "  -  ");
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+    for (int i = 0; i < n && used < size; i++) {
+        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", lower[i]);
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+}
+
 // Pseudo-Voigt line profile (Thompson-Cox-Hastings), peak-normalized to 1.
 // gl = Lorentzian HWHM, gg = Gaussian HWHM (both MHz).
 //   gg == 0 -> pure Lorentzian, gl == 0 -> pure Gaussian, both > 0 -> Voigt.
@@ -1200,7 +1226,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         SDL_Rect w = state->win_as.rect;
 
         SDL_Rect head = ui_as_head(w);
-        ui_text_v(ren, UI_FONT_SANS_SM, "J Ka Kc", head.x + 6, head, UI_FAINT);
+        ui_text_v(ren, UI_FONT_SANS_SM, "QN upper - lower", head.x + 6, head, UI_FAINT);
         ui_text_right(ren, UI_FONT_SANS_SM, "exp freq / MHz", head.x + head.w - 6,
                       head.y + (head.h - ui_text_h(UI_FONT_SANS_SM)) / 2, UI_FAINT);
         ui_hline(ren, head.x, head.x + head.w, head.y + head.h - 1, UI_LINE);
@@ -1219,8 +1245,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             if (sel) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
             else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
-            snprintf(buf, sizeof(buf), "%d %d %d <- %d %d %d",
-                     p.Ju, p.Kau, p.Kcu, p.Jl, p.Kal, p.Kcl);
+            format_pred_qn(buf, sizeof(buf), &p);
             ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 6, row, sel ? UI_ACCENT_TEXT : UI_DIM);
             fmt_mhz(buf, sizeof(buf), state->assignments[k].exp_freq, 4);
             ui_text_right(ren, UI_FONT_MONO_SM, buf, row.x + row.w - 6,
@@ -1538,9 +1563,11 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         ui_button(ren,ui_pf_fit(w),"Fit",-1,UI_BTN_QUIET,0,mx,my,m_down);
         ui_button(ren,ui_pf_undo(w),"Undo",-1,UI_BTN_QUIET,0,mx,my,m_down);
         ui_button(ren,ui_pf_advanced(w),"Advanced...",UI_ICON_LIST,UI_BTN_QUIET,0,mx,my,m_down);
-        double qrot = (p->a > 0.0 && p->b > 0.0 && p->c > 0.0 && p->temp_k > 0.0)
-                    ? 5.3311e6 * sqrt((p->temp_k*p->temp_k*p->temp_k)/(p->a*p->b*p->c)) : 0.0;
-        snprintf(buf,sizeof(buf),"Qrot(T) = %.6g   S-reduction, prolate, sigma = 1",qrot);
+        double qtemp = p->int_settings.temp_k > 0.0 ? p->int_settings.temp_k : p->temp_k;
+        double sigma = p->int_settings.sigma > 0.0 ? p->int_settings.sigma : 1.0;
+        double qrot = (p->a > 0.0 && p->b > 0.0 && p->c > 0.0 && qtemp > 0.0)
+                    ? 5.3311e6 * sqrt((qtemp*qtemp*qtemp)/(p->a*p->b*p->c)) / sigma : 0.0;
+        snprintf(buf,sizeof(buf),"Qrot(%.6g K) = %.6g   sigma = %.6g",qtemp,qrot,sigma);
         panel_hint(ren,ui_p_row(w,12),buf);
         panel_hint(ren,ui_p_row(w,13),p->status[0]?p->status:"Calculate runs SPCAT; Fit runs SPFIT then SPCAT.");
     }
@@ -1693,8 +1720,7 @@ static void ui_card_row(SDL_Renderer *ren, SDL_Rect r, int i, const PredLine *p)
     SDL_Rect row = {r.x, y, r.w, 19};
     snprintf(buf, sizeof(buf), "%c%c", p->branch, p->mu);
     ui_text_v(ren, UI_FONT_MONO_SM, buf, r.x + 10, row, color_for_pred(p->branch, p->mu));
-    snprintf(buf, sizeof(buf), "%d %d %d <- %d %d %d",
-             p->Ju, p->Kau, p->Kcu, p->Jl, p->Kal, p->Kcl);
+    format_pred_qn(buf, sizeof(buf), p);
     ui_text_v(ren, UI_FONT_MONO_SM, buf, r.x + 38, row, UI_TEXT);
     fmt_mhz(buf, sizeof(buf), p->freq_mhz, 4);
     ui_text_right(ren, UI_FONT_MONO_SM, buf, r.x + r.w - 10,

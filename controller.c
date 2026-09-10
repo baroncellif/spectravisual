@@ -28,6 +28,26 @@ static void delete_assignment(AppState *s, int idx);
 static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
+static const PredLine *current_assignment_prediction(const AppState *s, const Assignment *a);
+
+/* Assignments deliberately keep a copy of the CAT row selected at the time.
+   When exporting, however, use the corresponding current CAT row when it is
+   still present: temperature/concentration and a post-fit recalculation may
+   have changed its calculated frequency or intensity. */
+static const PredLine *current_assignment_prediction(const AppState *s, const Assignment *a) {
+    if (!s || !a) return NULL;
+    const PredLine *q = &a->pred;
+    for (int i = 0; i < s->n_pred; i++) {
+        const PredLine *p = &s->pred_lines[i];
+        if (p->n_qn != q->n_qn) continue;
+        if (p->Ju == q->Ju && p->Kau == q->Kau && p->Kcu == q->Kcu &&
+            p->M1u == q->M1u && p->M2u == q->M2u && p->M3u == q->M3u &&
+            p->Jl == q->Jl && p->Kal == q->Kal && p->Kcl == q->Kcl &&
+            p->M1l == q->M1l && p->M2l == q->M2l && p->M3l == q->M3l)
+            return p;
+    }
+    return q;
+}
 
 // --- TEXT FIELD EDITING ---------------------------------------------------
 // The focused field behaves like any other text field: the value starts
@@ -271,14 +291,26 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     settings_data_file(s, "assignments.txt", path, sizeof(path));
                     FILE *fp = fopen(path, "w");
                     if (fp) {
-                        fprintf(fp, "# PredFreq(MHz)  Ju Kau Kcu M1u M2u M3u  Jl Kal Kcl M1l M2l M3l  ExpFreq(MHz) ExpInt\n");
+                        /* Keep the data part in SPFIT .lin order: upper QNs,
+                           lower QNs, observed frequency.  The two fields
+                           which would be uncertainty and weight in .lin are
+                           instead the calculated frequency and predicted
+                           intensity.  NQN is retained at the end solely so
+                           this text file can restore the exact CAT QN layout. */
+                        fprintf(fp, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
                         for (int k = 0; k < s->n_assignments; k++) {
-                            PredLine p2 = s->assignments[k].pred;
-                            fprintf(fp, "%12.4f  %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d %3d   %12.4f %12.4e\n",
-                                    p2.freq_mhz,
-                                    p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u,
-                                    p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l,
-                                    s->assignments[k].exp_freq, s->assignments[k].exp_int);
+                            PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
+                            int nq = p2.n_qn;
+                            if (nq < 1 || nq > 6) nq = 3; /* legacy rows */
+                            const int upper[6] = {p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u};
+                            const int lower[6] = {p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l};
+                            for (int q = 0; q < nq; q++) fprintf(fp, "%3d", upper[q]);
+                            for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
+                            /* Match the .lin's fixed 12I3 quantum-number field. */
+                            for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
+                            fprintf(fp, "%15.6f %15.6f %15.6E %d\n",
+                                    s->assignments[k].exp_freq, p2.freq_mhz,
+                                    p2.linear_int, nq);
                         }
                         fclose(fp);
                         printf("Saved assignments.txt\n");

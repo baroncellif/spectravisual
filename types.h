@@ -63,6 +63,7 @@ typedef struct {
     double line_strength; // recovered S; valid when Tcat and mu_cat are set
     int    rot_dof;    // rotational degrees of freedom (the .cat DR field)
     // Quantum Numbers
+    int    n_qn;       // QNFMT % 10: quantum numbers per state in this CAT
     int Ju, Kau, Kcu, M1u, M2u, M3u;
     int Jl, Kal, Kcl, M1l, M2l, M3l;
     char branch;       
@@ -94,6 +95,18 @@ typedef struct {
     double concentration;     /* relative intensity scale; used by future int-fit */
 } PickettSpecies;
 
+/* The manually controllable .int fields.  QROT is deliberately absent: it is
+   always calculated from A, B, C, T and sigma.  A zero FQLIM or TEMP and
+   MAXV=-1 mean "derive it from the current prediction". */
+typedef struct {
+    int flags, tag;
+    int fbegin, fend;
+    double intensity_cutoff;
+    double fqlim_ghz, temp_k;
+    int maxv;
+    double sigma;
+} PickettIntSettings;
+
 /* A reversible point saved immediately before an SPFIT run.  It remains in
    RAM only, so closing the app intentionally starts a fresh fit history. */
 typedef struct {
@@ -102,6 +115,7 @@ typedef struct {
     double temp_k;
     double fmin_ghz, fmax_ghz;
     double line_error_mhz;
+    PickettIntSettings int_settings;
     int n_param;
     PickettParameter param[MAX_PICKETT_PARAMS];
     char hamiltonian_line[256]; /* shared third line of .par/.var */
@@ -118,6 +132,7 @@ typedef struct {
     double temp_k;
     double fmin_ghz, fmax_ghz;
     double line_error_mhz;
+    PickettIntSettings int_settings;
     int n_param;
     PickettParameter param[MAX_PICKETT_PARAMS];
     char hamiltonian_line[256]; /* shared third line of .par/.var */
@@ -144,6 +159,8 @@ typedef struct {
     int history_count;
     int history_capacity;
     int generated_catalog_pending;
+    int generated_catalog_active; /* current prediction is .fit/model.cat */
+    int intensity_dirty;
     char work_dir[512];       // persistent .fit working state (latest run)
     int last_fit_iterations;
     char status[160];

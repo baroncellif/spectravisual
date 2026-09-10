@@ -47,6 +47,23 @@ static void parse_cat_intensity_fields(const char *line, PredLine *pl) {
     pl->rot_dof = dr;
 }
 
+/* QNFMT occupies columns 52--55 (zero-based offset 51); its final digit is
+   NQN, the number of quantum numbers printed for each state.  Preserve it
+   with the transition rather than trying to derive a format from zeros, spin,
+   or the current UI configuration. */
+static void parse_cat_quantum_numbers(const char *line, PredLine *pl) {
+    const int qn0 = 55;
+    int qnfmt = 0;
+    if ((int)strlen(line) >= qn0 && sscanf(line + 51, "%4d", &qnfmt) == 1) {
+        int n = qnfmt % 10;
+        pl->n_qn = (n >= 1 && n <= 6) ? n : 0;
+    }
+    pl->Ju  = parse_qn2(line + qn0 +  0); pl->Kau = parse_qn2(line + qn0 +  2); pl->Kcu = parse_qn2(line + qn0 +  4);
+    pl->M1u = parse_qn2(line + qn0 +  6); pl->M2u = parse_qn2(line + qn0 +  8); pl->M3u = parse_qn2(line + qn0 + 10);
+    pl->Jl  = parse_qn2(line + qn0 + 12); pl->Kal = parse_qn2(line + qn0 + 14); pl->Kcl = parse_qn2(line + qn0 + 16);
+    pl->M1l = parse_qn2(line + qn0 + 18); pl->M2l = parse_qn2(line + qn0 + 20); pl->M3l = parse_qn2(line + qn0 + 22);
+}
+
 static int dipole_index(char mu) {
     if (mu == 'a') return 0;
     if (mu == 'b') return 1;
@@ -200,6 +217,11 @@ int read_assigned_frequencies(const char *fname, double *out, int maxn) {
     return n;
 }
 
+static int compare_pred_frequency(const void *a, const void *b) {
+    const PredLine *pa = a, *pb = b;
+    return (pa->freq_mhz > pb->freq_mhz) - (pa->freq_mhz < pb->freq_mhz);
+}
+
 int read_pred_cat(const char *fname, PredLine *out, int maxn,
                   double *xmin, double *xmax,
                   double *global_max_int)
@@ -225,11 +247,7 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
         pl.linear_int = pow(10.0, lgint); 
         parse_cat_intensity_fields(line, &pl);
 
-        const int qn0 = 55;
-        pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
-        pl.M1u = parse_qn2(line + qn0 +  6); pl.M2u = parse_qn2(line + qn0 +  8); pl.M3u = parse_qn2(line + qn0 + 10);
-        pl.Jl  = parse_qn2(line + qn0 + 12); pl.Kal = parse_qn2(line + qn0 + 14); pl.Kcl = parse_qn2(line + qn0 + 16);
-        pl.M1l = parse_qn2(line + qn0 + 18); pl.M2l = parse_qn2(line + qn0 + 20); pl.M3l = parse_qn2(line + qn0 + 22);
+        parse_cat_quantum_numbers(line, &pl);
 
         pl.branch = branch_from_qn(pl.Ju, pl.Jl);
         pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
@@ -240,6 +258,13 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
         if (pl.linear_int > *global_max_int) *global_max_int = pl.linear_int;
     }
     fclose(f);
+    /* The drawing, profile and picking paths use binary searches in frequency.
+       SPCAT files are normally ordered, but a combined multi-species catalogue
+       is assembled in species blocks and is not.  Keep that implementation
+       detail out of every caller by restoring the required invariant here. */
+    if (n > 1) {
+        qsort(out, (size_t)n, sizeof(*out), compare_pred_frequency);
+    }
     return n;
 }
 
@@ -282,11 +307,7 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
         pl.linear_int = pow(10.0, lgint); 
         parse_cat_intensity_fields(line, &pl);
 
-        const int qn0 = 55;
-        pl.Ju  = parse_qn2(line + qn0 +  0); pl.Kau = parse_qn2(line + qn0 +  2); pl.Kcu = parse_qn2(line + qn0 +  4);
-        pl.M1u = parse_qn2(line + qn0 +  6); pl.M2u = parse_qn2(line + qn0 +  8); pl.M3u = parse_qn2(line + qn0 + 10);
-        pl.Jl  = parse_qn2(line + qn0 + 12); pl.Kal = parse_qn2(line + qn0 + 14); pl.Kcl = parse_qn2(line + qn0 + 16);
-        pl.M1l = parse_qn2(line + qn0 + 18); pl.M2l = parse_qn2(line + qn0 + 20); pl.M3l = parse_qn2(line + qn0 + 22);
+        parse_cat_quantum_numbers(line, &pl);
 
         pl.branch = branch_from_qn(pl.Ju, pl.Jl);
         pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
@@ -304,6 +325,9 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
         return 0;
     }
 
+    if (n > 1) {
+        qsort(arr, (size_t)n, sizeof(*arr), compare_pred_frequency);
+    }
     PredLine *shrunk = realloc(arr, sizeof(PredLine) * n);
     *out = shrunk ? shrunk : arr;
     return n;
@@ -356,6 +380,45 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
             p->line_strength = 0.0;
             p->linear_int = pop_cat > 0.0 ? pow(10.0, p->cat_lgint) * pop_t / pop_cat
                                           : pow(10.0, p->cat_lgint);
+        }
+        p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
+        if (p->linear_int > max_int) max_int = p->linear_int;
+    }
+    if (global_max_int) *global_max_int = max_int;
+}
+
+void rescale_predicted_intensities_by_species(PredLine *lines, int n,
+                                              double cat_temp_k,
+                                              const PickettSpecies *species, int n_species,
+                                              double *global_max_int)
+{
+    const double c2 = 1.438776877;
+    const double mhz_per_cm = 29979.2458;
+    double max_int = -1.0;
+    for (int i = 0; i < n; i++) {
+        PredLine *p = &lines[i];
+        /* In SPCAT's multistate rotational record the first three QNs are
+           rotor QNs and the next one is the state.  We use the number that
+           SPCAT printed, without altering the QN representation. */
+        int state = p->n_qn >= 4 ? p->M1u : 0;
+        const PickettSpecies *sp = NULL;
+        for (int k = 0; k < n_species; k++)
+            if (species[k].state_index == state) { sp = &species[k]; break; }
+        if (!sp || !(sp->temp_k > 0.0) || !(cat_temp_k > 0.0)) {
+            p->line_strength = 0.0;
+            p->linear_int = pow(10.0, p->cat_lgint);
+        } else {
+            double nu_cm = p->freq_mhz / mhz_per_cm;
+            double stim_red = -expm1(-c2 * nu_cm / sp->temp_k);
+            double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
+            double pop_red = exp(-c2 * p->elo_cm / sp->temp_k) * stim_red
+                           / pow(sp->temp_k, 0.5 * p->rot_dof);
+            double pop_cat = exp(-c2 * p->elo_cm / cat_temp_k) * stim_cat
+                           / pow(cat_temp_k, 0.5 * p->rot_dof);
+            double base = pow(10.0, p->cat_lgint);
+            p->line_strength = pop_cat > 0.0 ? base / pop_cat : 0.0;
+            p->linear_int = pop_cat > 0.0 ? base * pop_red / pop_cat : base;
+            p->linear_int *= sp->concentration;
         }
         p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
         if (p->linear_int > max_int) max_int = p->linear_int;
@@ -457,7 +520,8 @@ int read_data_alloc(const char *fname, Point **pts,
 }
 
 static int same_assignment_transition(const PredLine *a, const PredLine *b) {
-    return a->Ju  == b->Ju  && a->Kau == b->Kau && a->Kcu == b->Kcu &&
+    return a->n_qn == b->n_qn &&
+           a->Ju  == b->Ju  && a->Kau == b->Kau && a->Kcu == b->Kcu &&
            a->M1u == b->M1u && a->M2u == b->M2u && a->M3u == b->M3u &&
            a->Jl  == b->Jl  && a->Kal == b->Kal && a->Kcl == b->Kcl &&
            a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;
@@ -507,6 +571,41 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
     }
 }
 
+/* assignments.txt is deliberately a readable .lin-like record:
+   upper QNs, lower QNs, observed frequency, calculated frequency, calculated
+   intensity, NQN.  The trailing NQN is not an SPFIT field; it is the small
+   piece of CAT/QNFMT information needed to reconstruct whether the QN record
+   used 3, 4, 5 or 6 fields per state on the next launch. */
+static int parse_assignment_lin_order(const char *line, PredLine *p,
+                                      double *exp_freq, double *calc_int)
+{
+    double v[32];
+    int count = 0;
+    const char *q = line;
+    while (*q && count < (int)(sizeof(v) / sizeof(v[0]))) {
+        char *end = NULL;
+        double x = strtod(q, &end);
+        if (end == q) { q++; continue; }
+        v[count++] = x;
+        q = end;
+    }
+    if (count < 6) return 0;
+    int nq = (int)lround(v[count - 1]);
+    if (nq < 1 || nq > 6 || count != 2 * nq + 4) return 0;
+
+    int *upper[6] = {&p->Ju, &p->Kau, &p->Kcu, &p->M1u, &p->M2u, &p->M3u};
+    int *lower[6] = {&p->Jl, &p->Kal, &p->Kcl, &p->M1l, &p->M2l, &p->M3l};
+    for (int i = 0; i < nq; i++) *upper[i] = (int)lround(v[i]);
+    for (int i = 0; i < nq; i++) *lower[i] = (int)lround(v[nq + i]);
+    *exp_freq = v[2 * nq];
+    p->freq_mhz = v[2 * nq + 1];
+    *calc_int = v[2 * nq + 2];
+    p->linear_int = *calc_int;
+    p->lgint = *calc_int > 0.0 ? log10(*calc_int) : -INFINITY;
+    p->n_qn = nq;
+    return 1;
+}
+
 void load_existing_assignments(const char *filename, Assignment *list, int *n) {
     FILE *fp = fopen(filename, "r");
     if(!fp) return;
@@ -518,13 +617,22 @@ void load_existing_assignments(const char *filename, Assignment *list, int *n) {
         for(int i=0; line[i]; i++) if(line[i]=='|') line[i]=' ';
 
         PredLine p; memset(&p, 0, sizeof(p));
-        double ef, ei;
+        double ef = 0.0, ei = 0.0;
 
-        int res = sscanf(line, "%lf %d %d %d %d %d %d %d %d %d %d %d %d %lf %lf",
+        if (parse_assignment_lin_order(line, &p, &ef, &ei)) {
+            p.branch = branch_from_qn(p.Ju, p.Jl);
+            p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
+            add_or_update_assignment(list, n, p, ef, ei);
+            loaded++;
+            continue;
+        }
+
+        int n_qn = 0;
+        int res = sscanf(line, "%lf %d %d %d %d %d %d %d %d %d %d %d %d %lf %lf %d",
                &p.freq_mhz,
                &p.Ju, &p.Kau, &p.Kcu, &p.M1u, &p.M2u, &p.M3u,
                &p.Jl, &p.Kal, &p.Kcl, &p.M1l, &p.M2l, &p.M3l,
-               &ef, &ei);
+               &ef, &ei, &n_qn);
 
         if(res < 15) {
             // Legacy 0.9 format: 12 quantum numbers followed by ExpFreq ExpInt.
@@ -546,6 +654,7 @@ void load_existing_assignments(const char *filename, Assignment *list, int *n) {
         }
 
         if(res >= 15) {
+            p.n_qn = (n_qn >= 1 && n_qn <= 6) ? n_qn : 0;
             p.branch = branch_from_qn(p.Ju, p.Jl);
             p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
             p.lgint = 0; 

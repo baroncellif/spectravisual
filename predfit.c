@@ -25,13 +25,52 @@ static void fit_root(const AppState *s, char *out, size_t n) {
     else                         snprintf(out, n, "%s", FIT_DIR_NAME);
 }
 
+int predfit_is_generated_catalog(const AppState *s, const char *path) {
+    if (!s || !path || !path[0]) return 0;
+    char root[600], expected[700];
+    fit_root(s, root, sizeof(root));
+    snprintf(expected, sizeof(expected), "%s/model.cat", root);
+    if (strcmp(path, expected) == 0) return 1;
+
+    /* Command-line paths and restored sessions can differ only in their
+       spelling (relative versus absolute).  Compare canonical paths when
+       possible, without making an inaccessible path an error. */
+    char canonical_path[PATH_MAX], canonical_expected[PATH_MAX];
+    if (realpath(path, canonical_path) && realpath(expected, canonical_expected))
+        return strcmp(canonical_path, canonical_expected) == 0;
+    return 0;
+}
+
 static int have_program(const char *path) {
     return path && path[0] && access(path, X_OK) == 0;
 }
 
+static int state_count(const PredFitState *p);
+
 static double qrot_at(const PredFitState *p, double temp_k) {
     if (!(p->a > 0 && p->b > 0 && p->c > 0 && temp_k > 0)) return 0.0;
-    return 5.3311e6 * sqrt((temp_k * temp_k * temp_k) / (p->a * p->b * p->c));
+    double sigma = p->int_settings.sigma > 0.0 ? p->int_settings.sigma : 1.0;
+    return 5.3311e6 * sqrt((temp_k * temp_k * temp_k) / (p->a * p->b * p->c)) / sigma;
+}
+
+static double int_temp_at(const PredFitState *p, double fallback) {
+    return p->int_settings.temp_k > 0.0 ? p->int_settings.temp_k : fallback;
+}
+
+static double int_fqlim_at(const PredFitState *p) {
+    return p->int_settings.fqlim_ghz > 0.0 ? p->int_settings.fqlim_ghz : p->fmax_ghz;
+}
+
+static int int_maxv_at(const PredFitState *p) {
+    return p->int_settings.maxv >= 0 ? p->int_settings.maxv : state_count(p) - 1;
+}
+
+static void write_int_header(FILE *fp, const PredFitState *p, const char *title, double fallback_temp) {
+    const PickettIntSettings *x = &p->int_settings;
+    double temp = int_temp_at(p, fallback_temp);
+    fprintf(fp, "%s\n%d %d %.12g %d %d %.8g %.8g %.8g %.8g %d\n",
+            title, x->flags, x->tag, qrot_at(p, temp), x->fbegin, x->fend,
+            x->intensity_cutoff, x->intensity_cutoff, int_fqlim_at(p), temp, int_maxv_at(p));
 }
 
 static int prepare_fit_dir(AppState *s) {
@@ -88,7 +127,11 @@ static int set_hamiltonian_nstates(char *line, size_t line_size, int nstates) {
     char updated[256];
     int prefix = (int)(nvib - line);
     if (prefix < 0 || prefix >= (int)sizeof(updated)) return 0;
-    snprintf(updated, sizeof(updated), "%.*s%d%s", prefix, line, nstates, end);
+    /* Keep the minimal standard form complete: CHR SPIND NVIB KNMIN. */
+    const char *tail = end;
+    while (*tail == ' ' || *tail == '\t') tail++;
+    if (!*tail) snprintf(updated, sizeof(updated), "%.*s%d 0", prefix, line, nstates);
+    else        snprintf(updated, sizeof(updated), "%.*s%d%s", prefix, line, nstates, end);
     if (strlen(updated) >= line_size) return 0;
     snprintf(line, line_size, "%s", updated);
     return 1;
@@ -153,6 +196,12 @@ void predfit_save_session(const AppState *s) {
     fputs("# Pickett parameter ID and user-selected fit uncertainty\n", fp);
     for (int i = 0; i < p->n_param; i++) fprintf(fp, "%d %.17g\n", p->param[i].id, p->param[i].error);
     fprintf(fp, "hamiltonian %s\n", p->hamiltonian_line);
+    {
+        const PickettIntSettings *x = &p->int_settings;
+        fprintf(fp, "int2 %d %d %d %d %.17g %.17g %.17g %d %.17g\n",
+                x->flags, x->tag, x->fbegin, x->fend, x->intensity_cutoff,
+                x->fqlim_ghz, x->temp_k, x->maxv, x->sigma);
+    }
     for (int i = 0; i < p->n_species; i++) {
         const PickettSpecies *sp = &p->species[i];
         double temp = i == p->active_species ? p->temp_k : sp->temp_k;
@@ -218,6 +267,14 @@ void predfit_load_session(AppState *s) {
         }
         if (strncmp(line, "hamiltonian ", 12) == 0) {
             if (line[12]) snprintf(p->hamiltonian_line, sizeof(p->hamiltonian_line), "%s", line + 12);
+            continue;
+        }
+        if (strncmp(line, "int2 ", 5) == 0) {
+            PickettIntSettings x = p->int_settings;
+            if (sscanf(line + 5, "%d %d %d %d %lf %lf %lf %d %lf",
+                       &x.flags, &x.tag, &x.fbegin, &x.fend, &x.intensity_cutoff,
+                       &x.fqlim_ghz, &x.temp_k, &x.maxv, &x.sigma) == 9)
+                p->int_settings = x;
             continue;
         }
         if (strncmp(line, "molecule2 ", 10) == 0) {
@@ -308,17 +365,48 @@ void predfit_publish_shared_state(AppState *s) {
     store_active_species(p);
     s->rot_temp_k=p->temp_k;
     memcpy(s->dipole_red,p->mu,sizeof(p->mu));
-    if (s->pred_lines && s->n_pred > 0)
+    if (s->pred_lines && s->n_pred > 0 && p->generated_catalog_active) {
+        double tcat = int_temp_at(p, p->temp_k);
+        s->cat_temp_k = tcat;
+        rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, tcat,
+                                                  p->species, p->n_species,
+                                                  &s->pred_global_max);
+    } else if (s->pred_lines && s->n_pred > 0) {
         rescale_predicted_intensities(s->pred_lines,s->n_pred,s->cat_temp_k,s->rot_temp_k,
                                       s->dipole_cat,s->dipole_red,&s->pred_global_max);
+    }
 }
 
 static int write_int(FILE *fp, const PredFitState *p, const PickettSpecies *sp) {
     if (!fp || !sp) return 0;
-    fprintf(fp, "%s\n0 1 %.12g %.8g %.8g -8 -8 %.8g %.8g\n",
-            sp->name, qrot_at(p, sp->temp_k), p->fmin_ghz, p->fmax_ghz, p->fmax_ghz, sp->temp_k);
+    write_int_header(fp, p, sp->name, sp->temp_k);
     fprintf(fp, "001 %.10g /a dipole moment\n002 %.10g /b dipole moment\n003 %.10g /c dipole moment\n",
             sp->mu[0], sp->mu[1], sp->mu[2]);
+    return 1;
+}
+
+/* SPCAT receives one .int beside the shared multi-state .var.  A permanent
+   species_XX.int is also written below for each row, but model.int encodes the
+   diagonal a/b/c dipoles with V2=V1=v so that SPCAT emits transitions carrying
+   the vibrational/state quantum number.  For states 0..9 the Pickett IDs are
+   001/002/003, 111/112/113, 221/222/223, ... respectively. */
+static int write_multi_state_int(FILE *fp, const PredFitState *p) {
+    const PickettSpecies *reference = active_species((PredFitState *)p);
+    if (!fp || !reference) return 0;
+    int included = 0;
+    for (int i = 0; i < p->n_species; i++)
+        if (p->species[i].predict_enabled) included++;
+    if (!included) return 0;
+    write_int_header(fp, p, "SpectraVisual multi-state prediction", reference->temp_k);
+    for (int i = 0; i < p->n_species; i++) {
+        const PickettSpecies *sp = &p->species[i];
+        if (!sp->predict_enabled) continue;
+        if (sp->state_index < 0 || sp->state_index > 9) return 0;
+        int id = 110 * sp->state_index;
+        fprintf(fp, "%d %.10g /a dipole/\n", id + 1, sp->mu[0]);
+        fprintf(fp, "%d %.10g /b dipole/\n", id + 2, sp->mu[1]);
+        fprintf(fp, "%d %.10g /c dipole/\n", id + 3, sp->mu[2]);
+    }
     return 1;
 }
 
@@ -333,9 +421,13 @@ void predfit_adopt_generated_catalog(AppState *s) {
     PredFitState *p=&s->predfit;
     if (!p->generated_catalog_pending) return;
     p->generated_catalog_pending=0;
-    s->cat_temp_k=p->temp_k;
+    p->generated_catalog_active=1;
+    s->cat_temp_k=int_temp_at(p, p->temp_k);
     memcpy(s->dipole_cat,p->mu,sizeof(p->mu));
-    predfit_publish_shared_state(s);
+    s->rot_temp_k=p->temp_k;
+    rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, s->cat_temp_k,
+                                              p->species, p->n_species,
+                                              &s->pred_global_max);
 }
 
 static int push_fit_snapshot(AppState *s) {
@@ -355,6 +447,7 @@ static int push_fit_snapshot(AppState *s) {
     memcpy(snap->mu, p->mu, sizeof(snap->mu));
     snap->temp_k=p->temp_k; snap->fmin_ghz=p->fmin_ghz; snap->fmax_ghz=p->fmax_ghz;
     snap->line_error_mhz=p->line_error_mhz;
+    snap->int_settings=p->int_settings;
     snap->n_param=p->n_param;
     memcpy(snap->param, p->param, sizeof(snap->param));
     memcpy(snap->hamiltonian_line, p->hamiltonian_line, sizeof(snap->hamiltonian_line));
@@ -373,6 +466,7 @@ static void restore_fit_snapshot(AppState *s, const PredFitSnapshot *snap) {
     memcpy(p->mu, snap->mu, sizeof(p->mu));
     p->temp_k=snap->temp_k; p->fmin_ghz=snap->fmin_ghz; p->fmax_ghz=snap->fmax_ghz;
     p->line_error_mhz=snap->line_error_mhz;
+    p->int_settings=snap->int_settings;
     p->n_param=snap->n_param;
     memcpy(p->param, snap->param, sizeof(p->param));
     memcpy(p->hamiltonian_line, snap->hamiltonian_line, sizeof(p->hamiltonian_line));
@@ -390,6 +484,7 @@ void predfit_init(AppState *s) {
     p->mu[0] = p->mu[1] = p->mu[2] = 1.0;
     p->temp_k = 5.0; p->fmin_ghz = 0.0; p->fmax_ghz = 20.0;
     p->line_error_mhz = 0.01;
+    p->int_settings = (PickettIntSettings){0, 1, 0, 40, -20.0, 0.0, 0.0, -1, 1.0};
     p->n_param = 3;
     /* A non-zero a-priori error makes the three supplied constants float in
        SPFIT.  The Advanced table can set an error to zero to keep one fixed. */
@@ -424,50 +519,6 @@ static void sync_basic_from_parameters(PredFitState *p) {
         if (p->param[i].id == 20000 + suffix) p->b = p->param[i].value;
         if (p->param[i].id == 30000 + suffix) p->c = p->param[i].value;
     }
-}
-
-/* A multi-species .par/.var retains Pickett's state suffixes (00, 11, ...;
-   99 means shared).  SPCAT is run for one species at a time at this stage of
-   the UI, so its private .var is a normal one-state model: remove the selected
-   suffix and retain the xx99 cards as ordinary shared cards. */
-static int parameter_for_species(int id, int state_index, int *one_state_id) {
-    int sign = id < 0 ? -1 : 1;
-    int magnitude = id < 0 ? -id : id;
-    int suffix = 11 * state_index;
-    int tail = magnitude % 100;
-    if (tail == suffix) {
-        *one_state_id = sign * (magnitude - suffix);
-        return 1;
-    }
-    if (tail == 99) {
-        *one_state_id = sign * (magnitude - 99);
-        return 1;
-    }
-    return 0;
-}
-
-static int write_species_var(const PredFitState *p, const PickettSpecies *sp,
-                             const char *path) {
-    int n = 0, mapped = 0;
-    for (int i = 0; i < p->n_param; i++)
-        if (parameter_for_species(p->param[i].id, sp->state_index, &mapped)) n++;
-    if (n == 0) return 0;
-    FILE *fp = fopen(path, "w");
-    if (!fp) return 0;
-    char one_state_hamiltonian[sizeof(p->hamiltonian_line)];
-    snprintf(one_state_hamiltonian, sizeof(one_state_hamiltonian), "%s", p->hamiltonian_line);
-    if (!set_hamiltonian_nstates(one_state_hamiltonian, sizeof(one_state_hamiltonian), 1)) {
-        fclose(fp);
-        return 0;
-    }
-    fprintf(fp, "SpectraVisual single-species SPCAT model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
-            n, 0, 0, 0, 0.0, 1e6, 1.0, 1.0, one_state_hamiltonian);
-    for (int i = 0; i < p->n_param; i++) {
-        const PickettParameter *x = &p->param[i];
-        if (!parameter_for_species(x->id, sp->state_index, &mapped)) continue;
-        fprintf(fp, "%12d % .15E % .8E /%s/\n", mapped, x->value, x->error, x->label);
-    }
-    return fclose(fp) == 0;
 }
 
 typedef struct { int id; const char *watson_a, *watson_s, *other; } ParameterName;
@@ -582,6 +633,16 @@ static int write_inputs(AppState *s, int for_fit) {
     /* A .lin must contain one observation per quantum-number transition.
        This also repairs any duplicate rows produced by older app versions. */
     if (for_fit) deduplicate_assignments(s->assignments, &s->n_assignments);
+    if (for_fit) {
+        for (int i = 0; i < s->n_assignments; i++) {
+            int n = s->assignments[i].pred.n_qn;
+            if (n < 1 || n > 6) {
+                snprintf(p->status, sizeof(p->status),
+                         "Assignment %d has no valid CAT QNFMT/NQN; recalculate and assign that CAT again.", i + 1);
+                return 0;
+            }
+        }
+    }
     sync_basic_parameters(p);
     update_hamiltonian_nstates(p);
     predfit_save_session(s);
@@ -590,9 +651,12 @@ static int write_inputs(AppState *s, int for_fit) {
     work_file(p,"model.par",par_path,sizeof(par_path)); work_file(p,"model.lin",lin_path,sizeof(lin_path));
     FILE *var = fopen(var_path, "w");
     FILE *in = fopen(int_path, "w");
-    FILE *par = for_fit ? fopen(par_path, "w") : NULL;
+    /* Keep the two model files in lockstep even for a Calculate-only pass:
+       SPCAT reads .var, SPFIT reads .par, but Hamiltonian/options/parameters
+       must always describe the exact same molecule. */
+    FILE *par = fopen(par_path, "w");
     FILE *lin = for_fit ? fopen(lin_path, "w") : NULL;
-    if (!var || !in || (for_fit && (!par || !lin))) {
+    if (!var || !in || !par || (for_fit && !lin)) {
         if (var) fclose(var); if (in) fclose(in); if (par) fclose(par); if (lin) fclose(lin);
         snprintf(p->status, sizeof(p->status), "Cannot write Pickett working files.");
         return 0;
@@ -609,8 +673,11 @@ static int write_inputs(AppState *s, int for_fit) {
         fprintf(var, "%12d % .15E % .8E /%s/\n", x->id, x->value, x->error, x->label);
         if (par) fprintf(par, "%12d % .15E % .8E /%s/\n", x->id, x->value, x->error, x->label);
     }
-    PickettSpecies *current = active_species(p);
-    if (!write_int(in, p, current)) { fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin); return 0; }
+    if (!write_multi_state_int(in, p)) {
+        fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
+        snprintf(p->status, sizeof(p->status), "Select a prediction species (states 0 through 9 are supported).");
+        return 0;
+    }
     for (int i = 0; i < p->n_species; i++) {
         char name[64], path[600];
         snprintf(name, sizeof(name), "species_%02d.int", p->species[i].state_index);
@@ -628,8 +695,9 @@ static int write_inputs(AppState *s, int for_fit) {
            paired fields as it uses. */
         int u[6] = {q->Ju,q->Kau,q->Kcu,q->M1u,q->M2u,q->M3u};
         int l[6] = {q->Jl,q->Kal,q->Kcl,q->M1l,q->M2l,q->M3l};
-        int nq = 3;
-        for (int k = 5; k >= 3; k--) if (u[k] != 0 || l[k] != 0) { nq = k + 1; break; }
+        /* NQN comes from QNFMT in the SPCAT catalogue used for this exact
+           assignment.  Do not infer it from Hamiltonian settings or zeroes. */
+        int nq = q->n_qn;
         for (int k = 0; k < nq; k++) fprintf(lin, "%3d", u[k]);
         for (int k = 0; k < nq; k++) fprintf(lin, "%3d", l[k]);
         /* The first 36 characters are the complete 12-I3 QN field, even
@@ -641,42 +709,14 @@ static int write_inputs(AppState *s, int for_fit) {
     return 1;
 }
 
+/* Implemented beside the cached SPFIT report below.  A second SPFIT run may
+   replace model.fit within the same filesystem timestamp second, so the cache
+   must be explicitly invalidated after every successful run. */
+static void report_invalidate(void);
+
 static int run(const char *cmd, PredFitState *p, const char *what) {
     int rc = system(cmd);
     if (rc != 0) { snprintf(p->status, sizeof(p->status), "%s failed (exit %d).", what, rc); return 0; }
-    return 1;
-}
-
-/* SPCAT has one .int input at a time.  Keep every unscaled result for
-   inspection, then build the visible catalogue by scaling LGINT (F8.4 at
-   columns 22--29 in a Pickett .cat) by the species concentration.  Lines are
-   deliberately not coalesced: coincident transitions must remain distinct so
-   that the stick and broadened renderers add their intensities naturally. */
-static int append_scaled_catalog(const char *source, FILE *combined,
-                                 double concentration, int *line_count) {
-    FILE *in = fopen(source, "r");
-    if (!in || !combined) {
-        if (in) fclose(in);
-        return 0;
-    }
-    char line[512];
-    int count = 0;
-    while (fgets(line, sizeof(line), in)) {
-        if (!(concentration > 0.0)) continue;
-        /* Do not touch SPCAT comments or an unexpected record format. */
-        if (strlen(line) >= 29) {
-            double freq = 0.0, error = 0.0, lgint = 0.0;
-            if (sscanf(line, "%lf%lf%lf", &freq, &error, &lgint) == 3) {
-                char scaled[16];
-                snprintf(scaled, sizeof(scaled), "%8.4f", lgint + log10(concentration));
-                if (strlen(scaled) == 8) memcpy(line + 21, scaled, 8);
-                count++;
-            }
-        }
-        fputs(line, combined);
-    }
-    fclose(in);
-    if (line_count) *line_count += count;
     return 1;
 }
 
@@ -732,10 +772,23 @@ static void import_int_settings(PredFitState *p) {
     FILE *fp=fopen(path,"r"); if (!fp) return;
     char line[256];
     if (!fgets(line,sizeof(line),fp) || !fgets(line,sizeof(line),fp)) { fclose(fp); return; }
-    int flags=0, tag=0; double q=0, fmin=0, fmax=0, s0=0, s1=0, limit=0, temp=0;
-    if (sscanf(line,"%d %d %lf %lf %lf %lf %lf %lf %lf",&flags,&tag,&q,&fmin,&fmax,&s0,&s1,&limit,&temp)==9) {
+    int flags=0, tag=0;
+    double ignored_qrot=0, fbegin_raw=0, fend_raw=0, s0=0, s1=0, limit=0, temp=0, maxv_raw=-1;
+    if (sscanf(line,"%d %d %lf %lf %lf %lf %lf %lf %lf %lf",
+               &flags,&tag,&ignored_qrot,&fbegin_raw,&fend_raw,&s0,&s1,&limit,&temp,&maxv_raw)==10) {
+        p->int_settings.flags = flags;
+        p->int_settings.tag = tag;
+        p->int_settings.fbegin = (int)lround(fbegin_raw);
+        /* Older SpectraVisual versions mistakenly put FQLIM in FEND.  FEND
+           is an integer quantum-number bound, so a fractional value can only
+           be that old malformed output; migrate it to the normal default. */
+        p->int_settings.fend = fabs(fend_raw - round(fend_raw)) > 1e-9 ? 40 : (int)lround(fend_raw);
+        p->int_settings.intensity_cutoff = s0;
+        p->int_settings.fqlim_ghz = limit;
+        p->int_settings.temp_k = temp;
+        p->int_settings.maxv = (int)lround(maxv_raw);
         if (temp > 0.0) p->temp_k=temp;
-        p->fmin_ghz=fmin; p->fmax_ghz=fmax;
+        if (limit > 0.0) p->fmax_ghz=limit;
     }
     while (fgets(line,sizeof(line),fp)) {
         int id=0; double mu=0;
@@ -796,12 +849,38 @@ static void set_branch_and_dipole(PredLine *q) {
     q->mu = (even_ka && !even_kc) ? 'a' : (!even_ka && !even_kc) ? 'b' : (!even_ka && even_kc) ? 'c' : '?';
 }
 
+/* The QN order and its length are not UI policy.  They are exactly the NQN
+   fields that SPCAT printed in QNFMT for the selected CAT transition. */
+static void format_assignment_qn(char *out, size_t size, const PredLine *q) {
+    int n = q->n_qn;
+    if (n < 1 || n > 6) n = 3; /* display-only compatibility for old sessions */
+    const int upper[6] = {q->Ju, q->Kau, q->Kcu, q->M1u, q->M2u, q->M3u};
+    const int lower[6] = {q->Jl, q->Kal, q->Kcl, q->M1l, q->M2l, q->M3l};
+    size_t used = 0;
+    out[0] = '\0';
+    for (int i = 0; i < n && used < size; i++) {
+        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", upper[i]);
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+    if (used < size) {
+        int wrote = snprintf(out + used, size - used, "  -  ");
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+    for (int i = 0; i < n && used < size; i++) {
+        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", lower[i]);
+        if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
+        used += (size_t)wrote;
+    }
+}
+
 /* Restores the assignment list of the saved session.
  *
  * model.lin is not a record of the work: SPFIT only needs the quantum numbers,
  * the measured frequency and whether to use the line.  The predicted frequency
- * and the measured intensity - everything that ties an assignment back to the
- * experimental spectrum - live in assignments.txt.  So that file is the source,
+ * and calculated line intensity - everything that ties an assignment back to
+ * the selected catalogue - live in assignments.txt.  So that file is the source,
  * and the .lin is read only for the 90000 sentinel that marks the lines
  * excluded from the fit. */
 static void import_fit_lines(AppState *s) {
@@ -827,9 +906,17 @@ static void import_fit_lines(AppState *s) {
                 if (fabs(row->freq - a->exp_freq) >= 1e-4) continue;
                 int *u = row->qn, *l = row->qn + row->nq;
                 int same_qn = (u[0] == a->pred.Ju && u[1] == a->pred.Kau && u[2] == a->pred.Kcu &&
-                               l[0] == a->pred.Jl && l[1] == a->pred.Kal && l[2] == a->pred.Kcl);
+                               l[0] == a->pred.Jl && l[1] == a->pred.Kal && l[2] == a->pred.Kcl &&
+                               (row->nq < 4 || (u[3] == a->pred.M1u && l[3] == a->pred.M1l)) &&
+                               (row->nq < 5 || (u[4] == a->pred.M2u && l[4] == a->pred.M2l)) &&
+                               (row->nq < 6 || (u[5] == a->pred.M3u && l[5] == a->pred.M3l)));
                 if (pass == 0 && !same_qn) continue;   /* exact match first */
                 a->fit_enabled = row->enabled;
+                /* Never promote the QN length from an old .lin: versions
+                   before CAT/QNFMT tracking could have written an incorrect
+                   number of fields there.  New assignments persist NQN in
+                   assignments.txt; legacy ones deliberately remain invalid
+                   until selected again from a freshly calculated CAT. */
                 used[k] = 1;
                 break;
             }
@@ -846,6 +933,7 @@ static void import_fit_lines(AppState *s) {
         int *u = row->qn, *l = row->qn + row->nq;
         a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
         a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
+        a->pred.n_qn = row->nq;
         if (row->nq > 3) { a->pred.M1u = u[3]; a->pred.M1l = l[3]; }
         if (row->nq > 4) { a->pred.M2u = u[4]; a->pred.M2l = l[4]; }
         if (row->nq > 5) { a->pred.M3u = u[5]; a->pred.M3l = l[5]; }
@@ -872,8 +960,9 @@ int predfit_restore_latest(AppState *s) {
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path,sizeof(s->pending_pred_path),"%s",cat_path);
     s->pending_load=1;
-    /* model.cat is the already weighted multi-species catalogue. */
-    p->generated_catalog_pending=0;
+    /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
+    p->generated_catalog_pending=1;
+    p->generated_catalog_active=1;
     snprintf(p->status,sizeof(p->status),"Restored the latest Pred&Fit state from .fit.");
     return 1;
 }
@@ -891,69 +980,14 @@ int predfit_calculate_all_species(AppState *s) {
         return 0;
     }
 
-    char model_int[600], model_cat[600], combined_path[640], source_cat[600], var_path[600], cmd[700];
-    work_file(p, "model.int", model_int, sizeof(model_int));
+    char model_cat[600], cmd[700];
     work_file(p, "model.cat", model_cat, sizeof(model_cat));
-    snprintf(combined_path, sizeof(combined_path), "%s.tmp", model_cat);
-    FILE *combined = fopen(combined_path, "w");
-    if (!combined) {
-        snprintf(p->status, sizeof(p->status), "Cannot create the combined SPCAT catalogue.");
-        return 0;
-    }
-
-    int saved_active = p->active_species;
-    int n_lines = 0;
-    int generated = 0;
-    for (int i = 0; i < p->n_species; i++) {
-        PickettSpecies *sp = &p->species[i];
-        if (!sp->predict_enabled) continue;
-        char base[64];
-        snprintf(base, sizeof(base), "species_%02d", sp->state_index);
-        snprintf(var_path, sizeof(var_path), "%s/%s.var", p->work_dir, base);
-        if (!write_species_var(p, sp, var_path)) {
-            fclose(combined);
-            remove(combined_path);
-            snprintf(p->status, sizeof(p->status), "No usable parameters for %s.", sp->name);
-            return 0;
-        }
-        snprintf(cmd, sizeof(cmd), "cd %s && \"%s\" %s", p->work_dir, s->settings.spcat_path, base);
-        if (!run(cmd, p, "SPCAT")) {
-            fclose(combined);
-            remove(combined_path);
-            return 0;
-        }
-        snprintf(source_cat, sizeof(source_cat), "%s/%s.cat", p->work_dir, base);
-        if (!append_scaled_catalog(source_cat, combined, sp->concentration, &n_lines)) {
-            fclose(combined);
-            remove(combined_path);
-            snprintf(p->status, sizeof(p->status), "Cannot collect the SPCAT catalogue for %s.", sp->name);
-            return 0;
-        }
-        generated++;
-    }
-    if (generated == 0) {
-        fclose(combined);
-        remove(combined_path);
-        snprintf(p->status, sizeof(p->status), "Select at least one species in PRED before Calculate.");
-        return 0;
-    }
-    if (fclose(combined) != 0 || rename(combined_path, model_cat) != 0) {
-        remove(combined_path);
-        snprintf(p->status, sizeof(p->status), "Cannot finalize the combined SPCAT catalogue.");
-        return 0;
-    }
-
-    /* model.int remains a faithful quick-panel/restore file for the selected
-       species; model.cat above is intentionally the multi-species result. */
-    p->active_species = saved_active;
-    FILE *active_int = fopen(model_int, "w");
-    if (active_int) { write_int(active_int, p, active_species(p)); fclose(active_int); }
+    snprintf(cmd, sizeof(cmd), "cd %s && \"%s\" model", p->work_dir, s->settings.spcat_path);
+    if (!run(cmd, p, "SPCAT")) return 0;
     snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s", model_cat);
     s->pending_load = 1;
-    /* The combined catalogue already carries each species' own T and dipoles;
-       do not reinterpret it as a single active-species .cat on loading. */
-    p->generated_catalog_pending = 0;
-    snprintf(p->status, sizeof(p->status), "SPCAT complete: %d species, %d weighted lines.", generated, n_lines);
+    p->generated_catalog_pending = 1;
+    snprintf(p->status, sizeof(p->status), "SPCAT complete: multi-state model written to model.cat.");
     return 1;
 }
 
@@ -971,12 +1005,14 @@ int predfit_fit(AppState *s) {
     }
     snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spfit_path);
     if (!run(cmd, p, "SPFIT")) { p->history_count--; return 0; }
+    report_invalidate();
     import_fitted_parameters(p);
     snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spcat_path);
     if (!run(cmd, p, "SPCAT after fit")) return 0;
     work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s",cat_path);
     s->pending_load = 1;
+    p->generated_catalog_pending = 1;
     snprintf(p->status, sizeof(p->status), "SPFIT complete; refreshed SPCAT prediction.");
     fit_summary(p, p->status, sizeof(p->status));
     return 1;
@@ -1067,6 +1103,27 @@ static void advanced_begin_hamiltonian_edit(PredFitState *p) {
     SDL_StartTextInput();
 }
 
+/* Fields of the .int control card.  QROT has no editor: it is always derived
+   from the current A/B/C, temperature and sigma. */
+static void advanced_begin_int_edit(PredFitState *p, int field) {
+    PickettIntSettings *x = &p->int_settings;
+    p->advanced_edit_param = -5;
+    p->advanced_edit_col = field;
+    p->advanced_edit_replace = 1;
+    if (field == 0) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->flags);
+    else if (field == 1) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->tag);
+    else if (field == 2) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->fbegin);
+    else if (field == 3) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->fend);
+    else if (field == 4) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->intensity_cutoff);
+    else if (field == 5) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->fqlim_ghz);
+    else if (field == 6) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->temp_k);
+    else if (field == 7) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->maxv);
+    else snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->sigma);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
+    SDL_StartTextInput();
+}
+
 /* Species fields use the same regular text editor as parameter cells.  Their
    .par/.var remains shared; only .int and concentration belong to a species. */
 static void advanced_begin_species_edit(PredFitState *p, int row, int field) {
@@ -1143,6 +1200,31 @@ static void advanced_edit_paste(PredFitState *p) {
 }
 
 static void advanced_commit_edit(PredFitState *p) {
+    if (p->advanced_edit_param == -5) {
+        PickettIntSettings *x = &p->int_settings;
+        char *end = NULL;
+        errno = 0;
+        double v = strtod(p->advanced_edit_buf, &end);
+        while (end && (*end == ' ' || *end == '\t')) end++;
+        if (end != p->advanced_edit_buf && end && *end == '\0' && errno != ERANGE && isfinite(v)) {
+            switch (p->advanced_edit_col) {
+                case 0: if (v >= 0.0 && v <= INT_MAX) x->flags = (int)lround(v); break;
+                case 1: if (v >= 0.0 && v <= INT_MAX) x->tag = (int)lround(v); break;
+                case 2: if (v >= 0.0 && v <= INT_MAX) x->fbegin = (int)lround(v); break;
+                case 3: if (v >= 0.0 && v <= INT_MAX) x->fend = (int)lround(v); break;
+                case 4: x->intensity_cutoff = v; break;
+                case 5: if (v >= 0.0) x->fqlim_ghz = v; break;
+                case 6: if (v >= 0.0) x->temp_k = v; break;
+                case 7: if (v >= -1.0 && v <= INT_MAX) x->maxv = (int)lround(v); break;
+                case 8: if (v > 0.0) x->sigma = v; break;
+            }
+        }
+        p->advanced_edit_param = -1;
+        p->advanced_edit_replace = 0;
+        p->advanced_edit_anchor = p->advanced_edit_caret = 0;
+        SDL_StopTextInput();
+        return;
+    }
     if (p->advanced_edit_param == -4) {
         char candidate[sizeof(p->hamiltonian_line)];
         snprintf(candidate, sizeof(candidate), "%s", p->advanced_edit_buf);
@@ -1169,6 +1251,7 @@ static void advanced_commit_edit(PredFitState *p) {
                 }
             }
             if (p->advanced_edit_species == p->active_species) load_active_species(p);
+            p->intensity_dirty = 1;
         }
         p->advanced_edit_param = -1;
         p->advanced_edit_species = -1;
@@ -1304,14 +1387,25 @@ static void report_reset(FitReport *rep) {
     memset(rep->obs, 0, sizeof(rep->obs));
 }
 
-/* Parses one " 12: ..." observation row of model.fit. */
+static void report_invalidate(void) {
+    report_reset(&g_report);
+    g_report.mtime = 0;
+    g_report.path[0] = '\0';
+}
+
+/* Parses one " 12: ..." observation row of model.fit.  SPFIT always emits
+   the QNs in a 12I3 (36-character) field.  Its NQN changes how many of those
+   slots carry numbers, but never the starting column of EXP.FREQ.  Skipping a
+   guessed count of QNs was the reason four-QN/state fits were read as stale
+   "reassigned" rows after an otherwise successful run. */
 static int parse_observation(const char *line, int *number, FitObservation *out) {
     int n = 0;
     if (sscanf(line, " %d:", &n) != 1 || n <= 0) return 0;
     const char *q = strchr(line, ':');
     if (!q) return 0;
     q++;
-    for (int k = 0; k < 6; k++) { char *end = NULL; strtol(q, &end, 10); if (end == q) break; q = end; }
+    if (strlen(q) < 36) return 0;
+    q += 36;
     char *end = NULL;
     double obs = strtod(q, &end); if (end == q) return 0; q = end;
     double calc = strtod(q, &end); if (end == q) return 0; q = end;
@@ -1411,6 +1505,7 @@ typedef struct {
     SDL_Rect tab[4];
     SDL_Rect caption;
     SDL_Rect hamiltonian;   /* editable shared third .par/.var line       */
+    SDL_Rect int_cell[10];  /* complete .int control record, two rows     */
     SDL_Rect table;         /* frame around the scrolling rows            */
     SDL_Rect rows;          /* the rows themselves, header excluded       */
     int row_h, rows_visible;
@@ -1438,6 +1533,14 @@ static AdvUI adv_ui(AppState *s, int tab) {
     if (tab == 0) {
         u.hamiltonian = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, 28};
         table_top += 38;
+    } else if (tab == 3) {
+        int gap = 6;
+        int cw = (u.w - 2 * ADV_PAD - 4 * gap) / 5;
+        for (int i = 0; i < 10; i++) {
+            int col = i % 5, row = i / 5;
+            u.int_cell[i] = (SDL_Rect){ADV_PAD + col * (cw + gap), table_top + row * 31, cw, 27};
+        }
+        table_top += 70;
     }
 
     if (tab == 2) {
@@ -1478,10 +1581,15 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     if (!p->advanced_open) return 0;
     if (e->type == SDL_WINDOWEVENT && e->window.windowID == p->advanced_window_id &&
         e->window.event == SDL_WINDOWEVENT_CLOSE) { predfit_close_advanced(s); return 1; }
-    if (advanced_edit_event(s, e)) return 1;
+    if (advanced_edit_event(s, e)) {
+        if (p->intensity_dirty) { predfit_publish_shared_state(s); p->intensity_dirty = 0; }
+        return 1;
+    }
     if (p->advanced_edit_param != -1 && e->type == SDL_MOUSEBUTTONDOWN &&
-        e->button.windowID == p->advanced_window_id)
+        e->button.windowID == p->advanced_window_id) {
         advanced_commit_edit(p);
+        if (p->intensity_dirty) { predfit_publish_shared_state(s); p->intensity_dirty = 0; }
+    }
 
     report_refresh(p);
     AdvUI u = adv_ui(s, p->advanced_tab);
@@ -1535,6 +1643,14 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     }
 
     if (p->advanced_tab == 3) {
+        {
+            /* QROT (cell 2) is intentionally read-only; it is calculated. */
+            static const int int_field[10] = {0, 1, -1, 2, 3, 4, 5, 6, 7, 8};
+            for (int i = 0; i < 10; i++) if (point_in_rect(x, y, u.int_cell[i])) {
+                if (int_field[i] >= 0) advanced_begin_int_edit(p, int_field[i]);
+                return 1;
+            }
+        }
         if (point_in_rect(x, y, u.rows)) {
             int row = p->advanced_species_scroll + (y - u.rows.y) / u.row_h;
             if (row >= 0 && row < p->n_species) {
@@ -1620,6 +1736,7 @@ void predfit_render_advanced(AppState *s) {
                 p->advanced_edit_param == -4 ? p->advanced_edit_buf : p->hamiltonian_line,
                 u.hamiltonian.x + 130, u.hamiltonian.y + 8,
                 p->advanced_edit_param == -4 ? UI_ACCENT_TEXT : UI_TEXT);
+
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
 
@@ -1677,13 +1794,40 @@ void predfit_render_advanced(AppState *s) {
                 p->advanced_edit_param == -2 ? UI_ACCENT_TEXT : UI_DIM);
         ui_text(r, UI_FONT_SANS_SM,
                 p->advanced_edit_param >= 0 ? "Enter applies in this field · Esc cancels · × removes a row"
-                                             : "NVIB follows the number of species · 0 as fit error fixes a parameter",
+                                             : "QROT is calculated from A/B/C, TEMP and sigma · MAXV=-1 follows states",
                 u.btn_b.x + u.btn_b.w + 16, u.footer.y + 17,
                 p->advanced_edit_param >= 0 ? UI_ACCENT_TEXT : UI_FAINT);
 
     } else if (p->advanced_tab == 3) {
-        ui_text(r, UI_FONT_SANS, "Species/states — one shared .par/.var; each row owns an .int and a relative concentration",
+        ui_text(r, UI_FONT_SANS, "Species/states — shared .par/.var and .int controls; each row owns Tred and concentration",
                 u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        /* The actual .int second record, placed with the species because
+           Tcat is the common catalogue reference and the rows below are Tred. */
+        static const char *int_label[10] = {
+            "FLAGS", "TAG", "QROT (auto)", "FBGN", "FEND",
+            "STR0 = STR1", "FQLIM / GHz", "TCAT / K", "MAXV", "sigma"
+        };
+        static const int int_field[10] = {0, 1, -1, 2, 3, 4, 5, 6, 7, 8};
+        PickettIntSettings *ix = &p->int_settings;
+        for (int i = 0; i < 10; i++) {
+            SDL_Rect cell = u.int_cell[i];
+            int editing = p->advanced_edit_param == -5 && p->advanced_edit_col == int_field[i];
+            ui_fill(r, cell, i == 2 ? UI_PANEL : UI_INPUT);
+            ui_frame(r, cell, editing ? UI_ACCENT : UI_LINE);
+            ui_text(r, UI_FONT_SANS_SM, int_label[i], cell.x + 6, cell.y + 3, i == 2 ? UI_FAINT : UI_DIM);
+            if (i == 0) snprintf(b, sizeof(b), "%d", ix->flags);
+            else if (i == 1) snprintf(b, sizeof(b), "%d", ix->tag);
+            else if (i == 2) snprintf(b, sizeof(b), "%.9g", qrot_at(p, int_temp_at(p, p->temp_k)));
+            else if (i == 3) snprintf(b, sizeof(b), "%d", ix->fbegin);
+            else if (i == 4) snprintf(b, sizeof(b), "%d", ix->fend);
+            else if (i == 5) snprintf(b, sizeof(b), "%.9g", ix->intensity_cutoff);
+            else if (i == 6) snprintf(b, sizeof(b), "%.9g", int_fqlim_at(p));
+            else if (i == 7) snprintf(b, sizeof(b), "%.9g", int_temp_at(p, p->temp_k));
+            else if (i == 8) snprintf(b, sizeof(b), "%d", int_maxv_at(p));
+            else snprintf(b, sizeof(b), "%.9g", ix->sigma);
+            ui_text(r, UI_FONT_MONO_SM, editing ? p->advanced_edit_buf : b,
+                    cell.x + 6, cell.y + 14, editing ? UI_ACCENT_TEXT : UI_TEXT);
+        }
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
         int hy = u.table.y + 8;
@@ -1691,7 +1835,7 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "PRED",          adv_col(u.table, 0.10), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "NAME",          adv_col(u.table, 0.18), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "v",             adv_col(u.table, 0.40), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "T / K",         adv_col(u.table, 0.47), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "TRED / K",      adv_col(u.table, 0.47), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu a",          adv_col(u.table, 0.58), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu b",          adv_col(u.table, 0.68), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu c",          adv_col(u.table, 0.78), hy, UI_DIM);
@@ -1731,7 +1875,7 @@ void predfit_render_advanced(AppState *s) {
         }
         ui_button(r, u.btn_a, "+ species", -1, UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_b, "Calculate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
-        ui_text(r, UI_FONT_SANS_SM, "USE edits a species · PRED includes it in the next calculation",
+        ui_text(r, UI_FONT_SANS_SM, "Tcat is above · Tred and concentration rescale each species immediately",
                 u.btn_b.x + u.btn_b.w + 16, u.footer.y + 17, UI_FAINT);
 
     } else if (p->advanced_tab == 1) {
@@ -1762,8 +1906,7 @@ void predfit_render_advanced(AppState *s) {
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.07), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
             snprintf(b, sizeof(b), "%.6f", a->pred.freq_mhz);
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.28), ty, UI_DIM);
-            snprintf(b, sizeof(b), "%d %d %d  —  %d %d %d",
-                     a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.Jl, a->pred.Kal, a->pred.Kcl);
+            format_assignment_qn(b, sizeof(b), &a->pred);
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.52), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
         }
         ui_text(r, UI_FONT_SANS_SM, "Excluded rows are written as 90000 + frequency in .fit/model.lin.",
@@ -1826,8 +1969,9 @@ void predfit_render_advanced(AppState *s) {
             }
 
             int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
-            snprintf(b, sizeof(b), "[%c] %2d %2d %2d - %2d %2d %2d", a->fit_enabled ? 'x' : ' ',
-                     a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.Jl, a->pred.Kal, a->pred.Kcl);
+            char qns[160];
+            format_assignment_qn(qns, sizeof(qns), &a->pred);
+            snprintf(b, sizeof(b), "[%c] %s", a->fit_enabled ? 'x' : ' ', qns);
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00) + 6, ty, c);
             /* Always take the experimental frequency from the live assignment
                list.  This makes the Lines and Fitting pages two views of the

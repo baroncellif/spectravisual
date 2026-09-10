@@ -44,7 +44,8 @@ static double median_of(const double *values, int n) {
 }
 
 static int same_qn(const PredLine *a, const PredLine *b) {
-    return a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
+    return a->n_qn == b->n_qn &&
+           a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
            a->M1u == b->M1u && a->M2u == b->M2u && a->M3u == b->M3u &&
            a->Jl == b->Jl && a->Kal == b->Kal && a->Kcl == b->Kcl &&
            a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;

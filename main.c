@@ -298,6 +298,12 @@ static int set_predictions(AppState *state, const char *path) {
     state->pred_lines = pred;
     state->n_pred = n;
     state->pxmin = pxmin; state->pxmax = pxmax;
+    /* Only model.cat created in the Pred&Fit workspace has a known Tcat and
+       per-species settings.  An arbitrary .cat remains a standalone file. */
+    if (!predfit_is_generated_catalog(state, path)) {
+        state->predfit.generated_catalog_active = 0;
+        state->predfit.generated_catalog_pending = 0;
+    }
     state->cat_temp_k = 0.0;
     state->dipole_cat[0] = state->dipole_cat[1] = state->dipole_cat[2] = 0.0;
     rescale_predicted_intensities(state->pred_lines, state->n_pred,
