@@ -140,7 +140,39 @@ typedef struct {
     Uint32 window_id;
     int  scroll;                         /* content offset, for a short window */
     char status[160];
-} DisplaySettings;
+    /* --- navigation: how far one keystroke moves the view --------------- */
+    double nav_pan_px;            /* A / S, in pixels of the pane           */
+    double nav_zoom_factor;       /* Q / E, > 1 (E uses its reciprocal)     */
+    double nav_intensity_factor;  /* W / Z and shift-arrows                 */
+    double nav_bar_px;            /* K / L, in pixels                       */
+    double nav_fast_mult;         /* Caps Lock multiplier                   */
+    double nav_trace_shift;       /* - / + on a trace, fraction of the pane */
+    double nav_wheel_scroll;      /* inspector wheel, pixels per notch      */
+
+    /* --- values a tool starts from ------------------------------------- */
+    int    def_pf_sig, def_pf_noise;
+    double def_pf_thresh;
+    int    def_avg_window;
+    double def_lorentz, def_gauss;
+    double def_kaiser_beta;
+    int    def_kaiser_ceros;
+    double def_kaiser_intrinsic;
+    double def_line_error;        /* .lin uncertainty written for SPFIT     */
+    double def_int_min, def_int_max;
+
+    /* --- where things are --------------------------------------------- */
+    char spcat_path[512];         /* Pickett SPCAT executable               */
+    char spfit_path[512];         /* Pickett SPFIT executable               */
+    char data_dir[512];           /* working files; empty = launch directory */
+
+    int  page;                    /* which settings page is shown           */
+
+    /* A value being typed. Steppers are fine for a nudge and useless for a
+       tenfold change, so every numeric field can also be edited directly. */
+    int  edit_id;                 /* -1 when nothing is being edited        */
+    char edit_buf[64];
+    int  edit_caret, edit_anchor;
+} AppSettings;
 
 /* One fitted observation, retained so the intensity-fit report can be
  * exported without re-measuring the experimental trace. */
@@ -381,7 +413,7 @@ typedef struct {
     int filt_use_delta;       // enable Delta J/Ka/Kc gating (upper - lower)
     int filt_dj, filt_dka, filt_dkc;
 
-    DisplaySettings settings;
+    AppSettings settings;
 
     /* Experimental spectra remembered from the previous session, read back from
        .fit/spectravisual.state so reopening the app restores the whole working

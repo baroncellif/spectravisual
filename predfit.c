@@ -9,24 +9,40 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include "settings.h"
 #include <limits.h>
 #include <time.h>
 
-#define FIT_ROOT ".fit"
-#define SPCAT_BIN "/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spcat"
-#define SPFIT_BIN "/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spfit"
+#define FIT_DIR_NAME ".fit"
+
+/* Where the Pickett working files live, and which programs run them: both come
+   from the settings now.  They used to be absolute paths into one developer's
+   home directory, which meant Pred&Fit could not work on anybody else's
+   machine. */
+static void fit_root(const AppState *s, char *out, size_t n) {
+    if (s->settings.data_dir[0]) snprintf(out, n, "%s/%s", s->settings.data_dir, FIT_DIR_NAME);
+    else                         snprintf(out, n, "%s", FIT_DIR_NAME);
+}
+
+static int have_program(const char *path) {
+    return path && path[0] && access(path, X_OK) == 0;
+}
 
 static double qrot(const PredFitState *p) {
     if (!(p->a > 0 && p->b > 0 && p->c > 0 && p->temp_k > 0)) return 0.0;
     return 5.3311e6 * sqrt((p->temp_k * p->temp_k * p->temp_k) / (p->a * p->b * p->c));
 }
 
-static int prepare_fit_dir(PredFitState *p) {
-    if (mkdir(FIT_ROOT, 0700) != 0 && errno != EEXIST) {
-        snprintf(p->status, sizeof(p->status), "Cannot create %s.", FIT_ROOT);
+static int prepare_fit_dir(AppState *s) {
+    PredFitState *p = &s->predfit;
+    char root[600];
+    fit_root(s, root, sizeof(root));
+    if (mkdir(root, 0700) != 0 && errno != EEXIST) {
+        snprintf(p->status, sizeof(p->status), "Cannot create %s.", root);
         return 0;
     }
-    snprintf(p->work_dir,sizeof(p->work_dir),"%s",FIT_ROOT);
+    snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
     return 1;
 }
 
@@ -42,13 +58,17 @@ static void work_file(const PredFitState *p, const char *name, char *out, size_t
    trace to compare it against. */
 static void session_path(const AppState *s, char *out, size_t size) {
     const PredFitState *p = &s->predfit;
-    const char *dir = p->work_dir[0] ? p->work_dir : FIT_ROOT;
-    snprintf(out, size, "%s/spectravisual.state", dir);
+    char root[600];
+    if (p->work_dir[0]) snprintf(root, sizeof(root), "%s", p->work_dir);
+    else                fit_root(s, root, sizeof(root));
+    snprintf(out, size, "%s/spectravisual.state", root);
 }
 
 void predfit_save_session(const AppState *s) {
     const PredFitState *p = &s->predfit;
-    if (mkdir(FIT_ROOT, 0700) != 0 && errno != EEXIST) return;
+    char root[600];
+    fit_root(s, root, sizeof(root));
+    if (mkdir(root, 0700) != 0 && errno != EEXIST) return;
     char path[600]; session_path(s, path, sizeof(path));
     FILE *fp = fopen(path, "w");
     if (!fp) return;
@@ -171,7 +191,7 @@ void predfit_init(AppState *s) {
     p->advanced_hover_line = -1;
     /* Point at the working directory straight away, so the Fitting tab shows
        the last run even before this session calculates or fits anything. */
-    snprintf(p->work_dir, sizeof(p->work_dir), "%s", FIT_ROOT);
+    fit_root(s, p->work_dir, sizeof(p->work_dir));
 }
 
 static void sync_basic_parameters(PredFitState *p) {
@@ -227,7 +247,7 @@ static void parameter_label(PickettParameter *x) {
 
 static int write_inputs(AppState *s, int for_fit) {
     PredFitState *p = &s->predfit;
-    if (!prepare_fit_dir(p)) return 0;
+    if (!prepare_fit_dir(s)) return 0;
     sync_basic_parameters(p);
     predfit_save_session(s);
     char var_path[600], int_path[600], par_path[600], lin_path[600];
@@ -463,11 +483,12 @@ static void import_fit_lines(AppState *s) {
 
 int predfit_restore_latest(AppState *s) {
     PredFitState *p=&s->predfit;
-    char flat_cat[600]; snprintf(flat_cat,sizeof(flat_cat),FIT_ROOT "/model.cat");
-    FILE *flat=fopen(flat_cat,"r");
+    char root[600]; fit_root(s, root, sizeof(root));
+    char flat_cat[700]; snprintf(flat_cat, sizeof(flat_cat), "%s/model.cat", root);
+    FILE *flat = fopen(flat_cat, "r");
     if (!flat) return 0;
     fclose(flat);
-    snprintf(p->work_dir,sizeof(p->work_dir),"%s",FIT_ROOT);
+    snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
     import_fitted_parameters(p);
     predfit_load_session(s);
     import_int_settings(p);
@@ -485,7 +506,11 @@ int predfit_calculate(AppState *s) {
     predfit_publish_shared_state(s);
     if (!write_inputs(s, 0)) return 0;
     char cmd[700], cat_path[600];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s model",p->work_dir,SPCAT_BIN);
+    if (!have_program(s->settings.spcat_path)) {
+        snprintf(p->status, sizeof(p->status), "Set the SPCAT program in Settings > Paths.");
+        return 0;
+    }
+    snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spcat_path);
     if (!run(cmd, p, "SPCAT")) return 0;
     work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s",cat_path);
@@ -502,10 +527,15 @@ int predfit_fit(AppState *s) {
     if (!push_fit_snapshot(s)) return 0;
     if (!write_inputs(s, 1)) { p->history_count--; return 0; }
     char cmd[700], cat_path[600];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s model",p->work_dir,SPFIT_BIN);
+    if (!have_program(s->settings.spfit_path) || !have_program(s->settings.spcat_path)) {
+        snprintf(p->status, sizeof(p->status), "Set the SPFIT and SPCAT programs in Settings > Paths.");
+        p->history_count--;
+        return 0;
+    }
+    snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spfit_path);
     if (!run(cmd, p, "SPFIT")) { p->history_count--; return 0; }
     import_fitted_parameters(p);
-    snprintf(cmd,sizeof(cmd),"cd %s && %s model",p->work_dir,SPCAT_BIN);
+    snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spcat_path);
     if (!run(cmd, p, "SPCAT after fit")) return 0;
     work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s",cat_path);

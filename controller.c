@@ -260,7 +260,9 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     if (point_in_rect(mx, my, ui_as_row(w, i))) { s->selected_assignment = k; return; }
                 }
                 if (point_in_rect(mx, my, ui_as_save(s, w))) {
-                    FILE *fp = fopen("assignments.txt", "w");
+                    char path[600];
+                    settings_data_file(s, "assignments.txt", path, sizeof(path));
+                    FILE *fp = fopen(path, "w");
                     if (fp) {
                         fprintf(fp, "# PredFreq(MHz)  Ju Kau Kcu M1u M2u M3u  Jl Kal Kcl M1l M2l M3l  ExpFreq(MHz) ExpInt\n");
                         for (int k = 0; k < s->n_assignments; k++) {
@@ -294,7 +296,9 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     run_peak_finder(s->current_pts, s->n_pts, s->vxmin, s->vxmax,
                                     s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh, s->peaks, &s->n_peaks);
                 } else if (point_in_rect(mx, my, ui_pf_export(w))) {
-                    FILE *fp = fopen("linelist.csv", "w");
+                    char path[600];
+                    settings_data_file(s, "linelist.csv", path, sizeof(path));
+                    FILE *fp = fopen(path, "w");
                     if (fp) {
                         fprintf(fp, "Freq,Int\n");
                         for (int k = 0; k < s->n_peaks; k++)
@@ -485,8 +489,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                         if (s->spectra[i].opacity > 100) s->spectra[i].opacity = 100;
                         return;
                     }
-                    if (point_in_rect(mx, my, ui_spec_minus(w, i))) { s->spectra[i].voffset -= 0.05; return; }
-                    if (point_in_rect(mx, my, ui_spec_plus(w, i)))  { s->spectra[i].voffset += 0.05; return; }
+                    if (point_in_rect(mx, my, ui_spec_minus(w, i))) { s->spectra[i].voffset -= s->settings.nav_trace_shift; return; }
+                    if (point_in_rect(mx, my, ui_spec_plus(w, i)))  { s->spectra[i].voffset += s->settings.nav_trace_shift; return; }
                     if (point_in_rect(mx, my, ui_spec_vis(w, i)))   { s->spectra[i].visible = !s->spectra[i].visible; return; }
                     if (point_in_rect(mx, my, ui_spec_del(w, i)))   { s->pending_remove = i; return; }
                     if (point_in_rect(mx, my, ui_spec_name(w, i)))  { s->pending_select = i; return; }
@@ -692,7 +696,7 @@ static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w) {
     // Anywhere over the docked panel column -> scroll the sidebar stack.
     // (clamping happens in update_sidebars, which knows the content height)
     if (mx > l->plot_right) {
-        s->sidebar_scroll += (w->y > 0) ? -45.0 : 45.0;
+        s->sidebar_scroll += (w->y > 0) ? -s->settings.nav_wheel_scroll : s->settings.nav_wheel_scroll;
     }
 }
 
@@ -946,7 +950,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     int sym = key->keysym.sym;
     int mod = key->keysym.mod;
     int is_shift = (mod & KMOD_SHIFT);
-    double speed_mult = (mod & KMOD_CAPS) ? 3.0 : 1.0;
+    double speed_mult = (mod & KMOD_CAPS) ? s->settings.nav_fast_mult : 1.0;
 
     if (sym == SDLK_COMMA) { settings_open(s); return; }
     if (sym == SDLK_h || sym == SDLK_SLASH) {
@@ -1007,13 +1011,14 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     double width_px = (double)l->exp_w;
     if(width_px < 1) width_px = 1000; // Safety
 
-    double pan_px = 100.0 * speed_mult;
+    double pan_px = s->settings.nav_pan_px * speed_mult;
     double pan_exp = pan_px * (s->vxmax - s->vxmin) / width_px;
     double pan_pred = pan_px * (s->pvxmax - s->pvxmin) / width_px;
     double pan_y = pan_px * (s->vymax - s->vymin) / (double)l->exp_h;
 
-    double bar_step_exp = 2.0 * (s->vxmax - s->vxmin) / width_px * speed_mult * 2.0;
-    double bar_step_pred = 2.0 * (s->pvxmax - s->pvxmin) / width_px * speed_mult * 2.0;
+    double bar_px = s->settings.nav_bar_px * speed_mult;
+    double bar_step_exp  = bar_px * (s->vxmax - s->vxmin) / width_px;
+    double bar_step_pred = bar_px * (s->pvxmax - s->pvxmin) / width_px;
 
     switch(sym) {
         // Y-Axis Auto Scale
@@ -1078,7 +1083,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
 
         // Zoom In (E) / Out (Q)
         case SDLK_e: { // In
-            double f = 0.9; 
+            double f = 1.0 / s->settings.nav_zoom_factor;
             // Logic: shrink range around center (or bar)
             if(s->sync_active) {
                 double c = s->bar_active ? s->bar_x : (s->vxmin + s->vxmax)/2.0;
@@ -1098,7 +1103,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
             break;
         }
         case SDLK_q: { // Out
-            double f = 1.1; 
+            double f = s->settings.nav_zoom_factor;
             if(s->sync_active) {
                 double c = s->bar_active ? s->bar_x : (s->vxmin + s->vxmax)/2.0;
                 double w = (s->vxmax - s->vxmin) * f;
@@ -1123,21 +1128,21 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
         //             active one when "individual intensity" is enabled).
         //  - shared : zoom the common vymax (works in overlay and stacked).
         case SDLK_w:
-            if(is_shift) s->pred_scale *= 1.1;
-            else if(s->multi_ynorm) scale_intensity(s, 1.1);
+            if(is_shift) s->pred_scale *= s->settings.nav_intensity_factor;
+            else if(s->multi_ynorm) scale_intensity(s, s->settings.nav_intensity_factor);
             else s->vymax -= pan_y;
             break;
         case SDLK_z:
-            if(is_shift) s->pred_scale *= 0.9;
-            else if(s->multi_ynorm) scale_intensity(s, 0.9);
+            if(is_shift) s->pred_scale /= s->settings.nav_intensity_factor;
+            else if(s->multi_ynorm) scale_intensity(s, 1.0 / s->settings.nav_intensity_factor);
             else s->vymax += pan_y;
             break;
         case SDLK_UP:
-            if(is_shift) s->pred_scale *= 1.1; 
+            if(is_shift) s->pred_scale *= s->settings.nav_intensity_factor; 
             else { s->vymin -= pan_y/10; s->vymax -= pan_y/10; } 
             break;
         case SDLK_DOWN:
-            if(is_shift) s->pred_scale *= 0.9; 
+            if(is_shift) s->pred_scale /= s->settings.nav_intensity_factor; 
             else { s->vymin += pan_y/10; s->vymax += pan_y/10; } 
             break;
 

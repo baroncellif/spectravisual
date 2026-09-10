@@ -121,7 +121,11 @@ static void ensure_aux_loaded(AppState *state) {
     state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
     if (!state->lin_data) return;
     if (state->n_assignments == 0)
-        load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
+    {
+        char path[600];
+        settings_data_file(state, "assignments.txt", path, sizeof(path));
+        load_existing_assignments(path, state->assignments, &state->n_assignments);
+    }
     char f[512];
     if (find_assigned_frequency_file(f, sizeof(f)))
         state->n_lin_data = read_assigned_frequencies(f, state->lin_data, MAX_LIN_POINTS);
@@ -314,6 +318,7 @@ int main(int argc, char *argv[])
     /* An explicit .cat always wins.  Otherwise a previous Pred&Fit archive is
        a resumable session rather than a transient cache. */
     settings_init(&state, argv[0]);
+    settings_apply_defaults(&state);
     predfit_load_session(&state);
     if (!pred_arg) predfit_restore_latest(&state);
 

@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 #include <unistd.h>
+#include <stdio.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -52,7 +54,7 @@ static const SDL_Color DEFAULT_TRACE[MAX_SPECTRA] = {
 };
 
 void settings_restore_defaults(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     d->trace_width = 1;
     for (int i = 0; i < MAX_SPECTRA; i++) d->trace_color[i] = DEFAULT_TRACE[i];
     d->pred_width = 1;
@@ -70,6 +72,28 @@ void settings_restore_defaults(AppState *s) {
     d->show_peak_labels = 1;
     d->show_blend_marks = 1;
     d->plot_bg = 0;
+
+    d->nav_pan_px           = 100.0;
+    d->nav_zoom_factor      = 1.10;
+    d->nav_intensity_factor = 1.10;
+    d->nav_bar_px           = 4.0;
+    d->nav_fast_mult        = 3.0;
+    d->nav_trace_shift      = 0.05;
+    d->nav_wheel_scroll     = 45.0;
+
+    d->def_pf_sig = 5;  d->def_pf_noise = 50;  d->def_pf_thresh = 3.0;
+    d->def_avg_window = 10;
+    d->def_lorentz = 0.0; d->def_gauss = 0.0;
+    d->def_kaiser_beta = 1.0; d->def_kaiser_ceros = 6; d->def_kaiser_intrinsic = 0.0;
+    d->def_line_error = 0.01;
+    d->def_int_min = -10.0; d->def_int_max = 0.0;
+
+    /* Left empty on purpose: an absolute path to someone else's home would be
+       worse than nothing. Pred&Fit says what is missing and where to set it. */
+    d->edit_id = -1;
+    d->spcat_path[0] = '\0';
+    d->spfit_path[0] = '\0';
+    d->data_dir[0]   = '\0';
 }
 
 static void write_color(FILE *fp, const char *key, SDL_Color c) {
@@ -85,7 +109,7 @@ static int read_color(const char *value, SDL_Color *c) {
 }
 
 int settings_save(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     FILE *fp = fopen(g_path, "w");
     if (!fp) {
         snprintf(d->status, sizeof(d->status), "Cannot write %s", g_path);
@@ -112,18 +136,47 @@ int settings_save(AppState *s) {
     fprintf(fp, "show_peak_labels %d\n", d->show_peak_labels);
     fprintf(fp, "show_blend_marks %d\n", d->show_blend_marks);
     fprintf(fp, "plot_bg %d\n", d->plot_bg);
+
+    fprintf(fp, "nav_pan_px %.6g\n", d->nav_pan_px);
+    fprintf(fp, "nav_zoom_factor %.6g\n", d->nav_zoom_factor);
+    fprintf(fp, "nav_intensity_factor %.6g\n", d->nav_intensity_factor);
+    fprintf(fp, "nav_bar_px %.6g\n", d->nav_bar_px);
+    fprintf(fp, "nav_fast_mult %.6g\n", d->nav_fast_mult);
+    fprintf(fp, "nav_trace_shift %.6g\n", d->nav_trace_shift);
+    fprintf(fp, "nav_wheel_scroll %.6g\n", d->nav_wheel_scroll);
+
+    fprintf(fp, "def_pf_sig %d\n", d->def_pf_sig);
+    fprintf(fp, "def_pf_noise %d\n", d->def_pf_noise);
+    fprintf(fp, "def_pf_thresh %.6g\n", d->def_pf_thresh);
+    fprintf(fp, "def_avg_window %d\n", d->def_avg_window);
+    fprintf(fp, "def_lorentz %.6g\n", d->def_lorentz);
+    fprintf(fp, "def_gauss %.6g\n", d->def_gauss);
+    fprintf(fp, "def_kaiser_beta %.6g\n", d->def_kaiser_beta);
+    fprintf(fp, "def_kaiser_ceros %d\n", d->def_kaiser_ceros);
+    fprintf(fp, "def_kaiser_intrinsic %.6g\n", d->def_kaiser_intrinsic);
+    fprintf(fp, "def_line_error %.6g\n", d->def_line_error);
+    fprintf(fp, "def_int_min %.6g\n", d->def_int_min);
+    fprintf(fp, "def_int_max %.6g\n", d->def_int_max);
+
+    if (d->spcat_path[0]) fprintf(fp, "spcat_path %s\n", d->spcat_path);
+    if (d->spfit_path[0]) fprintf(fp, "spfit_path %s\n", d->spfit_path);
+    if (d->data_dir[0])   fprintf(fp, "data_dir %s\n", d->data_dir);
     fclose(fp);
     snprintf(d->status, sizeof(d->status), "Saved as default in %s", g_path);
     return 1;
 }
 
 static void settings_load(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     FILE *fp = fopen(g_path, "r");
     if (!fp) return;
-    char line[256];
+    char line[700];
     while (fgets(line, sizeof(line), fp)) {
         if (line[0] == '#') continue;
+        /* Trim the line ending: numbers ignore it, but a path would carry it
+           into the stored value and into every message that prints it. */
+        char *nl = strpbrk(line, "\r\n");
+        if (nl) *nl = '\0';
         char key[64];
         if (sscanf(line, "%63s", key) != 1) continue;
         const char *value = line + strlen(key);
@@ -145,6 +198,28 @@ static void settings_load(AppState *s) {
         else if (!strcmp(key, "assigned_color"))   read_color(value, &d->assigned_color);
         else if (!strcmp(key, "bar_color"))        read_color(value, &d->bar_color);
         else if (!strcmp(key, "cursor_color"))     read_color(value, &d->cursor_color);
+        else if (!strcmp(key, "nav_pan_px"))           d->nav_pan_px = atof(value);
+        else if (!strcmp(key, "nav_zoom_factor"))      d->nav_zoom_factor = atof(value);
+        else if (!strcmp(key, "nav_intensity_factor")) d->nav_intensity_factor = atof(value);
+        else if (!strcmp(key, "nav_bar_px"))           d->nav_bar_px = atof(value);
+        else if (!strcmp(key, "nav_fast_mult"))        d->nav_fast_mult = atof(value);
+        else if (!strcmp(key, "nav_trace_shift"))      d->nav_trace_shift = atof(value);
+        else if (!strcmp(key, "nav_wheel_scroll"))     d->nav_wheel_scroll = atof(value);
+        else if (!strcmp(key, "def_pf_sig"))           d->def_pf_sig = atoi(value);
+        else if (!strcmp(key, "def_pf_noise"))         d->def_pf_noise = atoi(value);
+        else if (!strcmp(key, "def_pf_thresh"))        d->def_pf_thresh = atof(value);
+        else if (!strcmp(key, "def_avg_window"))       d->def_avg_window = atoi(value);
+        else if (!strcmp(key, "def_lorentz"))          d->def_lorentz = atof(value);
+        else if (!strcmp(key, "def_gauss"))            d->def_gauss = atof(value);
+        else if (!strcmp(key, "def_kaiser_beta"))      d->def_kaiser_beta = atof(value);
+        else if (!strcmp(key, "def_kaiser_ceros"))     d->def_kaiser_ceros = atoi(value);
+        else if (!strcmp(key, "def_kaiser_intrinsic")) d->def_kaiser_intrinsic = atof(value);
+        else if (!strcmp(key, "def_line_error"))       d->def_line_error = atof(value);
+        else if (!strcmp(key, "def_int_min"))          d->def_int_min = atof(value);
+        else if (!strcmp(key, "def_int_max"))          d->def_int_max = atof(value);
+        else if (!strcmp(key, "spcat_path"))  snprintf(d->spcat_path, sizeof(d->spcat_path), "%s", value);
+        else if (!strcmp(key, "spfit_path"))  snprintf(d->spfit_path, sizeof(d->spfit_path), "%s", value);
+        else if (!strcmp(key, "data_dir"))    snprintf(d->data_dir, sizeof(d->data_dir), "%s", value);
         else if (!strncmp(key, "trace_color", 11)) {
             int idx = atoi(key + 11);
             if (idx >= 0 && idx < MAX_SPECTRA) read_color(value, &d->trace_color[idx]);
@@ -158,13 +233,75 @@ static void settings_load(AppState *s) {
     if (d->profile_opacity < 10 || d->profile_opacity > 100) d->profile_opacity = 65;
     if (d->trace_opacity   < 10 || d->trace_opacity   > 100) d->trace_opacity = 100;
     if (d->stick_opacity   < 10 || d->stick_opacity   > 100) d->stick_opacity = 100;
+    if (d->nav_pan_px < 1 || d->nav_pan_px > 1000) d->nav_pan_px = 100;
+    if (d->nav_zoom_factor < 1.01 || d->nav_zoom_factor > 4.0) d->nav_zoom_factor = 1.10;
+    if (d->nav_intensity_factor < 1.01 || d->nav_intensity_factor > 4.0) d->nav_intensity_factor = 1.10;
+    if (d->nav_bar_px < 0.5 || d->nav_bar_px > 200) d->nav_bar_px = 4.0;
+    if (d->nav_fast_mult < 1.0 || d->nav_fast_mult > 20.0) d->nav_fast_mult = 3.0;
+    if (d->nav_trace_shift <= 0.0 || d->nav_trace_shift > 1.0) d->nav_trace_shift = 0.05;
+    if (d->nav_wheel_scroll < 5 || d->nav_wheel_scroll > 400) d->nav_wheel_scroll = 45;
     snprintf(d->status, sizeof(d->status), "Loaded %s", g_path);
+}
+
+/* Looks for a Pickett program in the usual places, so an existing install is
+   found without anybody having to type a path. */
+static void autodetect_program(const char *name, char *out, size_t n) {
+    if (out[0]) return;
+    const char *home = getenv("HOME");
+    char cand[PATH_MAX];
+    const char *dirs[] = {"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"};
+    for (int i = 0; i < 3; i++) {
+        snprintf(cand, sizeof(cand), "%s/%s", dirs[i], name);
+        if (access(cand, X_OK) == 0) { snprintf(out, n, "%s", cand); return; }
+    }
+    if (home) {
+        const char *rel[] = {"Desktop/Programmi_SP/calpgm", "calpgm", "bin"};
+        for (int i = 0; i < 3; i++) {
+            snprintf(cand, sizeof(cand), "%s/%s/%s", home, rel[i], name);
+            if (access(cand, X_OK) == 0) { snprintf(out, n, "%s", cand); return; }
+        }
+    }
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "command -v %s 2>/dev/null", name);
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return;
+    char buf[PATH_MAX] = {0};
+    if (fgets(buf, sizeof(buf), fp)) {
+        char *nl = strpbrk(buf, "\r\n");
+        if (nl) *nl = '\0';
+        /* An interactive shell would answer an alias here, not a path. */
+        if (buf[0] == '/' && access(buf, X_OK) == 0) snprintf(out, n, "%s", buf);
+    }
+    pclose(fp);
 }
 
 void settings_init(AppState *s, const char *argv0) {
     resolve_settings_path(argv0);
     settings_restore_defaults(s);
     settings_load(s);
+    autodetect_program("spcat", s->settings.spcat_path, sizeof(s->settings.spcat_path));
+    autodetect_program("spfit", s->settings.spfit_path, sizeof(s->settings.spfit_path));
+}
+
+void settings_apply_defaults(AppState *s) {
+    const AppSettings *d = &s->settings;
+    s->pf_sig_pts        = d->def_pf_sig;
+    s->pf_noise_pts      = d->def_pf_noise;
+    s->pf_thresh         = d->def_pf_thresh;
+    s->rolling_avg_window= d->def_avg_window;
+    s->lorentz_gamma     = d->def_lorentz;
+    s->gauss_gamma       = d->def_gauss;
+    s->kaiser_beta       = d->def_kaiser_beta;
+    s->kaiser_ceros      = d->def_kaiser_ceros;
+    s->kaiser_intrinsic  = d->def_kaiser_intrinsic;
+    s->pred_min_log_int  = d->def_int_min;
+    s->pred_max_log_int  = d->def_int_max;
+    s->predfit.line_error_mhz = d->def_line_error;
+}
+
+void settings_data_file(const AppState *s, const char *name, char *out, size_t size) {
+    if (s->settings.data_dir[0]) snprintf(out, size, "%s/%s", s->settings.data_dir, name);
+    else                         snprintf(out, size, "%s", name);
 }
 
 SDL_Color settings_plot_bg(const AppState *s) {
@@ -224,117 +361,155 @@ static int pick_color(SDL_Color *c) {
     return 1;
 }
 
+
+/* Picks a file or a folder with the panel the user already knows. */
+static int pick_path(const char *prompt, int folder, char *out, size_t n) {
+#ifdef __APPLE__
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+             "osascript -e 'POSIX path of (choose %s with prompt \"%s\")' 2>/dev/null",
+             folder ? "folder" : "file", prompt);
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return 0;
+    char buf[600] = {0};
+    char *line = fgets(buf, sizeof(buf), fp);
+    pclose(fp);
+    if (!line) return 0;                       /* cancelled */
+    char *nl = strpbrk(buf, "\r\n");
+    if (nl) *nl = '\0';
+    if (!buf[0]) return 0;
+    snprintf(out, n, "%s", buf);
+    return 1;
+#else
+    (void)prompt; (void)folder; (void)out; (void)n;
+    return 0;
+#endif
+}
+
 /* ---------------------------------------------------------------------------
- *  Layout: one list of controls, walked by both the renderer and the events
+ *  Pages
+ *
+ *  One list of controls, built for the page in view and walked by both the
+ *  renderer and the event handler, so a control and its click target cannot
+ *  drift apart.
  * ------------------------------------------------------------------------- */
 typedef enum {
-    SC_HEADING, SC_STEPPER, SC_TOGGLE, SC_COLOR, SC_SWATCHES, SC_SEGMENT, SC_BUTTON
+    PAGE_PLOT = 0, PAGE_NAV, PAGE_ANALYSIS, PAGE_PATHS, PAGE_KEYS, PAGE_COUNT
+} SettingsPage;
+
+static const char *PAGE_NAME[PAGE_COUNT] = {"Plot", "Navigation", "Analysis", "Paths", "Shortcuts"};
+
+typedef enum {
+    SC_HEADING, SC_STEP_I, SC_STEP_F, SC_TOGGLE, SC_COLOR, SC_SWATCHES,
+    SC_SEGMENT, SC_PATH, SC_KEYROW, SC_NOTE, SC_BUTTON
 } SCtlKind;
 
 typedef enum {
+    /* plot */
     ID_TRACE_WIDTH, ID_TRACE_OPACITY, ID_TRACE_PALETTE, ID_PRED_WIDTH, ID_STICK_OPACITY,
     ID_PROFILE_WIDTH, ID_PROFILE_OPACITY, ID_PROFILE_COLOR,
     ID_BLEND_MARKS, ID_PEAK_COLOR, ID_ASSIGNED_COLOR, ID_BAR_COLOR, ID_CURSOR_COLOR,
-    ID_BG, ID_GRID, ID_LEGEND, ID_PEAK_LABELS, ID_SAVE, ID_RESET
+    ID_BG, ID_GRID, ID_LEGEND, ID_PEAK_LABELS,
+    /* navigation */
+    ID_PAN_PX, ID_ZOOM_FACTOR, ID_INT_FACTOR, ID_BAR_PX, ID_FAST_MULT,
+    ID_TRACE_SHIFT, ID_WHEEL_SCROLL,
+    /* analysis */
+    ID_PF_SIG, ID_PF_NOISE, ID_PF_THRESH, ID_AVG_WINDOW,
+    ID_LORENTZ, ID_GAUSS, ID_KBETA, ID_KCEROS, ID_KINTR, ID_LINE_ERROR,
+    ID_INT_MIN, ID_INT_MAX,
+    /* paths */
+    ID_SPCAT, ID_SPFIT, ID_DATA_DIR,
+    /* footer */
+    ID_SAVE, ID_RESET
 } SCtlId;
 
 typedef struct {
     int kind, id;
     const char *label;
-    SDL_Rect row;      /* the whole row            */
-    SDL_Rect control;  /* the interactive part     */
+    const char *detail;      /* second column of a shortcut row, or a note */
+    SDL_Rect row, control;
 } SCtl;
 
 #define SETTINGS_PAD   20
 #define SETTINGS_ROW   30
 #define SETTINGS_CTL_H 24
 #define SETTINGS_HEAD  28
+#define SETTINGS_KEY   22
 #define SETTINGS_FOOT  56
+#define SETTINGS_TAB_Y 48
+#define SETTINGS_TAB_H 30
+#define SETTINGS_TAB_W 100
+#define SETTINGS_TOP   92
 
 static int g_content_h = 0;   /* filled by build_controls, used to clamp scroll */
 
-static int build_controls(AppState *s, SCtl *out, int max, int w, int h) {
-    int n = 0, y = 64 - s->settings.scroll;
-    int content_w = w - 2 * SETTINGS_PAD;
-
-    #define PUSH(k, i, lab, ctl_w) do { \
-        if (n < max) { \
-            out[n].kind = (k); out[n].id = (i); out[n].label = (lab); \
-            out[n].row = (SDL_Rect){SETTINGS_PAD, y, content_w, (k) == SC_HEADING ? SETTINGS_HEAD : SETTINGS_ROW}; \
-            out[n].control = (SDL_Rect){SETTINGS_PAD + content_w - (ctl_w), \
-                                        y + (((k) == SC_HEADING ? SETTINGS_HEAD : SETTINGS_ROW) - SETTINGS_CTL_H) / 2, \
-                                        (ctl_w), SETTINGS_CTL_H}; \
-            y += out[n].row.h; n++; \
-        } \
-    } while (0)
-
-    PUSH(SC_HEADING, 0, "Traces", 0);
-    PUSH(SC_STEPPER,  ID_TRACE_WIDTH,   "Line width",        96);
-    PUSH(SC_STEPPER,  ID_TRACE_OPACITY, "Opacity (new traces)", 96);
-    PUSH(SC_SWATCHES, ID_TRACE_PALETTE, "Colours",           MAX_SPECTRA * 26);
-    y += 6;
-    PUSH(SC_HEADING, 0, "Prediction", 0);
-    PUSH(SC_STEPPER, ID_PRED_WIDTH,    "Stick width",        96);
-    PUSH(SC_STEPPER, ID_STICK_OPACITY, "Stick opacity",      96);
-    PUSH(SC_STEPPER, ID_PROFILE_WIDTH,   "Profile width",     96);
-    PUSH(SC_COLOR,   ID_PROFILE_COLOR,   "Profile colour",    56);
-    PUSH(SC_STEPPER, ID_PROFILE_OPACITY, "Profile opacity",   96);
-    PUSH(SC_TOGGLE,  ID_BLEND_MARKS,   "Mark blended lines", 30);
-    y += 6;
-    PUSH(SC_HEADING, 0, "Markers", 0);
-    PUSH(SC_COLOR, ID_PEAK_COLOR,     "Found peaks",     56);
-    PUSH(SC_COLOR, ID_ASSIGNED_COLOR, "Assigned lines",  56);
-    PUSH(SC_COLOR, ID_BAR_COLOR,      "Bar",             56);
-    PUSH(SC_COLOR, ID_CURSOR_COLOR,   "Cursor readout",  56);
-    y += 6;
-    PUSH(SC_HEADING, 0, "Plot", 0);
-    PUSH(SC_SEGMENT, ID_BG,          "Background",   210);
-    PUSH(SC_TOGGLE,  ID_GRID,        "Grid",          30);
-    PUSH(SC_TOGGLE,  ID_LEGEND,      "Legend",        30);
-    PUSH(SC_TOGGLE,  ID_PEAK_LABELS, "Peak labels",   30);
-    #undef PUSH
-
-    /* Height the list needs, so the scroll can be clamped to it. */
-    s->settings.status[sizeof(s->settings.status) - 1] = '\0';
-    g_content_h = y + s->settings.scroll + SETTINGS_PAD;
-
-    /* the footer keeps its place at the bottom whatever the window height */
-    if (n + 2 <= max) {
-        int fy = h - SETTINGS_FOOT + 6;
-        out[n++] = (SCtl){SC_BUTTON, ID_SAVE,  "Save as default",
-                          (SDL_Rect){SETTINGS_PAD, fy, 150, 30}, (SDL_Rect){SETTINGS_PAD, fy, 150, 30}};
-        out[n++] = (SCtl){SC_BUTTON, ID_RESET, "Restore defaults",
-                          (SDL_Rect){SETTINGS_PAD + 160, fy, 150, 30}, (SDL_Rect){SETTINGS_PAD + 160, fy, 150, 30}};
-    }
-    return n;
-}
-
-static void clamp_scroll(AppState *s, int h) {
-    int view = h - SETTINGS_FOOT - 64;
-    int max_scroll = g_content_h - 64 - view;
-    if (max_scroll < 0) max_scroll = 0;
-    if (s->settings.scroll < 0) s->settings.scroll = 0;
-    if (s->settings.scroll > max_scroll) s->settings.scroll = max_scroll;
-}
-
-static int *stepper_value(AppState *s, int id) {
+/* Value, range and presentation of every numeric control. */
+static int *int_value(AppState *s, int id) {
     switch (id) {
         case ID_TRACE_WIDTH:     return &s->settings.trace_width;
+        case ID_TRACE_OPACITY:   return &s->settings.trace_opacity;
         case ID_PRED_WIDTH:      return &s->settings.pred_width;
+        case ID_STICK_OPACITY:   return &s->settings.stick_opacity;
         case ID_PROFILE_WIDTH:   return &s->settings.profile_width;
         case ID_PROFILE_OPACITY: return &s->settings.profile_opacity;
-        case ID_TRACE_OPACITY:   return &s->settings.trace_opacity;
-        case ID_STICK_OPACITY:   return &s->settings.stick_opacity;
+        case ID_PF_SIG:          return &s->settings.def_pf_sig;
+        case ID_PF_NOISE:        return &s->settings.def_pf_noise;
+        case ID_AVG_WINDOW:      return &s->settings.def_avg_window;
+        case ID_KCEROS:          return &s->settings.def_kaiser_ceros;
         default:                 return NULL;
     }
 }
 
-/* Range and step of each stepper, and the unit shown next to the value. */
-static void stepper_range(int id, int *lo, int *hi, int *step, const char **unit) {
-    if (id == ID_PROFILE_OPACITY || id == ID_TRACE_OPACITY || id == ID_STICK_OPACITY) {
-        *lo = 10; *hi = 100; *step = 5; *unit = "%";
+static double *dbl_value(AppState *s, int id) {
+    switch (id) {
+        case ID_PAN_PX:       return &s->settings.nav_pan_px;
+        case ID_ZOOM_FACTOR:  return &s->settings.nav_zoom_factor;
+        case ID_INT_FACTOR:   return &s->settings.nav_intensity_factor;
+        case ID_BAR_PX:       return &s->settings.nav_bar_px;
+        case ID_FAST_MULT:    return &s->settings.nav_fast_mult;
+        case ID_TRACE_SHIFT:  return &s->settings.nav_trace_shift;
+        case ID_WHEEL_SCROLL: return &s->settings.nav_wheel_scroll;
+        case ID_PF_THRESH:    return &s->settings.def_pf_thresh;
+        case ID_LORENTZ:      return &s->settings.def_lorentz;
+        case ID_GAUSS:        return &s->settings.def_gauss;
+        case ID_KBETA:        return &s->settings.def_kaiser_beta;
+        case ID_KINTR:        return &s->settings.def_kaiser_intrinsic;
+        case ID_LINE_ERROR:   return &s->settings.def_line_error;
+        case ID_INT_MIN:      return &s->settings.def_int_min;
+        case ID_INT_MAX:      return &s->settings.def_int_max;
+        default:              return NULL;
     }
-    else                          { *lo = 1;  *hi = 5;   *step = 1;  *unit = "px"; }
+}
+
+typedef struct { double lo, hi, step; int decimals; const char *unit; } Range;
+
+static Range range_of(int id) {
+    switch (id) {
+        case ID_TRACE_WIDTH: case ID_PRED_WIDTH: case ID_PROFILE_WIDTH:
+                                return (Range){1, 5, 1, 0, "px"};
+        case ID_TRACE_OPACITY: case ID_STICK_OPACITY: case ID_PROFILE_OPACITY:
+                                return (Range){10, 100, 5, 0, "%"};
+        case ID_PAN_PX:         return (Range){5, 600, 5, 0, "px"};
+        case ID_BAR_PX:         return (Range){0.5, 50, 0.5, 1, "px"};
+        case ID_ZOOM_FACTOR:
+        case ID_INT_FACTOR:     return (Range){1.02, 2.5, 0.02, 2, "x"};
+        case ID_FAST_MULT:      return (Range){1, 10, 0.5, 1, "x"};
+        case ID_TRACE_SHIFT:    return (Range){0.01, 0.5, 0.01, 2, "pane"};
+        case ID_WHEEL_SCROLL:   return (Range){10, 200, 5, 0, "px"};
+        case ID_PF_SIG:         return (Range){1, 200, 1, 0, "pts"};
+        case ID_PF_NOISE:       return (Range){5, 2000, 5, 0, "pts"};
+        case ID_PF_THRESH:      return (Range){0.5, 20, 0.5, 1, "x sigma"};
+        case ID_AVG_WINDOW:     return (Range){1, 500, 1, 0, "pts"};
+        case ID_LORENTZ: case ID_GAUSS:
+                                return (Range){0, 20, 0.05, 2, "MHz"};
+        case ID_KBETA:          return (Range){0, 20, 0.25, 2, ""};
+        case ID_KCEROS:         return (Range){1, 64, 1, 0, "x"};
+        case ID_KINTR:          return (Range){0, 5, 0.005, 3, "MHz"};
+        case ID_LINE_ERROR:     return (Range){0.0001, 5, 0.001, 4, "MHz"};
+        case ID_INT_MIN: case ID_INT_MAX:
+                                return (Range){-20, 5, 0.5, 1, "log I"};
+        default:                return (Range){0, 100, 1, 0, ""};
+    }
 }
 
 static int *toggle_value(AppState *s, int id) {
@@ -358,16 +533,285 @@ static SDL_Color *color_value(AppState *s, int id) {
     }
 }
 
+static char *path_value(AppState *s, int id) {
+    switch (id) {
+        case ID_SPCAT:    return s->settings.spcat_path;
+        case ID_SPFIT:    return s->settings.spfit_path;
+        case ID_DATA_DIR: return s->settings.data_dir;
+        default:          return NULL;
+    }
+}
+
+/* The keyboard contract, listed for reference. */
+typedef struct { const char *keys, *what; } KeyRow;
+static const KeyRow KEY_ROWS[] = {
+    {"Navigate",   NULL},
+    {"Q  E",       "Zoom out / in on frequency"},
+    {"A  S",       "Pan left / right"},
+    {"W  Z",       "Scale experimental intensity"},
+    {"Tab",        "Autoscale intensity to the view"},
+    {"Shift Tab",  "Normalise the prediction in view"},
+    {"R",          "Reset the view"},
+    {"Up Down",    "Shift the spectrum vertically"},
+    {"Caps Lock",  "Hold for the fast multiplier"},
+    {"Measure and assign", NULL},
+    {"K  L",       "Move the bar"},
+    {"G",          "Distance between two points"},
+    {"Delete",     "Remove the latest peak"},
+    {"X",          "Export the view as BMP"},
+    {"H  ?",       "Shortcut overlay"},
+    {",",          "This window"},
+    {"Tools",      NULL},
+    {"N",          "Assignments"},
+    {"P",          "Peak finder"},
+    {"T",          "Rolling average"},
+    {"M",          "Broadening"},
+    {"D",          "Intensity analysis"},
+    {"C",          "Intensity range"},
+    {"F",          "Frequency jump"},
+    {"B",          "Transition filter"},
+    {"Mouse",      NULL},
+    {"left drag",  "Zoom into a frequency range"},
+    {"right drag", "Pick the peak in the range"},
+    {"alt drag",   "Slide the spectrum onto the prediction"},
+    {"click",      "Select a predicted transition"},
+    {"cmd click",  "Add to the selection"},
+    {"Without Sync", NULL},
+    {"shift + key", "The same commands act on the prediction only"}
+};
+#define KEY_ROW_COUNT ((int)(sizeof(KEY_ROWS) / sizeof(KEY_ROWS[0])))
+
+static int build_controls(AppState *s, SCtl *out, int max, int w, int h) {
+    int n = 0, y = SETTINGS_TOP - s->settings.scroll;
+    int content_w = w - 2 * SETTINGS_PAD;
+
+    #define PUSH(k, i, lab, det, ctl_w, row_h) do { \
+        if (n < max) { \
+            out[n].kind = (k); out[n].id = (i); out[n].label = (lab); out[n].detail = (det); \
+            out[n].row = (SDL_Rect){SETTINGS_PAD, y, content_w, (row_h)}; \
+            out[n].control = (SDL_Rect){SETTINGS_PAD + content_w - (ctl_w), \
+                                        y + ((row_h) - SETTINGS_CTL_H) / 2, (ctl_w), SETTINGS_CTL_H}; \
+            y += (row_h); n++; \
+        } \
+    } while (0)
+    #define NUM(i, lab)  PUSH(int_value(s, i) ? SC_STEP_I : SC_STEP_F, i, lab, NULL, 116, SETTINGS_ROW)
+    #define HEAD(lab)    PUSH(SC_HEADING, 0, lab, NULL, 0, SETTINGS_HEAD)
+
+    switch (s->settings.page) {
+    case PAGE_PLOT:
+        HEAD("Traces");
+        NUM(ID_TRACE_WIDTH,   "Line width");
+        NUM(ID_TRACE_OPACITY, "Opacity of a new trace");
+        PUSH(SC_SWATCHES, ID_TRACE_PALETTE, "Colours", NULL, MAX_SPECTRA * 26, SETTINGS_ROW);
+        y += 6;
+        HEAD("Prediction");
+        NUM(ID_PRED_WIDTH,      "Stick width");
+        NUM(ID_STICK_OPACITY,   "Stick opacity");
+        NUM(ID_PROFILE_WIDTH,   "Profile width");
+        PUSH(SC_COLOR, ID_PROFILE_COLOR, "Profile colour", NULL, 56, SETTINGS_ROW);
+        NUM(ID_PROFILE_OPACITY, "Profile opacity");
+        PUSH(SC_TOGGLE, ID_BLEND_MARKS, "Mark blended lines", NULL, 30, SETTINGS_ROW);
+        y += 6;
+        HEAD("Markers");
+        PUSH(SC_COLOR, ID_PEAK_COLOR,     "Found peaks",    NULL, 56, SETTINGS_ROW);
+        PUSH(SC_COLOR, ID_ASSIGNED_COLOR, "Assigned lines", NULL, 56, SETTINGS_ROW);
+        PUSH(SC_COLOR, ID_BAR_COLOR,      "Bar",            NULL, 56, SETTINGS_ROW);
+        PUSH(SC_COLOR, ID_CURSOR_COLOR,   "Cursor readout", NULL, 56, SETTINGS_ROW);
+        y += 6;
+        HEAD("Plot");
+        PUSH(SC_SEGMENT, ID_BG,          "Background",  NULL, 210, SETTINGS_ROW);
+        PUSH(SC_TOGGLE,  ID_GRID,        "Grid",        NULL, 30, SETTINGS_ROW);
+        PUSH(SC_TOGGLE,  ID_LEGEND,      "Legend",      NULL, 30, SETTINGS_ROW);
+        PUSH(SC_TOGGLE,  ID_PEAK_LABELS, "Peak labels", NULL, 30, SETTINGS_ROW);
+        break;
+
+    case PAGE_NAV:
+        HEAD("Keyboard steps");
+        NUM(ID_PAN_PX,      "Pan step (A / S)");
+        NUM(ID_ZOOM_FACTOR, "Zoom step (Q / E)");
+        NUM(ID_INT_FACTOR,  "Intensity step (W / Z)");
+        NUM(ID_BAR_PX,      "Bar step (K / L)");
+        NUM(ID_FAST_MULT,   "Fast multiplier (Caps Lock)");
+        PUSH(SC_NOTE, 0, NULL,
+             "The pan and bar steps are in pixels of the pane, so they move the same\n"
+             "distance on screen whatever the zoom.", 0, 44);
+        y += 6;
+        HEAD("Traces and panels");
+        NUM(ID_TRACE_SHIFT,  "Vertical shift of a trace");
+        NUM(ID_WHEEL_SCROLL, "Inspector scroll per notch");
+        break;
+
+    case PAGE_ANALYSIS:
+        HEAD("Peak finder");
+        NUM(ID_PF_SIG,    "Search width");
+        NUM(ID_PF_NOISE,  "Noise window");
+        NUM(ID_PF_THRESH, "Threshold");
+        y += 6;
+        HEAD("Smoothing");
+        NUM(ID_AVG_WINDOW, "Rolling average window");
+        y += 6;
+        HEAD("Broadening");
+        NUM(ID_LORENTZ, "Lorentz HWHM");
+        NUM(ID_GAUSS,   "Gauss HWHM");
+        NUM(ID_KBETA,   "Kaiser beta");
+        NUM(ID_KCEROS,  "Zero-pad");
+        NUM(ID_KINTR,   "Intrinsic FWHM");
+        y += 6;
+        HEAD("Prediction");
+        NUM(ID_INT_MIN,    "Intensity range, min");
+        NUM(ID_INT_MAX,    "Intensity range, max");
+        NUM(ID_LINE_ERROR, "Uncertainty written to .lin");
+        PUSH(SC_NOTE, 0, NULL,
+             "These are the values a tool starts from. Changing one here does not\n"
+             "touch the session in progress.", 0, 44);
+        break;
+
+    case PAGE_PATHS:
+        HEAD("Pickett programs");
+        PUSH(SC_PATH, ID_SPCAT, "SPCAT", NULL, 110, SETTINGS_ROW + 14);
+        PUSH(SC_PATH, ID_SPFIT, "SPFIT", NULL, 110, SETTINGS_ROW + 14);
+        PUSH(SC_NOTE, 0, NULL,
+             "Pred&Fit runs these two. Without them Calculate and Fit report what is\n"
+             "missing instead of failing silently.", 0, 44);
+        y += 6;
+        HEAD("Working files");
+        PUSH(SC_PATH, ID_DATA_DIR, "Data folder", NULL, 110, SETTINGS_ROW + 14);
+        PUSH(SC_NOTE, 0, NULL,
+             "Where assignments.txt, linelist.csv and the .fit session are read and\n"
+             "written. Empty means the folder the program was started from.", 0, 44);
+        break;
+
+    case PAGE_KEYS:
+        for (int i = 0; i < KEY_ROW_COUNT; i++) {
+            if (!KEY_ROWS[i].what) { if (i) y += 6; HEAD(KEY_ROWS[i].keys); }
+            else PUSH(SC_KEYROW, 0, KEY_ROWS[i].keys, KEY_ROWS[i].what, 0, SETTINGS_KEY);
+        }
+        break;
+    default: break;
+    }
+    #undef NUM
+    #undef HEAD
+
+    g_content_h = y + s->settings.scroll + SETTINGS_PAD;
+
+    if (n + 2 <= max) {
+        int fy = h - SETTINGS_FOOT + 6;
+        out[n++] = (SCtl){SC_BUTTON, ID_SAVE, "Save as default", NULL,
+                          (SDL_Rect){SETTINGS_PAD, fy, 150, 30}, (SDL_Rect){SETTINGS_PAD, fy, 150, 30}};
+        out[n++] = (SCtl){SC_BUTTON, ID_RESET, "Restore defaults", NULL,
+                          (SDL_Rect){SETTINGS_PAD + 160, fy, 150, 30}, (SDL_Rect){SETTINGS_PAD + 160, fy, 150, 30}};
+    }
+    #undef PUSH
+    return n;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Typing a value
+ * ------------------------------------------------------------------------- */
+static int edit_len(const AppSettings *d) { return (int)strlen(d->edit_buf); }
+static int edit_lo(const AppSettings *d)  { return d->edit_caret < d->edit_anchor ? d->edit_caret : d->edit_anchor; }
+static int edit_hi(const AppSettings *d)  { return d->edit_caret > d->edit_anchor ? d->edit_caret : d->edit_anchor; }
+
+static void edit_clamp(AppSettings *d) {
+    int n = edit_len(d);
+    if (d->edit_caret  < 0) d->edit_caret  = 0;
+    if (d->edit_caret  > n) d->edit_caret  = n;
+    if (d->edit_anchor < 0) d->edit_anchor = 0;
+    if (d->edit_anchor > n) d->edit_anchor = n;
+}
+
+static int edit_delete_selection(AppSettings *d) {
+    edit_clamp(d);
+    int lo = edit_lo(d), hi = edit_hi(d);
+    if (lo == hi) return 0;
+    memmove(d->edit_buf + lo, d->edit_buf + hi, strlen(d->edit_buf + hi) + 1);
+    d->edit_caret = d->edit_anchor = lo;
+    return 1;
+}
+
+static void edit_insert(AppSettings *d, const char *text) {
+    edit_delete_selection(d);
+    int n = edit_len(d), add = (int)strlen(text);
+    int room = (int)sizeof(d->edit_buf) - 1 - n;
+    if (add > room) add = room;
+    if (add <= 0) return;
+    memmove(d->edit_buf + d->edit_caret + add, d->edit_buf + d->edit_caret,
+            (size_t)(n - d->edit_caret) + 1);
+    memcpy(d->edit_buf + d->edit_caret, text, (size_t)add);
+    d->edit_caret += add;
+    d->edit_anchor = d->edit_caret;
+}
+
+static void edit_begin(AppState *s, int id) {
+    AppSettings *d = &s->settings;
+    Range r = range_of(id);
+    int *iv = int_value(s, id);
+    double *dv = dbl_value(s, id);
+    if (iv)      snprintf(d->edit_buf, sizeof(d->edit_buf), "%d", *iv);
+    else if (dv) snprintf(d->edit_buf, sizeof(d->edit_buf), "%.*f", r.decimals, *dv);
+    else return;
+    d->edit_id = id;
+    d->edit_anchor = 0;
+    d->edit_caret = edit_len(d);      /* the value starts selected */
+    SDL_StartTextInput();
+}
+
+static void edit_commit(AppState *s) {
+    AppSettings *d = &s->settings;
+    if (d->edit_id < 0) return;
+    char *end = NULL;
+    double v = strtod(d->edit_buf, &end);
+    if (end != d->edit_buf && isfinite(v)) {
+        Range r = range_of(d->edit_id);
+        if (v < r.lo) v = r.lo;
+        if (v > r.hi) v = r.hi;
+        int *iv = int_value(s, d->edit_id);
+        double *dv = dbl_value(s, d->edit_id);
+        if (iv)      *iv = (int)lround(v);
+        else if (dv) *dv = v;
+        if (d->edit_id == ID_TRACE_OPACITY) apply_trace_colors(s);
+    }
+    d->edit_id = -1;
+    SDL_StopTextInput();
+}
+
+static void edit_cancel(AppSettings *d) { d->edit_id = -1; SDL_StopTextInput(); }
+
+/* Only what can appear in a number, so a stray keystroke cannot corrupt one. */
+static int edit_accepts(const char *text) {
+    for (const char *p = text; *p; p++)
+        if (!((*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == '+' || *p == 'e' || *p == 'E'))
+            return 0;
+    return 1;
+}
+
+/* The typing area of a stepper row: between the minus and the plus. */
+static SDL_Rect stepper_field(SDL_Rect control) {
+    return (SDL_Rect){control.x + 27, control.y, control.w - 54, control.h};
+}
+
+static SDL_Rect page_tab(int i) {
+    return (SDL_Rect){16 + i * (SETTINGS_TAB_W + 4), SETTINGS_TAB_Y, SETTINGS_TAB_W, SETTINGS_TAB_H};
+}
+
+static void clamp_scroll(AppState *s, int h) {
+    int view = h - SETTINGS_FOOT - SETTINGS_TOP;
+    int max_scroll = g_content_h - SETTINGS_TOP - view;
+    if (max_scroll < 0) max_scroll = 0;
+    if (s->settings.scroll < 0) s->settings.scroll = 0;
+    if (s->settings.scroll > max_scroll) s->settings.scroll = max_scroll;
+}
+
 /* ---------------------------------------------------------------------------
  *  Window
  * ------------------------------------------------------------------------- */
 void settings_open(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     if (d->window) { SDL_RaiseWindow(d->window); return; }
-    d->window = SDL_CreateWindow("Display settings", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 520, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    d->window = SDL_CreateWindow("Settings", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                 560, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!d->window) return;
-    SDL_SetWindowMinimumSize(d->window, 420, 480);
+    SDL_SetWindowMinimumSize(d->window, 460, 420);
     d->renderer = SDL_CreateRenderer(d->window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!d->renderer) { SDL_DestroyWindow(d->window); d->window = NULL; return; }
     SDL_SetRenderDrawBlendMode(d->renderer, SDL_BLENDMODE_BLEND);
@@ -376,7 +820,7 @@ void settings_open(AppState *s) {
 }
 
 void settings_close(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     if (d->renderer) SDL_DestroyRenderer(d->renderer);
     if (d->window) SDL_DestroyWindow(d->window);
     d->renderer = NULL; d->window = NULL; d->open = 0; d->window_id = 0;
@@ -385,53 +829,108 @@ void settings_close(AppState *s) {
 void settings_dispose(AppState *s) { settings_close(s); }
 
 int settings_handle_event(AppState *s, const SDL_Event *e) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     if (!d->open) return 0;
     if (e->type == SDL_WINDOWEVENT && e->window.windowID == d->window_id &&
         e->window.event == SDL_WINDOWEVENT_CLOSE) { settings_close(s); return 1; }
+    /* While a value is being typed the keyboard belongs to that field. */
+    if (d->edit_id >= 0 && e->type == SDL_TEXTINPUT && e->text.windowID == d->window_id) {
+        if (edit_accepts(e->text.text)) edit_insert(d, e->text.text);
+        return 1;
+    }
+    if (d->edit_id >= 0 && e->type == SDL_KEYDOWN && e->key.windowID == d->window_id) {
+        SDL_Keymod mod = SDL_GetModState();
+        int cmd = (mod & (KMOD_GUI | KMOD_CTRL)) != 0, shift = (mod & KMOD_SHIFT) != 0;
+        SDL_Keycode k = e->key.keysym.sym;
+        if (cmd && k == SDLK_a) { d->edit_anchor = 0; d->edit_caret = edit_len(d); return 1; }
+        if (cmd && k == SDLK_v) {
+            char *clip = SDL_GetClipboardText();
+            if (clip) { if (edit_accepts(clip)) edit_insert(d, clip); SDL_free(clip); }
+            return 1;
+        }
+        if (cmd && (k == SDLK_c || k == SDLK_x)) {
+            edit_clamp(d);
+            int lo = edit_lo(d), hi = edit_hi(d);
+            if (lo == hi) { lo = 0; hi = edit_len(d); }
+            char tmp[64]; int m = hi - lo;
+            if (m > (int)sizeof(tmp) - 1) m = (int)sizeof(tmp) - 1;
+            memcpy(tmp, d->edit_buf + lo, (size_t)m); tmp[m] = '\0';
+            SDL_SetClipboardText(tmp);
+            if (k == SDLK_x) { d->edit_anchor = lo; d->edit_caret = hi; edit_delete_selection(d); }
+            return 1;
+        }
+        switch (k) {
+            case SDLK_LEFT:  d->edit_caret--; if (!shift) d->edit_anchor = d->edit_caret; edit_clamp(d); return 1;
+            case SDLK_RIGHT: d->edit_caret++; if (!shift) d->edit_anchor = d->edit_caret; edit_clamp(d); return 1;
+            case SDLK_HOME:  d->edit_caret = 0; if (!shift) d->edit_anchor = 0; return 1;
+            case SDLK_END:   d->edit_caret = edit_len(d); if (!shift) d->edit_anchor = d->edit_caret; return 1;
+            case SDLK_BACKSPACE:
+                if (!edit_delete_selection(d) && d->edit_caret > 0) {
+                    d->edit_anchor = d->edit_caret - 1; edit_delete_selection(d);
+                }
+                return 1;
+            case SDLK_DELETE:
+                if (!edit_delete_selection(d) && d->edit_caret < edit_len(d)) {
+                    d->edit_anchor = d->edit_caret + 1; edit_delete_selection(d);
+                }
+                return 1;
+            case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_TAB: edit_commit(s); return 1;
+            case SDLK_ESCAPE: edit_cancel(d); return 1;
+            default: return 1;
+        }
+    }
     if (e->type == SDL_KEYDOWN && e->key.windowID == d->window_id &&
         e->key.keysym.sym == SDLK_ESCAPE) { settings_close(s); return 1; }
+
+    int w = 0, h = 0;
+    if (d->window) SDL_GetWindowSize(d->window, &w, &h);
+
     if (e->type == SDL_MOUSEWHEEL && e->wheel.windowID == d->window_id) {
-        int w = 0, h = 0;
-        SDL_GetWindowSize(d->window, &w, &h);
-        SCtl probe[48];
-        build_controls(s, probe, 48, w, h);
+        SCtl probe[96];
+        build_controls(s, probe, 96, w, h);
         d->scroll -= e->wheel.y * 24;
         clamp_scroll(s, h);
         return 1;
     }
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != d->window_id) return 0;
 
-    int w = 0, h = 0;
-    SDL_GetWindowSize(d->window, &w, &h);
-    SCtl ctl[48];
-    int n = build_controls(s, ctl, 48, w, h);
-    int x = e->button.x, y = e->button.y;
+    /* A click anywhere else keeps what was typed, as in any other field. */
+    if (d->edit_id >= 0) edit_commit(s);
 
+    int x = e->button.x, y = e->button.y;
+    for (int p = 0; p < PAGE_COUNT; p++) {
+        if (point_in_rect(x, y, page_tab(p))) { d->page = p; d->scroll = 0; return 1; }
+    }
+
+    SCtl ctl[96];
+    int n = build_controls(s, ctl, 96, w, h);
     for (int i = 0; i < n; i++) {
         if (!point_in_rect(x, y, ctl[i].control)) continue;
         switch (ctl[i].kind) {
-            case SC_STEPPER: {
-                int *v = stepper_value(s, ctl[i].id);
+            case SC_STEP_I: {
+                if (point_in_rect(x, y, stepper_field(ctl[i].control))) { edit_begin(s, ctl[i].id); break; }
+                int *v = int_value(s, ctl[i].id);
                 if (!v) break;
-                int lo, hi, step; const char *unit;
-                stepper_range(ctl[i].id, &lo, &hi, &step, &unit);
+                Range r = range_of(ctl[i].id);
                 int mid = ctl[i].control.x + ctl[i].control.w / 2;
-                *v += (x < mid) ? -step : step;
-                if (*v < lo) *v = lo;
-                if (*v > hi) *v = hi;
+                *v += (x < mid) ? -(int)r.step : (int)r.step;
+                if (*v < (int)r.lo) *v = (int)r.lo;
+                if (*v > (int)r.hi) *v = (int)r.hi;
                 break;
             }
-            case SC_TOGGLE: {
-                int *v = toggle_value(s, ctl[i].id);
-                if (v) *v = !*v;
+            case SC_STEP_F: {
+                if (point_in_rect(x, y, stepper_field(ctl[i].control))) { edit_begin(s, ctl[i].id); break; }
+                double *v = dbl_value(s, ctl[i].id);
+                if (!v) break;
+                Range r = range_of(ctl[i].id);
+                int mid = ctl[i].control.x + ctl[i].control.w / 2;
+                *v += (x < mid) ? -r.step : r.step;
+                if (*v < r.lo) *v = r.lo;
+                if (*v > r.hi) *v = r.hi;
                 break;
             }
-            case SC_COLOR: {
-                SDL_Color *c = color_value(s, ctl[i].id);
-                if (c) pick_color(c);
-                break;
-            }
+            case SC_TOGGLE: { int *v = toggle_value(s, ctl[i].id); if (v) *v = !*v; break; }
+            case SC_COLOR:  { SDL_Color *c = color_value(s, ctl[i].id); if (c) pick_color(c); break; }
             case SC_SWATCHES: {
                 int idx = (x - ctl[i].control.x) / 26;
                 if (idx >= 0 && idx < MAX_SPECTRA) {
@@ -447,10 +946,28 @@ int settings_handle_event(AppState *s, const SDL_Event *e) {
                 s->settings.plot_bg = seg;
                 break;
             }
+            case SC_PATH: {
+                char *p = path_value(s, ctl[i].id);
+                if (!p) break;
+                int clear_x = ctl[i].control.x + ctl[i].control.w - 26;
+                if (x >= clear_x) { p[0] = '\0'; snprintf(d->status, sizeof(d->status), "Cleared."); break; }
+                char picked[512];
+                const char *prompt = ctl[i].id == ID_SPCAT ? "Select the SPCAT program"
+                                   : ctl[i].id == ID_SPFIT ? "Select the SPFIT program"
+                                                           : "Select the data folder";
+                if (pick_path(prompt, ctl[i].id == ID_DATA_DIR, picked, sizeof(picked))) {
+                    snprintf(p, 512, "%s", picked);
+                    snprintf(d->status, sizeof(d->status), "Set. Save as default to keep it.");
+                }
+                break;
+            }
             case SC_BUTTON:
                 if (ctl[i].id == ID_SAVE) settings_save(s);
-                else { settings_restore_defaults(s); apply_trace_colors(s); 
-                       snprintf(d->status, sizeof(d->status), "Back to the built-in defaults (not saved yet)."); }
+                else {
+                    settings_restore_defaults(s);
+                    apply_trace_colors(s);
+                    snprintf(d->status, sizeof(d->status), "Back to the built-in defaults (not saved yet).");
+                }
                 break;
             default: break;
         }
@@ -459,8 +976,18 @@ int settings_handle_event(AppState *s, const SDL_Event *e) {
     return 1;
 }
 
+/* Shortens a path in the middle, which keeps both the program name and enough
+   of the folder to tell two installations apart. */
+static void elide_path(const char *path, char *out, size_t n, int max_chars) {
+    int len = (int)strlen(path);
+    if (len <= max_chars) { snprintf(out, n, "%s", path); return; }
+    int keep_tail = max_chars - 12;
+    if (keep_tail < 8) keep_tail = 8;
+    snprintf(out, n, "%.9s...%s", path, path + len - keep_tail);
+}
+
 void settings_render(AppState *s) {
-    DisplaySettings *d = &s->settings;
+    AppSettings *d = &s->settings;
     if (!d->open || !d->renderer) return;
     SDL_Renderer *r = d->renderer;
 
@@ -476,35 +1003,50 @@ void settings_render(AppState *s) {
     SDL_SetRenderDrawColor(r, 19, 20, 22, 255);
     SDL_RenderClear(r);
     ui_fill(r, (SDL_Rect){0, 0, w, 42}, UI_TITLEBAR);
-    ui_text(r, UI_FONT_TITLE, "Display settings", SETTINGS_PAD, 12, UI_TEXT);
+    ui_text(r, UI_FONT_TITLE, "Settings", SETTINGS_PAD, 12, UI_TEXT);
+    for (int p = 0; p < PAGE_COUNT; p++)
+        ui_button(r, page_tab(p), PAGE_NAME[p], -1, UI_BTN_QUIET, d->page == p, mx, my, mdown);
+    ui_hline(r, 0, w, SETTINGS_TOP - 8, UI_LINE);
 
-    SCtl ctl[48];
-    int n = build_controls(s, ctl, 48, w, h);
+    SCtl ctl[96];
+    int n = build_controls(s, ctl, 96, w, h);
     clamp_scroll(s, h);
-    n = build_controls(s, ctl, 48, w, h);
-    char b[64];
+    n = build_controls(s, ctl, 96, w, h);
+    char b[256];
 
-    SDL_Rect list = {0, 42, w, h - SETTINGS_FOOT - 42};
+    SDL_Rect list = {0, SETTINGS_TOP - 8, w, h - SETTINGS_FOOT - (SETTINGS_TOP - 8)};
     for (int i = 0; i < n; i++) {
-        if (ctl[i].kind != SC_BUTTON) SDL_RenderSetClipRect(r, &list);
-        else                          SDL_RenderSetClipRect(r, NULL);
         SCtl *c = &ctl[i];
+        if (c->kind != SC_BUTTON) SDL_RenderSetClipRect(r, &list);
+        else                      SDL_RenderSetClipRect(r, NULL);
+
         switch (c->kind) {
             case SC_HEADING:
                 ui_hline(r, c->row.x, c->row.x + c->row.w, c->row.y + 6, UI_LINE_SOFT);
                 ui_text(r, UI_FONT_SANS_SM, c->label, c->row.x, c->row.y + 12, UI_FAINT);
                 break;
-            case SC_STEPPER: {
-                int *v = stepper_value(s, c->id);
+            case SC_STEP_I:
+            case SC_STEP_F: {
+                Range rg = range_of(c->id);
                 ui_text_v(r, UI_FONT_SANS, c->label, c->row.x, c->row, UI_DIM);
                 ui_button(r, (SDL_Rect){c->control.x, c->control.y, 26, c->control.h}, "-", -1,
                           UI_BTN_QUIET, 0, mx, my, mdown);
-                int lo, hi, step; const char *unit;
-                stepper_range(c->id, &lo, &hi, &step, &unit);
-                snprintf(b, sizeof(b), "%d %s", v ? *v : lo, unit);
-                ui_text_v(r, UI_FONT_MONO, b, c->control.x + 34, c->control, UI_TEXT);
-                ui_button(r, (SDL_Rect){c->control.x + c->control.w - 26, c->control.y, 26, c->control.h}, "+", -1,
-                          UI_BTN_QUIET, 0, mx, my, mdown);
+                if (d->edit_id == c->id) {
+                    ui_field_ex(r, stepper_field(c->control), NULL, d->edit_buf, rg.unit, 1,
+                                d->edit_caret, d->edit_anchor);
+                } else {
+                    if (c->kind == SC_STEP_I) {
+                        int *v = int_value(s, c->id);
+                        snprintf(b, sizeof(b), "%d %s", v ? *v : 0, rg.unit);
+                    } else {
+                        double *v = dbl_value(s, c->id);
+                        snprintf(b, sizeof(b), "%.*f %s", rg.decimals, v ? *v : 0.0, rg.unit);
+                    }
+                    int tw = ui_text_w(UI_FONT_MONO, b);
+                    ui_text_v(r, UI_FONT_MONO, b, c->control.x + (c->control.w - tw) / 2, c->control, UI_TEXT);
+                }
+                ui_button(r, (SDL_Rect){c->control.x + c->control.w - 26, c->control.y, 26, c->control.h},
+                          "+", -1, UI_BTN_QUIET, 0, mx, my, mdown);
                 break;
             }
             case SC_TOGGLE: {
@@ -533,6 +1075,41 @@ void settings_render(AppState *s) {
                 static const char *bg[3] = {"Graphite", "Black", "Navy"};
                 ui_text_v(r, UI_FONT_SANS, c->label, c->row.x, c->row, UI_DIM);
                 ui_segmented(r, c->control, bg, 3, s->settings.plot_bg);
+                break;
+            }
+            case SC_PATH: {
+                char *p = path_value(s, c->id);
+                ui_text(r, UI_FONT_SANS, c->label, c->row.x, c->row.y + 4, UI_DIM);
+                if (p && p[0]) {
+                    elide_path(p, b, sizeof(b), (c->row.w - 130) / 7);
+                    ui_text(r, UI_FONT_MONO_SM, b, c->row.x, c->row.y + 24, UI_TEXT);
+                } else {
+                    ui_text(r, UI_FONT_SANS_SM, "not set", c->row.x, c->row.y + 24, UI_WARN);
+                }
+                ui_button(r, (SDL_Rect){c->control.x, c->control.y, c->control.w - 28, c->control.h},
+                          "Choose", -1, UI_BTN_QUIET, 0, mx, my, mdown);
+                ui_button(r, (SDL_Rect){c->control.x + c->control.w - 24, c->control.y, 24, c->control.h},
+                          "", UI_ICON_CLOSE, UI_BTN_QUIET, 0, mx, my, mdown);
+                break;
+            }
+            case SC_KEYROW: {
+                SDL_Rect kb = {c->row.x, c->row.y + 1, ui_text_w(UI_FONT_MONO_SM, c->label) + 14, 18};
+                fill_rounded_rect(r, kb, 3, UI_RAISED);
+                ui_text_v(r, UI_FONT_MONO_SM, c->label, kb.x + 7, kb, UI_TEXT);
+                ui_text(r, UI_FONT_SANS_SM, c->detail, c->row.x + 118, c->row.y + 3, UI_DIM);
+                break;
+            }
+            case SC_NOTE: {
+                const char *t = c->detail;
+                int line_y = c->row.y + 2;
+                while (t && *t) {
+                    const char *nl = strchr(t, '\n');
+                    int len = nl ? (int)(nl - t) : (int)strlen(t);
+                    snprintf(b, sizeof(b), "%.*s", len, t);
+                    ui_text(r, UI_FONT_SANS_SM, b, c->row.x, line_y, UI_FAINT);
+                    line_y += 16;
+                    t = nl ? nl + 1 : NULL;
+                }
                 break;
             }
             case SC_BUTTON:
