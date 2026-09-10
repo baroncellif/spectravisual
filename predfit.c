@@ -248,6 +248,9 @@ static void parameter_label(PickettParameter *x) {
 static int write_inputs(AppState *s, int for_fit) {
     PredFitState *p = &s->predfit;
     if (!prepare_fit_dir(s)) return 0;
+    /* A .lin must contain one observation per quantum-number transition.
+       This also repairs any duplicate rows produced by older app versions. */
+    if (for_fit) deduplicate_assignments(s->assignments, &s->n_assignments);
     sync_basic_parameters(p);
     predfit_save_session(s);
     char var_path[600], int_path[600], par_path[600], lin_path[600];
@@ -777,6 +780,13 @@ static FitObservation report_observation(int line_number) {
     return g_report.obs[line_number - 1];
 }
 
+/* The assignment editor is the owner of the measured frequency.  A .fit file
+   is only the record of a particular SPFIT run, and is therefore stale as soon
+   as the same transition is assigned to a different experimental peak. */
+static int observation_is_current(const Assignment *a, FitObservation o) {
+    return o.found && fabs(o.obs - a->exp_freq) < 1e-5;
+}
+
 /* How well a line sits in the fit, read at a glance: red beyond 4 sigma, then
    orange, yellow, and green inside 1.5 sigma. */
 static SDL_Color residual_color(double z) {
@@ -1089,6 +1099,7 @@ void predfit_render_advanced(AppState *s) {
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
             FitObservation o = report_observation(actual + 1);
+            int current = observation_is_current(a, o);
             SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
             if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
             else if (i % 2)                       ui_fill(r, row, UI_PANEL);
@@ -1096,19 +1107,24 @@ void predfit_render_advanced(AppState *s) {
             /* The colour is the whole readout: how many sigma this line sits at. */
             SDL_Color c = UI_FAINT;
             double z = 0.0;
-            if (o.found && o.used && a->fit_enabled) {
+            if (current && o.used && a->fit_enabled) {
                 z = o.diff / o.unc;
                 c = residual_color(z);
                 ui_fill(r, (SDL_Rect){u.rows.x, y, 3, u.row_h - 2}, c);
+            } else if (a->fit_enabled) {
+                c = UI_TEXT;
             }
 
             int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
             snprintf(b, sizeof(b), "[%c] %2d %2d %2d - %2d %2d %2d", a->fit_enabled ? 'x' : ' ',
                      a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.Jl, a->pred.Kal, a->pred.Kcl);
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00) + 6, ty, c);
-            if (o.found) {
-                snprintf(b, sizeof(b), "%.5f", o.used ? o.obs : o.obs - 90000.0);
-                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.30), ty, c);
+            /* Always take the experimental frequency from the live assignment
+               list.  This makes the Lines and Fitting pages two views of the
+               exact same data, rather than a live list next to a .fit copy. */
+            snprintf(b, sizeof(b), "%.5f", a->exp_freq);
+            ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.30), ty, c);
+            if (current) {
                 snprintf(b, sizeof(b), "%.5f", o.calc);
                 ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.47), ty, c);
                 if (o.used) {
@@ -1119,6 +1135,10 @@ void predfit_render_advanced(AppState *s) {
                 } else {
                     ui_text(r, UI_FONT_MONO_SM, "not used in the fit", adv_col(u.table, 0.64), ty, UI_FAINT);
                 }
+            } else if (o.found) {
+                ui_text(r, UI_FONT_MONO_SM, "reassigned — run Fit", adv_col(u.table, 0.47), ty, UI_ACCENT_TEXT);
+            } else {
+                ui_text(r, UI_FONT_MONO_SM, "not fitted yet", adv_col(u.table, 0.47), ty, UI_FAINT);
             }
         }
 

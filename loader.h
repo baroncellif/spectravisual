@@ -35,6 +35,9 @@ int read_assigned_frequencies(const char *fname, double *out, int maxn);
 
 // Assignment helpers
 void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i);
+/* An assignment is identified by its complete upper/lower quantum-number
+   tuple, never by a calculated frequency (which changes after SPFIT). */
+void deduplicate_assignments(Assignment *list, int *n);
 void load_existing_assignments(const char *filename, Assignment *list, int *n);
 
 #endif

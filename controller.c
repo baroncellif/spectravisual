@@ -261,6 +261,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 }
                 if (point_in_rect(mx, my, ui_as_save(s, w))) {
                     char path[600];
+                    /* Persist the same canonical assignment list that SPFIT
+                       receives; old sessions may still contain duplicates
+                       created before QN-based identity was introduced. */
+                    deduplicate_assignments(s->assignments, &s->n_assignments);
+                    if (s->selected_assignment >= s->n_assignments)
+                        s->selected_assignment = s->n_assignments - 1;
                     settings_data_file(s, "assignments.txt", path, sizeof(path));
                     FILE *fp = fopen(path, "w");
                     if (fp) {

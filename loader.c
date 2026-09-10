@@ -456,15 +456,44 @@ int read_data_alloc(const char *fname, Point **pts,
     return n;
 }
 
+static int same_assignment_transition(const PredLine *a, const PredLine *b) {
+    return a->Ju  == b->Ju  && a->Kau == b->Kau && a->Kcu == b->Kcu &&
+           a->M1u == b->M1u && a->M2u == b->M2u && a->M3u == b->M3u &&
+           a->Jl  == b->Jl  && a->Kal == b->Kal && a->Kcl == b->Kcl &&
+           a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;
+}
+
+void deduplicate_assignments(Assignment *list, int *n) {
+    if (!list || !n || *n < 2) return;
+    int keep = 0;
+    for (int i = 0; i < *n; i++) {
+        int seen = -1;
+        for (int j = 0; j < keep; j++)
+            if (same_assignment_transition(&list[j].pred, &list[i].pred)) { seen = j; break; }
+        if (seen >= 0) {
+            /* Keep the latest assignment: when an old session is read, or a
+               line is reassigned, the final occurrence is the user's choice. */
+            list[seen] = list[i];
+        } else {
+            if (keep != i) list[keep] = list[i];
+            keep++;
+        }
+    }
+    *n = keep;
+}
+
 void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i) {
+    /* Frequencies from SPCAT are model-dependent.  QNs are the identity of a
+       transition, so a post-fit prediction must update the old row rather
+       than append a visually identical assignment. */
+    deduplicate_assignments(list, n);
     for(int i=0; i<*n; i++) {
-        // Check if freq matches (using small epsilon)
-        if(fabs(list[i].pred.freq_mhz - p.freq_mhz) < 1e-6) {
-        list[i].exp_freq = exp_f;
-        list[i].exp_int  = exp_i;
-        list[i].pred = p;
-        list[i].fit_enabled = 1;
-            printf("Updated assignment for %.4f MHz\n", p.freq_mhz);
+        if (same_assignment_transition(&list[i].pred, &p)) {
+            list[i].exp_freq = exp_f;
+            list[i].exp_int  = exp_i;
+            list[i].pred = p;
+            list[i].fit_enabled = 1;
+            printf("Updated assignment for transition at %.4f MHz\n", p.freq_mhz);
             return;
         }
     }
