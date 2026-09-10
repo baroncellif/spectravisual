@@ -3,10 +3,13 @@
 #include "ui_theme.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
+#include "settings.h"
 #include "algorithms.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
+#include <stdlib.h>
 
 // Pseudo-Voigt line profile (Thompson-Cox-Hastings), peak-normalized to 1.
 // gl = Lorentzian HWHM, gg = Gaussian HWHM (both MHz).
@@ -120,6 +123,101 @@ static double spectrum_df(const AppState *s) {
     return (d > 0.0) ? d : 0.0;
 }
 
+
+/* ---------------------------------------------------------------------------
+ *  The broadened profile, evaluated in one place
+ *
+ *  Both the drawing and Shift+Tab used to sample the profile on their own grid:
+ *  the renderer once per screen column, the normaliser on a uniform grid over
+ *  the view.  A predicted line is far narrower than either step as soon as the
+ *  view is a few MHz wide, so both missed the top of the line by a different
+ *  amount and the peak changed height with zoom - and after Shift+Tab it could
+ *  grow past the top of the pane when zooming in, because the drawing had found
+ *  a taller sample than the normaliser had.
+ *
+ *  The extremum of a line profile is at the line centre, so any interval is
+ *  evaluated at the centres it contains, plus a few samples for the shape in
+ *  between.  The answer no longer depends on the zoom.
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    int    active;      /* 0 when no usable profile is configured */
+    int    kmode;       /* 1 = Kaiser FFT lineshape               */
+    double dnu;         /* Kaiser fundamental resolution, MHz     */
+    double cutoff;      /* how far a line still contributes, MHz  */
+    double lorentz, gauss;
+} BroadCfg;
+
+static BroadCfg broad_config(const AppState *s) {
+    BroadCfg c;
+    memset(&c, 0, sizeof(c));
+    c.kmode = (s->broaden_mode == 1);
+    c.lorentz = s->lorentz_gamma;
+    c.gauss = s->gauss_gamma;
+    if (!s->broadening_active) return c;
+    if (c.kmode) {
+        double df = spectrum_df(s);
+        int cer = s->kaiser_ceros > 0 ? s->kaiser_ceros : 1;
+        c.dnu = cer * df;
+        if (c.dnu <= 0.0) return c;
+        kaiser_build_kernel(s->kaiser_beta, s->kaiser_intrinsic / c.dnu);
+        c.cutoff = KAISER_RMAX * c.dnu;
+        c.active = 1;
+    } else {
+        double bw = fmax(c.lorentz, c.gauss);
+        if (bw <= 0.0) return c;
+        c.cutoff = 50.0 * bw;
+        c.active = 1;
+    }
+    return c;
+}
+
+/* Sum of every line that reaches `f`. */
+static double broad_value_at(const AppState *s, const BroadCfg *c, double f) {
+    int lo = binary_search_pred_lower(s->pred_lines, s->n_pred, f - c->cutoff);
+    int hi = binary_search_pred_upper(s->pred_lines, s->n_pred, f + c->cutoff);
+    if (lo < 0) lo = 0;
+    if (hi >= s->n_pred) hi = s->n_pred - 1;
+    double sum = 0.0;
+    for (int k = lo; k <= hi; k++) {
+        double dist = f - s->pred_lines[k].freq_mhz;
+        if (fabs(dist) > c->cutoff || !pred_passes_filter(s, k)) continue;
+        if (c->kmode) sum += s->pred_lines[k].linear_int * kaiser_kernel(dist / c->dnu);
+        else          sum += s->pred_lines[k].linear_int * broaden_profile(dist, c->lorentz, c->gauss);
+    }
+    return c->kmode ? fabs(sum) : sum;   /* |FFT| of an in-phase FID */
+}
+
+/* How finely an interval has to be sampled for the shape between the centres. */
+static int broad_subsamples(const BroadCfg *c, double interval) {
+    double feature = c->kmode ? c->dnu : fmax(c->lorentz, c->gauss);
+    if (feature <= 0.0) return 1;
+    double want = interval / (0.25 * feature);
+    int sub = (want > 1.0) ? (int)ceil(want) : 1;
+    return sub > 8 ? 8 : sub;
+}
+
+/* Highest value the profile reaches in [f0, f1): the line centres inside the
+   interval, plus `sub` samples across it for the shape between them. */
+static double broad_max_between(const AppState *s, const BroadCfg *c, double f0, double f1, int sub) {
+    double best = 0.0;
+    if (sub < 1) sub = 1;
+    for (int i = 0; i < sub; i++) {
+        double v = broad_value_at(s, c, f0 + (i + 0.5) / sub * (f1 - f0));
+        if (v > best) best = v;
+    }
+    int lo = binary_search_pred_lower(s->pred_lines, s->n_pred, f0);
+    int hi = binary_search_pred_upper(s->pred_lines, s->n_pred, f1);
+    if (lo < 0) lo = 0;
+    if (hi >= s->n_pred) hi = s->n_pred - 1;
+    for (int k = lo; k <= hi; k++) {
+        if (s->pred_lines[k].freq_mhz < f0 || s->pred_lines[k].freq_mhz >= f1) continue;
+        if (!pred_passes_filter(s, k)) continue;
+        double v = broad_value_at(s, c, s->pred_lines[k].freq_mhz);
+        if (v > best) best = v;
+    }
+    return best;
+}
+
 double prediction_visible_max(const AppState *state, int samples) {
     if (!state || state->n_pred <= 0 || state->pvxmax <= state->pvxmin) return 0.0;
 
@@ -134,50 +232,23 @@ double prediction_visible_max(const AppState *state, int samples) {
         if (pred_passes_filter(state, k) && state->pred_lines[k].linear_int > stick_max)
             stick_max = state->pred_lines[k].linear_int;
 
-    int kmode = (state->broaden_mode == 1);
-    double bw = fmax(state->lorentz_gamma, state->gauss_gamma);
-    double dnu = 0.0, cutoff = 0.0;
-    int draw_broad = 0;
-    if (state->broadening_active) {
-        if (kmode) {
-            double df = spectrum_df(state);
-            int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
-            dnu = cer * df;
-            if (dnu > 0.0) {
-                kaiser_build_kernel(state->kaiser_beta, state->kaiser_intrinsic / dnu);
-                cutoff = KAISER_RMAX * dnu;
-                draw_broad = 1;
-            }
-        } else if (bw > 0.0) {
-            cutoff = 50.0 * bw;
-            draw_broad = 1;
-        }
-    }
-    if (!draw_broad) return stick_max;
+    BroadCfg cfg = broad_config(state);
+    if (!cfg.active) return stick_max;
 
-    int calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - cutoff);
-    int calc_end = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax + cutoff);
-    if (calc_start < 0) calc_start = 0;
-    if (calc_end >= state->n_pred) calc_end = state->n_pred - 1;
-    if (calc_start > calc_end) return 0.0;
-
+    /* Walked exactly the way the renderer walks it - the same intervals, the
+       same sub-sampling rule - so "normalise to the visible maximum" puts the
+       peak on the top of the pane instead of just below or just above it. */
     if (samples < 2) samples = 1024;
     if (samples > 4096) samples = 4096;
-    double profile_max = 0.0;
+    double col = (state->pvxmax - state->pvxmin) / samples;
+    int sub = broad_subsamples(&cfg, col);
+    double best = 0.0;
     for (int i = 0; i < samples; i++) {
-        double f = state->pvxmin + (double)i / samples * (state->pvxmax - state->pvxmin);
-        double intensity = 0.0;
-        for (int k = calc_start; k <= calc_end; k++) {
-            double dist = f - state->pred_lines[k].freq_mhz;
-            if (fabs(dist) > cutoff || !pred_passes_filter(state, k)) continue;
-            if (kmode) intensity += state->pred_lines[k].linear_int * kaiser_kernel(dist / dnu);
-            else       intensity += state->pred_lines[k].linear_int
-                                  * broaden_profile(dist, state->lorentz_gamma, state->gauss_gamma);
-        }
-        if (kmode) intensity = fabs(intensity);
-        if (intensity > profile_max) profile_max = intensity;
+        double f0 = state->pvxmin + i * col;
+        double v = broad_max_between(state, &cfg, f0, f0 + col, sub);
+        if (v > best) best = v;
     }
-    return profile_max;
+    return best;
 }
 
 // --- PALETTE ---
@@ -239,6 +310,21 @@ static double tick_step_for_pixels(double range, int pixels, int min_px) {
     return 10.0 * base;
 }
 
+/* Scratch geometry for the plotted lines, grown once and reused every frame. */
+static SDL_FPoint *g_plot_buf = NULL;
+static int         g_plot_cap = 0;
+
+static SDL_FPoint *plot_buf(int n) {
+    if (n <= g_plot_cap) return g_plot_buf;
+    int cap = g_plot_cap ? g_plot_cap : 4096;
+    while (cap < n) cap *= 2;
+    SDL_FPoint *grown = (SDL_FPoint *)realloc(g_plot_buf, (size_t)cap * sizeof(SDL_FPoint));
+    if (!grown) return NULL;
+    g_plot_buf = grown;
+    g_plot_cap = cap;
+    return g_plot_buf;
+}
+
 // --- MAIN RENDER ENTRY POINT ---
 // Draws one frame without presenting it. Screenshots read the pixels here,
 // because reading them after SDL_RenderPresent returns whatever the driver
@@ -255,7 +341,7 @@ void render_app_frame(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout
     // part of the pane instead of showing the window ground behind them.
     ui_fill(ren, (SDL_Rect){UI_RAIL_W, UI_CONTENT_Y,
                             l->plot_right - UI_RAIL_W,
-                            l->win_h - UI_CONTENT_Y - UI_STATUS_H}, UI_PLOT);
+                            l->win_h - UI_CONTENT_Y - UI_STATUS_H}, settings_plot_bg(state));
 
     // 2. Draw Graphs / Start Screen. Only draw a pane if it has data, so an
     // empty spectrum/prediction window isn't shown when only one was loaded.
@@ -294,7 +380,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     (void)font;
     // Clipping
     SDL_Rect clip = {l->exp_x, l->exp_y, l->exp_w, l->exp_h};
-    SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
+    SDL_Color plot_bg = settings_plot_bg(state);
+    SDL_SetRenderDrawColor(ren, plot_bg.r, plot_bg.g, plot_bg.b, 255);
     SDL_RenderFillRect(ren, &clip);
     SDL_RenderSetClipRect(ren, &clip);
     
@@ -344,16 +431,67 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (state->multi_layout)
             SDL_RenderSetClipRect(ren, &(SDL_Rect){l->exp_x, area_y, l->exp_w, area_h});
 
-        for (int i = start_idx; i <= end_idx; i++) {
-            double x1_val = sp->current_pts[i-1].x + sp->exp_offset;
-            double x2_val = sp->current_pts[i].x   + sp->exp_offset;
-            int px1 = l->exp_x + (x1_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-            int px2 = l->exp_x + (x2_val - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-            double f1 = (sp->current_pts[i-1].y - ymn)/(ymx - ymn) * gain;
-            double f2 = (sp->current_pts[i].y   - ymn)/(ymx - ymn) * gain;
-            int py1 = area_y + (1.0 - f1) * area_h - voff_px;
-            int py2 = area_y + (1.0 - f2) * area_h - voff_px;
-            SDL_RenderDrawLine(ren, px1, py1, px2, py2);
+        /* Geometry is built in float and handed over in one piece.  Where the
+           trace carries more samples than the pane has pixels, each column is
+           reduced to its own min-max bar: that is faster than drawing tens of
+           thousands of invisible segments, and it cannot drop a narrow line
+           that falls between two screen columns. */
+        /* Per-trace opacity: overlaid spectra stay readable through each other. */
+        SDL_Color trace_col = sp->color;
+        int op = sp->opacity > 0 ? sp->opacity : 100;
+        trace_col.a = (Uint8)(255 * (op / 100.0));
+
+        double sx = l->exp_w / (state->vxmax - state->vxmin);
+        int n_samples = end_idx - start_idx + 1;
+        float trace_w = (float)state->settings.trace_width;
+
+        if (n_samples > 2 * l->exp_w) {
+            /* One entry and one exit point per screen column, chained into a
+               single polyline. Drawing each column as its own bar left gaps
+               wherever two neighbouring columns did not overlap in y, which is
+               why the trace looked chopped up at intermediate zoom. */
+            int cap = 2 * (l->exp_w + 2);
+            SDL_FPoint *buf = plot_buf(cap);
+            int n = 0, col = INT_MIN;
+            double col_min = 0, col_max = 0, prev_y = 0;
+            for (int i = start_idx; i <= end_idx + 1; i++) {
+                int last = (i > end_idx);
+                double px = 0, py = 0;
+                int c = col;
+                if (!last) {
+                    px = l->exp_x + (sp->current_pts[i].x + sp->exp_offset - state->vxmin) * sx;
+                    double f = (sp->current_pts[i].y - ymn)/(ymx - ymn) * gain;
+                    py = area_y + (1.0 - f) * area_h - voff_px;
+                    c = (int)px;
+                }
+                if ((last || c != col) && col != INT_MIN && buf && n + 2 <= cap) {
+                    /* enter the column from the side the previous one left on,
+                       so the ribbon stays continuous and keeps its shape */
+                    double first = col_min, second = col_max;
+                    if (n > 0 && fabs(col_max - prev_y) < fabs(col_min - prev_y)) {
+                        first = col_max; second = col_min;
+                    }
+                    buf[n++] = (SDL_FPoint){(float)col + 0.5f, (float)first};
+                    buf[n++] = (SDL_FPoint){(float)col + 0.5f, (float)second};
+                    prev_y = second;
+                }
+                if (last) break;
+                if (c != col) { col = c; col_min = col_max = py; }
+                else {
+                    if (py < col_min) col_min = py;
+                    if (py > col_max) col_max = py;
+                }
+            }
+            if (buf) ui_plot_polyline(ren, buf, n, trace_w, trace_col);
+        } else {
+            SDL_FPoint *buf = plot_buf(n_samples);
+            int n = 0;
+            for (int i = start_idx; i <= end_idx && buf; i++) {
+                double px = l->exp_x + (sp->current_pts[i].x + sp->exp_offset - state->vxmin) * sx;
+                double f  = (sp->current_pts[i].y - ymn)/(ymx - ymn) * gain;
+                buf[n++] = (SDL_FPoint){(float)px, (float)(area_y + (1.0 - f) * area_h - voff_px)};
+            }
+            if (buf) ui_plot_polyline(ren, buf, n, trace_w, trace_col);
         }
 
         if (state->multi_layout)
@@ -363,7 +501,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     }
 
     // Legend (overlay only; in stack each band is labelled in place).
-    if (state->n_spectra > 1 && !state->multi_layout) {
+    if (state->n_spectra > 1 && !state->multi_layout && state->settings.show_legend) {
         int lx = l->exp_x + 10, ly = l->exp_y + 8;
         for (int s = 0; s < state->n_spectra; s++) {
             Spectrum *sp = &state->spectra[s];
@@ -379,7 +517,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
     // Draw already-assigned experimental frequencies loaded from config/LIN.
     if (state->n_lin_data > 0) {
-        SDL_SetRenderDrawColor(ren, 115, 225, 145, 130);
+        SDL_Color ac = state->settings.assigned_color;
+        SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, 130);
         int marker_top = l->exp_y + 4;
         int marker_bottom = l->exp_y + l->exp_h - 4;
 
@@ -390,7 +529,9 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
             SDL_RenderDrawLine(ren, px, marker_top, px, marker_bottom);
             SDL_Rect cap = {px - 2, marker_top, 5, 5};
+            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, 255);
             SDL_RenderFillRect(ren, &cap);
+            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, 130);
         }
     }
     
@@ -401,14 +542,17 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
         if (pkd < state->vxmin || pkd > state->vxmax) continue;
 
         int px = l->exp_x + (pkd - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-        SDL_SetRenderDrawColor(ren, 245, 210, 75, 220);
+        SDL_Color pc = state->settings.peak_color;
+        SDL_SetRenderDrawColor(ren, pc.r, pc.g, pc.b, 220);
         SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
 
-        char label[64]; fmt_mhz(label, sizeof(label), pkx, 3);   // true frequency
-        SDL_Rect tag = {px + 4, l->exp_y + 8, ui_text_w(UI_FONT_MONO_SM, label) + 14, 19};
-        if (tag.x + tag.w < l->exp_x + l->exp_w) {
-            fill_rounded_rect(ren, tag, 3, (SDL_Color){28, 24, 12, 225});
-            ui_text_v(ren, UI_FONT_MONO_SM, label, tag.x + 7, tag, UI_WARN);
+        if (state->settings.show_peak_labels) {
+            char label[64]; fmt_mhz(label, sizeof(label), pkx, 3);   // true frequency
+            SDL_Rect tag = {px + 4, l->exp_y + 8, ui_text_w(UI_FONT_MONO_SM, label) + 14, 19};
+            if (tag.x + tag.w < l->exp_x + l->exp_w) {
+                fill_rounded_rect(ren, tag, 3, (SDL_Color){28, 24, 12, 225});
+                ui_text_v(ren, UI_FONT_MONO_SM, label, tag.x + 7, tag, pc);
+            }
         }
     }
 
@@ -416,7 +560,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     if(state->bar_active) {
         if(state->bar_x >= state->vxmin && state->bar_x <= state->vxmax) {
             int bx = l->exp_x + (state->bar_x - state->vxmin)/(state->vxmax - state->vxmin) * l->exp_w;
-            SDL_SetRenderDrawColor(ren, 255, 95, 95, 230);
+            SDL_Color bc = state->settings.bar_color;
+            SDL_SetRenderDrawColor(ren, bc.r, bc.g, bc.b, 230);
             SDL_RenderDrawLine(ren, bx, l->exp_y, bx, l->exp_y + l->exp_h);
         }
     }
@@ -480,8 +625,10 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     if (xstep > 0 && xrange > 0)
     for(double x=xstart; x<=state->vxmax; x+=xstep) {
         int px = l->exp_x + (x - state->vxmin)/xrange * l->exp_w;
-        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 60);
-        SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
+        if (state->settings.show_grid) {
+            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 60);
+            SDL_RenderDrawLine(ren, px, l->exp_y, px, l->exp_y + l->exp_h);
+        }
         SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->exp_y + l->exp_h, px, l->exp_y + l->exp_h + 4);
 
@@ -506,8 +653,10 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             // Draw Tick on left axis
             SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
             SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x - 5, py);
-            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 45);
-            SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x + l->exp_w, py);
+            if (state->settings.show_grid) {
+                SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 45);
+                SDL_RenderDrawLine(ren, l->exp_x, py, l->exp_x + l->exp_w, py);
+            }
             
             char buf[32];
             snprintf(buf, sizeof(buf), "%.1e", y);
@@ -523,7 +672,8 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     (void)font;
     SDL_Rect pred_rect = {l->pred_x, l->pred_y, l->pred_w, l->pred_h};
-    SDL_SetRenderDrawColor(ren, COL_PANEL.r, COL_PANEL.g, COL_PANEL.b, COL_PANEL.a);
+    SDL_Color pred_bg = settings_plot_bg(state);
+    SDL_SetRenderDrawColor(ren, pred_bg.r, pred_bg.g, pred_bg.b, 255);
     SDL_RenderFillRect(ren, &pred_rect);
 
     ui_vline(ren, l->pred_x, l->pred_y, l->pred_y + l->pred_h, UI_AXIS);
@@ -538,6 +688,33 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         int p_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax);
         if(p_start < 0) p_start = 0; 
         if(p_end >= state->n_pred) p_end = state->n_pred - 1;
+
+        // Broadening simulation: mode 0 = analytic (L/G/V), mode 1 = Kaiser-FFT.
+        BroadCfg cfg = broad_config(state);
+        if (cfg.active) {
+            /* Drawn under the sticks and with its own opacity: the sticks
+               carry the branch and dipole colour code, and a solid profile on
+               top of them hides exactly the information being assigned. */
+            SDL_Color prc = state->settings.profile_color;
+            prc.a = (Uint8)(255 * (state->settings.profile_opacity / 100.0));
+            int steps = l->pred_w;
+            SDL_FPoint *pbuf = plot_buf(steps + 1);
+            int pn = 0;
+
+            double span     = state->pvxmax - state->pvxmin;
+            double col_span = span / (double)steps;
+            int sub = broad_subsamples(&cfg, col_span);
+
+            for (int i = 0; i < steps; i++) {
+                double f0 = state->pvxmin + i * col_span;
+                double best = broad_max_between(state, &cfg, f0, f0 + col_span, sub);
+                double h_ratio = (best / state->pred_global_max) * state->pred_scale;
+                double py = l->pred_y + l->pred_h - h_ratio * (l->pred_h - 10);
+                if (py < l->pred_y) py = l->pred_y;          /* clip at the top */
+                if (pbuf && pn <= steps) pbuf[pn++] = (SDL_FPoint){(float)(l->pred_x + i), (float)py};
+            }
+            if (pbuf) ui_plot_polyline(ren, pbuf, pn, (float)state->settings.profile_width, prc);
+        }
 
         // Draw all predicted lines. Lines that collapse into the same pixel column
         // are spread by a few pixels so blended transitions remain visible.
@@ -564,7 +741,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     if (draw_n > 7) offset = (offset * 8) / draw_n;
                     draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
                 }
-                if (group_n + overflow_n > 1) {
+                if (group_n + overflow_n > 1 && state->settings.show_blend_marks) {
                     SDL_Rect cluster_mark = {group_sx - 2, l->pred_y + 4, 5, 2};
                     fill_rounded_rect(ren, cluster_mark, 1, (SDL_Color){147, 149, 156, 120});
                 }
@@ -590,82 +767,26 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 if (draw_n > 7) offset = (offset * 8) / draw_n;
                 draw_pred_line(ren, state, l, group_idx[k], group_sx + offset, group_sy[k]);
             }
-            if (group_n + overflow_n > 1) {
+            if (group_n + overflow_n > 1 && state->settings.show_blend_marks) {
                     SDL_Rect cluster_mark = {group_sx - 2, l->pred_y + 4, 5, 2};
                     fill_rounded_rect(ren, cluster_mark, 1, (SDL_Color){147, 149, 156, 120});
             }
         }
 
-        // Broadening Simulation: mode 0 = analytic (L/G/V), mode 1 = Kaiser-FFT
-        int   kmode = (state->broaden_mode == 1);
-        double bw   = fmax(state->lorentz_gamma, state->gauss_gamma);
-        double dnu  = 0.0, cutoff = 0.0;
-        int draw_broad = 0;
-        if (state->broadening_active) {
-            if (kmode) {
-                double df = spectrum_df(state);
-                int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
-                dnu = cer * df;                       // fundamental resolution (MHz)
-                if (dnu > 0.0) {
-                    double gg = state->kaiser_intrinsic / dnu; // intrinsic FWHM in res units
-                    kaiser_build_kernel(state->kaiser_beta, gg);
-                    cutoff = KAISER_RMAX * dnu;
-                    draw_broad = 1;
-                }
-            } else if (bw > 0.0) {
-                cutoff = 50.0 * bw;
-                draw_broad = 1;
-            }
-        }
-        if(draw_broad) {
-            SDL_SetRenderDrawColor(ren, 0, 255, 255, 150); // Cyan transparent
-            int steps = l->pred_w;
-            double prev_y = -1;
-
-            // Optimization: Only calc lines near visible window + cutoff
-            int p_calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - cutoff);
-            int p_calc_end   = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax + cutoff);
-            if(p_calc_start < 0) p_calc_start=0;
-            if(p_calc_end >= state->n_pred) p_calc_end=state->n_pred-1;
-
-            for(int i=0; i<steps; i++) {
-                double f = state->pvxmin + (double)i/l->pred_w * (state->pvxmax - state->pvxmin);
-                double raw_f = f;   // predictions are drawn at their true frequency now
-                double intensity_sum = 0;  // analytic: incoherent; kaiser: coherent (signed)
-
-                for(int k=p_calc_start; k<=p_calc_end; k++) {
-                    double dist = raw_f - state->pred_lines[k].freq_mhz;
-                    if(fabs(dist) > cutoff) continue;
-                    if (!pred_passes_filter(state, k)) continue;
-                    if (kmode)
-                        intensity_sum += state->pred_lines[k].linear_int * kaiser_kernel(dist / dnu);
-                    else
-                        intensity_sum += state->pred_lines[k].linear_int
-                                         * broaden_profile(dist, state->lorentz_gamma, state->gauss_gamma);
-                }
-                if (kmode) intensity_sum = fabs(intensity_sum); // |FFT| of in-phase FID
-
-                double h_ratio = (intensity_sum / state->pred_global_max) * state->pred_scale;
-                int py = l->pred_y + l->pred_h - (int)(h_ratio * (l->pred_h - 10));
-                if(py < l->pred_y) py = l->pred_y; // Clip top
-
-                if(prev_y != -1) SDL_RenderDrawLine(ren, l->pred_x + i - 1, (int)prev_y, l->pred_x + i, py);
-                prev_y = py;
-            }
-        }
-        
         // Navigation Bar (Prediction)
         if(state->bar_active) {
             if(state->pbar_x >= state->pvxmin && state->pbar_x <= state->pvxmax) {
                 int bx = l->pred_x + (state->pbar_x - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
-                SDL_SetRenderDrawColor(ren, 255, 150, 70, 230);
+                SDL_Color bc2 = state->settings.bar_color;
+                SDL_SetRenderDrawColor(ren, bc2.r, bc2.g, bc2.b, 230);
                 SDL_RenderDrawLine(ren, bx, l->pred_y, bx, l->pred_y + l->pred_h);
             }
         }
 
         // Draw assigned-frequency dots in the prediction pane as a compact locator.
         if (state->n_lin_data > 0) {
-            SDL_SetRenderDrawColor(ren, 115, 225, 145, 200);
+            SDL_Color ac2 = state->settings.assigned_color;
+            SDL_SetRenderDrawColor(ren, ac2.r, ac2.g, ac2.b, 200);
             int marker_y = l->pred_y + l->pred_h - 5; 
             
             for (int i=0; i<state->n_lin_data; i++) {
@@ -690,8 +811,10 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
     if (xstep > 0 && xrange > 0)
     for(double x=xstart; x<=state->pvxmax; x+=xstep) {
         int px = l->pred_x + (x - state->pvxmin)/xrange * l->pred_w;
-        SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
-        SDL_RenderDrawLine(ren, px, l->pred_y, px, l->pred_y + l->pred_h);
+        if (state->settings.show_grid) {
+            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, COL_GRID.a);
+            SDL_RenderDrawLine(ren, px, l->pred_y, px, l->pred_y + l->pred_h);
+        }
         SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
         SDL_RenderDrawLine(ren, px, l->pred_y + l->pred_h, px, l->pred_y + l->pred_h + 4);
         char buf[40]; fmt_mhz(buf, sizeof(buf), x, 3);
@@ -783,6 +906,8 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
                   UI_BTN_QUIET, 0, mx, my, mdown);
         ui_button(ren, ui_top_rect(UI_TOP_HELP, l->win_w), "Shortcuts", UI_ICON_HELP,
                   UI_BTN_QUIET, state->show_help, mx, my, mdown);
+        ui_button(ren, ui_top_rect(UI_TOP_SETTINGS, l->win_w), "", UI_ICON_GEAR,
+                  UI_BTN_QUIET, state->settings.open, mx, my, mdown);
     }
 
     /* the error / hint line sits at the left of the document bar */
@@ -997,9 +1122,10 @@ static void draw_pred_line(SDL_Renderer *ren, AppState *state, Layout *l, int id
         SDL_RenderDrawLine(ren, sx - 1, l->pred_y + l->pred_h, sx - 1, sy1);
         SDL_RenderDrawLine(ren, sx + 1, l->pred_y + l->pred_h, sx + 1, sy1);
     } else {
-        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 195);
+        int stick_op = state->settings.stick_opacity > 0 ? state->settings.stick_opacity : 100;
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, (Uint8)(255 * (stick_op / 100.0)));
     }
-    SDL_RenderDrawLine(ren, sx, l->pred_y + l->pred_h, sx, sy1);
+    ui_thick_line(ren, sx, l->pred_y + l->pred_h, sx, sy1, state->settings.pred_width);
 }
 
 static int field_focus(AppState *st, int which) { return (int)st->input_state == which; }
@@ -1097,7 +1223,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         ui_button(ren, ui_as_delete(state, w), "Delete selected", -1, UI_BTN_DANGER, 0, mx, my, m_down);
 
         SDL_Rect save = ui_as_save(state, w);
-        ui_text(ren, UI_FONT_SANS_SM, "Written to assignments.txt and assigned.lin.",
+        ui_text(ren, UI_FONT_SANS_SM, "Written to assignments.txt in the working directory.",
                 save.x, save.y + save.h + 10, UI_FAINT);
     }
 
@@ -1352,30 +1478,36 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         for (int i = 0; i < state->n_spectra; i++) {
             Spectrum *sp = &state->spectra[i];
             SDL_Rect row = ui_spec_row(w, i);
+            SDL_Rect l1 = ui_spec_line1(w, i), l2 = ui_spec_line2(w, i);
             if (i == state->active_spec) fill_rounded_rect(ren, row, 3, UI_ACCENT_SOFT);
             else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
-            fill_rounded_rect(ren, (SDL_Rect){row.x + 6, row.y + 9, 9, 9}, 2, sp->color);
-            SDL_Rect name = ui_spec_name(w, i);
+            fill_rounded_rect(ren, (SDL_Rect){l1.x + 6, l1.y + 8, 9, 9}, 2, sp->color);
             char nm[24]; snprintf(nm, sizeof(nm), "%.16s", sp->name);
-            ui_text_v(ren, UI_FONT_SANS, nm, row.x + 22, row, sp->visible ? UI_TEXT : UI_FAINT);
-            if (sp->voffset != 0.0) {
-                snprintf(nm, sizeof(nm), "%+.2f", sp->voffset);
-                ui_text_right(ren, UI_FONT_MONO_SM, nm, name.x + name.w,
-                              row.y + (row.h - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_FAINT);
-            }
-            ui_button(ren, ui_spec_minus(w, i), "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
-            ui_button(ren, ui_spec_plus(w, i),  "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_text_v(ren, UI_FONT_SANS, nm, l1.x + 22, l1, sp->visible ? UI_TEXT : UI_FAINT);
             ui_button(ren, ui_spec_vis(w, i), "", UI_ICON_EYE, UI_BTN_QUIET, sp->visible, mx, my, m_down);
             ui_button(ren, ui_spec_del(w, i), "", UI_ICON_CLOSE, UI_BTN_DANGER, 0, mx, my, m_down);
+
+            /* second line: the numbers that belong to this trace alone */
+            ui_text_v(ren, UI_FONT_SANS_SM, "shift", l2.x + 6, l2, UI_FAINT);
+            ui_button(ren, ui_spec_minus(w, i), "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, ui_spec_plus(w, i),  "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            snprintf(nm, sizeof(nm), "%+.2f", sp->voffset);
+            ui_text_v(ren, UI_FONT_MONO_SM, nm, ui_spec_plus(w, i).x + 26, l2, UI_DIM);
+
+            int op = sp->opacity > 0 ? sp->opacity : 100;
+            ui_button(ren, ui_spec_op_minus(w, i), "-", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            ui_button(ren, ui_spec_op_plus(w, i),  "+", -1, UI_BTN_QUIET, 0, mx, my, m_down);
+            snprintf(nm, sizeof(nm), "%d%%", op);
+            ui_text_v(ren, UI_FONT_MONO_SM, nm,
+                      ui_spec_op_minus(w, i).x + 26, l2, op < 100 ? UI_ACCENT_TEXT : UI_DIM);
         }
 
         SDL_Rect last = ui_spec_row(w, state->n_spectra > 0 ? state->n_spectra : 0);
         if (state->n_spectra == 0)
             ui_text(ren, UI_FONT_SANS_SM, "Drop a spectrum file to add one.", last.x + 6, last.y + 4, UI_FAINT);
         else
-            ui_text(ren, UI_FONT_SANS_SM, "Drop a file to add a trace. - / + shift it.",
-                    last.x + 6, last.y + 6, UI_FAINT);
+            ui_text(ren, UI_FONT_SANS_SM, "Drop a file to add a trace.", last.x + 6, last.y + 6, UI_FAINT);
     }
 
     if (state->win_predfit.visible) {
@@ -1583,9 +1715,10 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         int bx = mx + 14, by = my - 30;
         if (bx + 230 > l->exp_x + l->exp_w) bx = mx - 230;
         if (by < l->exp_y + 6) by = l->exp_y + 6;
-        ui_tag(ren, bx, by, buf, UI_TEXT);
+        ui_tag(ren, bx, by, buf, state->settings.cursor_color);
 
-        SDL_SetRenderDrawColor(ren, UI_ACCENT.r, UI_ACCENT.g, UI_ACCENT.b, 150);
+        SDL_Color cc = state->settings.cursor_color;
+        SDL_SetRenderDrawColor(ren, cc.r, cc.g, cc.b, 150);
         SDL_RenderDrawLine(ren, mx, l->exp_y, mx, l->exp_y + l->exp_h);
     }
 

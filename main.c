@@ -13,6 +13,7 @@
 #include "view.h"
 #include "controller.h"
 #include "predfit.h"
+#include "settings.h"
 
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
@@ -75,18 +76,6 @@ static void init_app_defaults(AppState *state) {
     state->pending_select = -1;
     state->pending_remove = -1;
 }
-
-// Distinct colors auto-assigned to spectra as they are loaded.
-static const SDL_Color SPEC_PALETTE[MAX_SPECTRA] = {
-    {205, 214, 225, 235},  // light grey-blue (matches the original single-trace)
-    { 90, 200, 250, 235},  // cyan
-    {255, 170,  80, 235},  // orange
-    {130, 220, 130, 235},  // green
-    {235, 130, 200, 235},  // pink
-    {245, 220,  90, 235},  // yellow
-    {170, 150, 245, 235},  // violet
-    {240, 110, 110, 235},  // red
-};
 
 // Copy the active spectrum's fields into the legacy AppState fields the tools read.
 static void mirror_active(AppState *state) {
@@ -198,7 +187,8 @@ static int add_spectrum(AppState *state, const char *path) {
     sp->xmin = xmin; sp->xmax = xmax; sp->ymin = ymin; sp->ymax = ymax;
     sp->visible = 1;
     sp->vscale = 1.0;
-    sp->color = SPEC_PALETTE[idx % MAX_SPECTRA];
+    sp->color = state->settings.trace_color[idx % MAX_SPECTRA];
+    sp->opacity = state->settings.trace_opacity;
     snprintf(sp->path, sizeof(sp->path), "%s", path);
     spec_basename(path, sp->name, sizeof(sp->name));
 
@@ -322,6 +312,8 @@ int main(int argc, char *argv[])
 
     /* An explicit .cat always wins.  Otherwise a previous Pred&Fit archive is
        a resumable session rather than a transient cache. */
+    settings_init(&state, argv[0]);
+    predfit_load_session(&state);
     if (!pred_arg) predfit_restore_latest(&state);
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
@@ -351,6 +343,16 @@ int main(int argc, char *argv[])
 
     if (pred_arg) set_predictions(&state, pred_arg);
     for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
+    /* No file on the command line: reopen the spectra of the previous session,
+       so the assignments come back with the trace they were measured on. */
+    if (n_spec_args == 0) {
+        for (int k = 0; k < state.n_session_spec; k++) add_spectrum(&state, state.session_spec_path[k]);
+        if (state.session_active_spec >= 0 && state.session_active_spec < state.n_spectra)
+            select_spectrum(&state, state.session_active_spec);
+    }
+    /* Opening a file makes it part of the session straight away, so a crash or
+       a force-quit does not lose what was loaded. */
+    if (state.n_spectra > 0) predfit_save_session(&state);
     
     int running = 1;
     Layout layout;
@@ -417,11 +419,12 @@ int main(int argc, char *argv[])
         if(state.pending_load) {
             state.pending_load = 0;
             if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); predfit_adopt_generated_catalog(&state); state.pending_pred_path[0] = '\0'; }
-            if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; }
+            if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; predfit_save_session(&state); }
         }
         predfit_render_advanced(&state);
-        if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; }
-        if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; }
+        settings_render(&state);
+        if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; predfit_save_session(&state); }
+        if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; predfit_save_session(&state); }
 
         // Keep the active spectrum in sync with the mirror fields the tools edit.
         commit_active(&state);
@@ -439,7 +442,9 @@ int main(int argc, char *argv[])
         }
     }
 
+    predfit_save_session(&state);
     free_dataset(&state);
+    settings_dispose(&state);
     predfit_dispose(&state);
     ui_fonts_close();
     SDL_DestroyRenderer(ren);

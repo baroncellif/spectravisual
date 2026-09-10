@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "algorithms.h"
 #include "loader.h"
+#include "settings.h"
 #include "intensity_fit.h"
 #include "predfit.h"
 #include "layout.h"
@@ -131,6 +132,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { *running = 0; return; }
         if (predfit_handle_advanced_event(state, &e)) continue;
+        if (settings_handle_event(state, &e)) continue;
 
         if (state->input_state != INPUT_NONE) {
             if (e.type == SDL_TEXTINPUT) {
@@ -228,7 +230,14 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             DraggableWindow *p = panels[t];
-            if (!p->visible || !point_in_rect(mx, my, p->rect)) continue;
+            /* p->clip is the part actually on screen.  Scrolling the column
+               moves a panel's rectangle up behind the command bar, and testing
+               the rectangle alone let it swallow clicks meant for the buttons
+               up there - which is why the settings window would not open with
+               several panels open. */
+            if (!p->visible) continue;
+            if (!point_in_rect(mx, my, p->clip)) continue;
+            if (!point_in_rect(mx, my, p->rect)) continue;
             SDL_Rect w = p->rect;
 
             /* header: the only control is close */
@@ -464,6 +473,18 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 if (point_in_rect(mx, my, yn))  { s->multi_ynorm  = (mx >= yn.x + yn.w / 2);  return; }
                 if (point_in_rect(mx, my, ui_spec_indiv(w))) { s->multi_indiv_int = !s->multi_indiv_int; return; }
                 for (int i = 0; i < s->n_spectra; i++) {
+                    if (point_in_rect(mx, my, ui_spec_op_minus(w, i))) {
+                        if (s->spectra[i].opacity <= 0) s->spectra[i].opacity = 100;   /* loaded before opacity existed */
+                        s->spectra[i].opacity -= 5;
+                        if (s->spectra[i].opacity < 10) s->spectra[i].opacity = 10;
+                        return;
+                    }
+                    if (point_in_rect(mx, my, ui_spec_op_plus(w, i))) {
+                        if (s->spectra[i].opacity <= 0) s->spectra[i].opacity = 100;
+                        s->spectra[i].opacity += 5;
+                        if (s->spectra[i].opacity > 100) s->spectra[i].opacity = 100;
+                        return;
+                    }
                     if (point_in_rect(mx, my, ui_spec_minus(w, i))) { s->spectra[i].voffset -= 0.05; return; }
                     if (point_in_rect(mx, my, ui_spec_plus(w, i)))  { s->spectra[i].voffset += 0.05; return; }
                     if (point_in_rect(mx, my, ui_spec_vis(w, i)))   { s->spectra[i].visible = !s->spectra[i].visible; return; }
@@ -528,6 +549,11 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         if (point_in_rect(mx, my, ui_top_rect(UI_TOP_SYNC, l->win_w))) {
             s->sync_active = !s->sync_active;
             if (s->sync_active) { s->pvxmin = s->vxmin; s->pvxmax = s->vxmax; }
+            return;
+        }
+        if (ui_top_right_visible(l->win_w) &&
+            point_in_rect(mx, my, ui_top_rect(UI_TOP_SETTINGS, l->win_w))) {
+            settings_open(s);
             return;
         }
         if (point_in_rect(mx, my, ui_top_rect(UI_TOP_DELPEAK, l->win_w))) {
@@ -922,6 +948,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     int is_shift = (mod & KMOD_SHIFT);
     double speed_mult = (mod & KMOD_CAPS) ? 3.0 : 1.0;
 
+    if (sym == SDLK_COMMA) { settings_open(s); return; }
     if (sym == SDLK_h || sym == SDLK_SLASH) {
         s->show_help = !s->show_help;
         return;

@@ -11,6 +11,11 @@ void predfit_publish_shared_state(AppState *state);
 void predfit_adopt_shared_state(AppState *state);
 void predfit_adopt_generated_catalog(AppState *state);
 int predfit_restore_latest(AppState *state);
+
+/* The session file: which spectra were open, which one was active, and the
+   fit uncertainties the user chose. Save it whenever the working set changes. */
+void predfit_load_session(AppState *state);
+void predfit_save_session(const AppState *state);
 void predfit_open_advanced(AppState *state);
 void predfit_close_advanced(AppState *state);
 void predfit_dispose(AppState *state);

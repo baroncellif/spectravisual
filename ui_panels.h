@@ -136,8 +136,8 @@ static inline SDL_Rect ui_filt_delta(SDL_Rect w, int i) {
 #define UI_FILT_ROWS 10
 
 /* --- Spectra ---------------------------------------------------------- */
-#define UI_SPEC_ROW_H 26
-#define UI_SPEC_ROW_STEP 28
+#define UI_SPEC_ROW_H    46   /* two lines: identity, then offset and opacity */
+#define UI_SPEC_ROW_STEP 48
 static inline SDL_Rect ui_spec_layout(SDL_Rect w) { return ui_p_row(w, 0); }
 static inline SDL_Rect ui_spec_ynorm(SDL_Rect w)  { return ui_p_row(w, 1); }
 static inline SDL_Rect ui_spec_indiv(SDL_Rect w)  { return ui_p_row(w, 2); }
@@ -145,26 +145,45 @@ static inline SDL_Rect ui_spec_row(SDL_Rect w, int i) {
     return (SDL_Rect){w.x + UI_P_PAD - 6, ui_p_body(w) + 3 * UI_P_STEP + 6 + i * UI_SPEC_ROW_STEP,
                       w.w - 2 * (UI_P_PAD - 6), UI_SPEC_ROW_H};
 }
-/* controls inside a trace row, right to left: remove, visibility, +, - */
-static inline SDL_Rect ui_spec_del(SDL_Rect w, int i) {
+/* first line: which trace it is and whether it is shown */
+static inline SDL_Rect ui_spec_line1(SDL_Rect w, int i) {
     SDL_Rect r = ui_spec_row(w, i);
-    return (SDL_Rect){r.x + r.w - 26, r.y + 2, 22, 22};
+    return (SDL_Rect){r.x, r.y, r.w, 24};
+}
+/* second line: the two numbers that belong to this trace alone */
+static inline SDL_Rect ui_spec_line2(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_row(w, i);
+    return (SDL_Rect){r.x, r.y + 24, r.w, 20};
+}
+static inline SDL_Rect ui_spec_del(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_line1(w, i);
+    return (SDL_Rect){r.x + r.w - 26, r.y + 1, 22, 22};
 }
 static inline SDL_Rect ui_spec_vis(SDL_Rect w, int i) {
     SDL_Rect r = ui_spec_del(w, i);
     return (SDL_Rect){r.x - 26, r.y, 22, 22};
 }
-static inline SDL_Rect ui_spec_plus(SDL_Rect w, int i) {
-    SDL_Rect r = ui_spec_vis(w, i);
-    return (SDL_Rect){r.x - 28, r.y, 24, 22};
-}
-static inline SDL_Rect ui_spec_minus(SDL_Rect w, int i) {
-    SDL_Rect r = ui_spec_plus(w, i);
-    return (SDL_Rect){r.x - 24, r.y, 24, 22};
-}
 static inline SDL_Rect ui_spec_name(SDL_Rect w, int i) {
-    SDL_Rect r = ui_spec_row(w, i), m = ui_spec_minus(w, i);
-    return (SDL_Rect){r.x, r.y, m.x - r.x - 6, r.h};
+    SDL_Rect r = ui_spec_line1(w, i), v = ui_spec_vis(w, i);
+    return (SDL_Rect){r.x, r.y, v.x - r.x - 6, r.h};
+}
+/* vertical offset stepper, on the left of the second line */
+static inline SDL_Rect ui_spec_minus(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_line2(w, i);
+    return (SDL_Rect){r.x + 62, r.y, 22, 20};
+}
+static inline SDL_Rect ui_spec_plus(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_minus(w, i);
+    return (SDL_Rect){r.x + 24, r.y, 22, 20};
+}
+/* opacity stepper, on the right of the second line */
+static inline SDL_Rect ui_spec_op_plus(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_line2(w, i);
+    return (SDL_Rect){r.x + r.w - 24, r.y, 22, 20};
+}
+static inline SDL_Rect ui_spec_op_minus(SDL_Rect w, int i) {
+    SDL_Rect r = ui_spec_op_plus(w, i);
+    return (SDL_Rect){r.x - 66, r.y, 22, 20};
 }
 
 /* --- Assignments ------------------------------------------------------ */

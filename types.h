@@ -34,6 +34,7 @@ typedef struct {
     int    rolling_avg_active;
     int    visible;
     SDL_Color color;
+    int    opacity;        /* percent; set from the settings, per trace */
     char   path[512];
     char   name[64];          // short label for the legend
 } Spectrum;
@@ -109,6 +110,37 @@ typedef struct {
     int last_fit_iterations;
     char status[160];
 } PredFitState;
+
+/* How the spectra are drawn.  Saved next to the executable, so the choices
+ * follow the program instead of the directory it happens to be launched from.
+ * Everything here is presentation only: no setting changes a measurement. */
+typedef struct {
+    int  trace_width;                    /* experimental trace, 1..5 px      */
+    SDL_Color trace_color[MAX_SPECTRA];  /* colour assigned to each trace    */
+    int  pred_width;                     /* predicted stick, 1..5 px         */
+    int  profile_width;                  /* simulated profile, 1..5 px       */
+    SDL_Color profile_color;
+    int  profile_opacity;                /* percent: the sticks must stay readable */
+    int  trace_opacity;                  /* percent, the default for a new trace */
+    int  stick_opacity;                  /* percent, predicted sticks            */
+    SDL_Color peak_color;                /* found peaks                      */
+    SDL_Color assigned_color;            /* already-assigned frequencies     */
+    SDL_Color bar_color;                 /* the movable bar                  */
+    SDL_Color cursor_color;              /* pointer crosshair and readout    */
+    int  show_grid;
+    int  show_legend;
+    int  show_peak_labels;
+    int  show_blend_marks;               /* tick over blended predicted lines */
+    int  plot_bg;                        /* 0 graphite, 1 black, 2 deep navy */
+
+    /* Its own window, like Pred&Fit Advanced. */
+    int  open;
+    SDL_Window   *window;
+    SDL_Renderer *renderer;
+    Uint32 window_id;
+    int  scroll;                         /* content offset, for a short window */
+    char status[160];
+} DisplaySettings;
 
 /* One fitted observation, retained so the intensity-fit report can be
  * exported without re-measuring the experimental trace. */
@@ -348,6 +380,15 @@ typedef struct {
     int filt_kc_min, filt_kc_max;
     int filt_use_delta;       // enable Delta J/Ka/Kc gating (upper - lower)
     int filt_dj, filt_dka, filt_dkc;
+
+    DisplaySettings settings;
+
+    /* Experimental spectra remembered from the previous session, read back from
+       .fit/spectravisual.state so reopening the app restores the whole working
+       set and not only the prediction. */
+    char session_spec_path[MAX_SPECTRA][512];
+    int  n_session_spec;
+    int  session_active_spec;
 
     // Text input. The focused field is a real text field: a caret, a selection
     // anchor, and the on-screen rectangle it was last drawn in, which is what

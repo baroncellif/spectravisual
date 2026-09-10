@@ -49,6 +49,13 @@ int  ui_dev(int logical_px);
 void ui_fill(SDL_Renderer *ren, SDL_Rect r, SDL_Color c);
 void ui_frame(SDL_Renderer *ren, SDL_Rect r, SDL_Color c);
 void ui_hline(SDL_Renderer *ren, int x0, int x1, int y, SDL_Color c);
+void ui_thick_line(SDL_Renderer *ren, int x1, int y1, int x2, int y2, int width);
+
+// Anti-aliased plot geometry. Coordinates and width are in logical pixels; the
+// line itself is built on the device pixel grid, so it keeps the display's full
+// resolution instead of being a doubled one-pixel line.
+void ui_plot_polyline(SDL_Renderer *ren, const SDL_FPoint *pts, int n, float width, SDL_Color c);
+void ui_plot_segments(SDL_Renderer *ren, const SDL_FPoint *pts, int n_points, float width, SDL_Color c);
 void ui_vline(SDL_Renderer *ren, int x, int y0, int y1, SDL_Color c);
 
 // --- CONTROLS ---

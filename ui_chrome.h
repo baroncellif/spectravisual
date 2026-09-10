@@ -59,6 +59,7 @@ typedef enum {
     UI_TOP_ROT_TEMP,
     UI_TOP_EXPORT,
     UI_TOP_HELP,
+    UI_TOP_SETTINGS,
     UI_TOP_COUNT
 } UiTopItem;
 
@@ -71,7 +72,9 @@ typedef enum {
 static inline SDL_Rect ui_top_rect(int item, int win_w) {
     const int y = UI_TOP_BTN_Y, h = UI_TOP_BTN_H;
     int help_w = 92, export_w = 104, offset_w = 150, temp_w = 132, cat_temp_w = 132;
-    int help_x   = win_w - 10 - help_w;
+    int set_w = 34;                       /* icon only: it is opened rarely */
+    int set_x    = win_w - 10 - set_w;
+    int help_x   = set_x - 6 - help_w;
     int export_x = help_x - 6 - export_w;
     int offset_x = export_x - 14 - offset_w;
     int temp_x   = offset_x - 6 - temp_w;
@@ -86,6 +89,7 @@ static inline SDL_Rect ui_top_rect(int item, int win_w) {
         case UI_TOP_ROT_TEMP:return (SDL_Rect){temp_x, y, temp_w, h};
         case UI_TOP_EXPORT:  return (SDL_Rect){export_x, y, export_w, h};
         case UI_TOP_HELP:    return (SDL_Rect){help_x,   y, help_w,   h};
+        case UI_TOP_SETTINGS:return (SDL_Rect){set_x,    y, set_w,    h};
         default:             return (SDL_Rect){0, 0, 0, 0};
     }
 }
@@ -99,7 +103,7 @@ typedef enum {
     UI_ICON_BAR = 0, UI_ICON_MEASURE, UI_ICON_SYNC, UI_ICON_TRASH,
     UI_ICON_LIST, UI_ICON_PEAK, UI_ICON_WAVE, UI_ICON_BELL,
     UI_ICON_DIPOLE, UI_ICON_RANGE, UI_ICON_JUMP, UI_ICON_FILTER, UI_ICON_LAYERS,
-    UI_ICON_EXPORT, UI_ICON_HELP, UI_ICON_CLOSE, UI_ICON_EYE,
+    UI_ICON_EXPORT, UI_ICON_HELP, UI_ICON_CLOSE, UI_ICON_EYE, UI_ICON_GEAR,
     UI_ICON_COUNT
 } UiIcon;
 

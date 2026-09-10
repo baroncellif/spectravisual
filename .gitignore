@@ -24,6 +24,8 @@ assignments.txt
 # macOS
 .DS_Store
 
+spectravisual.settings
+
 # file locali di lavoro (non fanno parte del progetto)
 .claude/
 *_session.txt

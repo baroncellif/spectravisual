@@ -50,6 +50,8 @@ static const signed char ICON_DATA[UI_ICON_COUNT][64] = {
     /* CLOSE */
     { 4,4, 12,12, END, 12,4, 4,12, STOP },
     /* EYE: filled by code */
+    { STOP },
+    /* GEAR: filled by code */
     { STOP }
 };
 
@@ -94,6 +96,17 @@ void ui_draw_icon(SDL_Renderer *ren, int icon, SDL_Rect box, SDL_Color c) {
                                 (int)(ox + 8 * u), (int)(oy + 10 * u));
         for (int k = 0; k < (int)u + 1; k++)
             SDL_RenderDrawPoint(ren, (int)(ox + 8 * u), (int)(oy + 12 * u) + k);
+        ui_dev_end(ren);
+        return;
+    }
+    if (icon == UI_ICON_GEAR) {
+        arc(ren, ox + 8 * u, oy + 8 * u, 4.6 * u, 0, 2 * M_PI, (int)(20 * u));
+        arc(ren, ox + 8 * u, oy + 8 * u, 1.9 * u, 0, 2 * M_PI, (int)(12 * u));
+        for (int t = 0; t < 8; t++) {          /* teeth */
+            double a = t * M_PI / 4.0;
+            SDL_RenderDrawLine(ren, (int)(ox + (8 + 4.6 * cos(a)) * u), (int)(oy + (8 + 4.6 * sin(a)) * u),
+                                    (int)(ox + (8 + 6.6 * cos(a)) * u), (int)(oy + (8 + 6.6 * sin(a)) * u));
+        }
         ui_dev_end(ren);
         return;
     }

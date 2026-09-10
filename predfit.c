@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <limits.h>
 #include <time.h>
 
 #define FIT_ROOT ".fit"
@@ -35,22 +36,56 @@ static void work_file(const PredFitState *p, const char *name, char *out, size_t
 
 /* SPFIT overwrites the parameter uncertainties in .var/.par with estimated
    errors.  Our table's uncertainty is instead the user's fit-control value:
-   1.0 by default, or 0/fixed/a custom prior set in Advanced. */
-static void save_manual_parameter_errors(const PredFitState *p) {
-    char path[600]; work_file(p,"spectravisual.state",path,sizeof(path));
-    FILE *fp=fopen(path,"w"); if (!fp) return;
-    fputs("# Pickett parameter ID and user-selected fit uncertainty\n",fp);
-    for (int i=0;i<p->n_param;i++) fprintf(fp,"%d %.17g\n",p->param[i].id,p->param[i].error);
+   1.0 by default, or 0/fixed/a custom prior set in Advanced.  The same file
+   also records the experimental spectra of the session: a prediction alone is
+   not a session, and the app used to reopen with the catalogue restored and no
+   trace to compare it against. */
+static void session_path(const AppState *s, char *out, size_t size) {
+    const PredFitState *p = &s->predfit;
+    const char *dir = p->work_dir[0] ? p->work_dir : FIT_ROOT;
+    snprintf(out, size, "%s/spectravisual.state", dir);
+}
+
+void predfit_save_session(const AppState *s) {
+    const PredFitState *p = &s->predfit;
+    if (mkdir(FIT_ROOT, 0700) != 0 && errno != EEXIST) return;
+    char path[600]; session_path(s, path, sizeof(path));
+    FILE *fp = fopen(path, "w");
+    if (!fp) return;
+    fputs("# SpectraVisual session\n", fp);
+    fputs("# Pickett parameter ID and user-selected fit uncertainty\n", fp);
+    for (int i = 0; i < p->n_param; i++) fprintf(fp, "%d %.17g\n", p->param[i].id, p->param[i].error);
+    for (int i = 0; i < s->n_spectra; i++) {
+        char full[PATH_MAX];
+        const char *stored = realpath(s->spectra[i].path, full) ? full : s->spectra[i].path;
+        fprintf(fp, "spectrum %s\n", stored);
+    }
+    if (s->active_spec >= 0) fprintf(fp, "active %d\n", s->active_spec);
     fclose(fp);
 }
 
-static void load_manual_parameter_errors(PredFitState *p) {
-    char path[600]; work_file(p,"spectravisual.state",path,sizeof(path));
-    FILE *fp=fopen(path,"r"); if (!fp) return;
-    int id=0; double error=0; char line[160];
-    while (fgets(line,sizeof(line),fp)) {
-        if (line[0]=='#' || sscanf(line,"%d %lf",&id,&error)!=2) continue;
-        for (int i=0;i<p->n_param;i++) if (p->param[i].id==id) { p->param[i].error=error; break; }
+void predfit_load_session(AppState *s) {
+    PredFitState *p = &s->predfit;
+    char path[600]; session_path(s, path, sizeof(path));
+    FILE *fp = fopen(path, "r");
+    if (!fp) return;
+    s->n_session_spec = 0;
+    s->session_active_spec = -1;
+    char line[700];
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '#') continue;
+        char *nl = strpbrk(line, "\r\n");
+        if (nl) *nl = '\0';
+        if (strncmp(line, "spectrum ", 9) == 0) {
+            if (s->n_session_spec < MAX_SPECTRA && line[9])
+                snprintf(s->session_spec_path[s->n_session_spec++],
+                         sizeof(s->session_spec_path[0]), "%s", line + 9);
+            continue;
+        }
+        if (strncmp(line, "active ", 7) == 0) { s->session_active_spec = atoi(line + 7); continue; }
+        int id = 0; double error = 0;
+        if (sscanf(line, "%d %lf", &id, &error) != 2) continue;
+        for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) { p->param[i].error = error; break; }
     }
     fclose(fp);
 }
@@ -145,7 +180,6 @@ static void sync_basic_parameters(PredFitState *p) {
         if (p->param[i].id == 20000) p->param[i].value = p->b;
         if (p->param[i].id == 30000) p->param[i].value = p->c;
     }
-    save_manual_parameter_errors(p);
 }
 
 static void sync_basic_from_parameters(PredFitState *p) {
@@ -195,6 +229,7 @@ static int write_inputs(AppState *s, int for_fit) {
     PredFitState *p = &s->predfit;
     if (!prepare_fit_dir(p)) return 0;
     sync_basic_parameters(p);
+    predfit_save_session(s);
     char var_path[600], int_path[600], par_path[600], lin_path[600];
     work_file(p,"model.var",var_path,sizeof(var_path)); work_file(p,"model.int",int_path,sizeof(int_path));
     work_file(p,"model.par",par_path,sizeof(par_path)); work_file(p,"model.lin",lin_path,sizeof(lin_path));
@@ -316,25 +351,114 @@ static void import_int_settings(PredFitState *p) {
     fclose(fp);
 }
 
-static void import_fit_lines(AppState *s) {
-    PredFitState *p=&s->predfit;
-    char path[600]; work_file(p,"model.lin",path,sizeof(path));
-    FILE *fp=fopen(path,"r"); if (!fp) return;
-    s->n_assignments=0;
+/* One row of .fit/model.lin.  SPFIT's record is a fixed 12 x I3 quantum-number
+   field followed by the frequency, so it is read by column: reading it with a
+   plain "%d %d %d %d %d %d" mistakes the upper-state hyperfine numbers of a
+   12-QN record for the lower state. */
+typedef struct {
+    int    qn[12];
+    int    nq;        /* quantum numbers actually written per state */
+    double freq;      /* measured frequency, sentinel removed        */
+    int    enabled;   /* 0 when SPFIT was told to skip the line      */
+} LinRow;
+
+static LinRow g_lin_rows[MAX_ASSIGNMENTS];
+
+static int read_lin_rows(const PredFitState *p) {
+    char path[600]; work_file(p, "model.lin", path, sizeof(path));
+    FILE *fp = fopen(path, "r");
+    if (!fp) return 0;
+    int n = 0;
     char line[256];
-    while (s->n_assignments < MAX_ASSIGNMENTS && fgets(line,sizeof(line),fp)) {
-        int q[6]={0};
-        if (sscanf(line,"%d %d %d %d %d %d",&q[0],&q[1],&q[2],&q[3],&q[4],&q[5]) != 6) continue;
-        double freq=atof(line+36);
+    while (n < MAX_ASSIGNMENTS && fgets(line, sizeof(line), fp)) {
+        if ((int)strlen(line) < 37) continue;
+        LinRow row;
+        memset(&row, 0, sizeof(row));
+        int slots = 0;
+        for (int k = 0; k < 12; k++) {
+            char field[4] = {line[k * 3], line[k * 3 + 1], line[k * 3 + 2], '\0'};
+            if (field[0] == ' ' && field[1] == ' ' && field[2] == ' ') continue;
+            row.qn[k] = atoi(field);
+            slots = k + 1;
+        }
+        if (slots < 6) continue;
+        row.nq = slots / 2;
+        double freq = atof(line + 36);
         if (!(freq > 0.0)) continue;
-        Assignment *a=&s->assignments[s->n_assignments++];
-        memset(a,0,sizeof(*a));
-        a->pred.Ju=q[0]; a->pred.Kau=q[1]; a->pred.Kcu=q[2];
-        a->pred.Jl=q[3]; a->pred.Kal=q[4]; a->pred.Kcl=q[5];
-        a->exp_freq=freq >= 90000.0 ? freq-90000.0 : freq;
-        a->fit_enabled=freq < 90000.0;
+        row.enabled = freq < 90000.0;
+        row.freq = row.enabled ? freq : freq - 90000.0;
+        g_lin_rows[n++] = row;
     }
     fclose(fp);
+    return n;
+}
+
+/* Derived rather than stored: .lin carries no branch or dipole type. */
+static void set_branch_and_dipole(PredLine *q) {
+    int dJ = q->Ju - q->Jl;
+    q->branch = (dJ == 1) ? 'R' : (dJ == -1) ? 'P' : (dJ == 0) ? 'Q' : '?';
+    int even_ka = (abs(q->Kau - q->Kal) % 2) == 0;
+    int even_kc = (abs(q->Kcu - q->Kcl) % 2) == 0;
+    q->mu = (even_ka && !even_kc) ? 'a' : (!even_ka && !even_kc) ? 'b' : (!even_ka && even_kc) ? 'c' : '?';
+}
+
+/* Restores the assignment list of the saved session.
+ *
+ * model.lin is not a record of the work: SPFIT only needs the quantum numbers,
+ * the measured frequency and whether to use the line.  The predicted frequency
+ * and the measured intensity - everything that ties an assignment back to the
+ * experimental spectrum - live in assignments.txt.  So that file is the source,
+ * and the .lin is read only for the 90000 sentinel that marks the lines
+ * excluded from the fit. */
+static void import_fit_lines(AppState *s) {
+    PredFitState *p = &s->predfit;
+    int n_rows = read_lin_rows(p);
+    static unsigned char used[MAX_ASSIGNMENTS];
+    memset(used, 0, sizeof(used));
+
+    s->n_assignments = 0;
+    load_existing_assignments("assignments.txt", s->assignments, &s->n_assignments);
+
+    /* Carry the fit flags over. The two files can disagree - lines assigned
+       after the last save are only in the .lin, lines saved and never fitted
+       only in assignments.txt - so each row is matched once, on its quantum
+       numbers when they are available and on the frequency otherwise. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < s->n_assignments; i++) {
+            Assignment *a = &s->assignments[i];
+            if (pass == 0) a->fit_enabled = 1;
+            for (int k = 0; k < n_rows; k++) {
+                if (used[k]) continue;
+                LinRow *row = &g_lin_rows[k];
+                if (fabs(row->freq - a->exp_freq) >= 1e-4) continue;
+                int *u = row->qn, *l = row->qn + row->nq;
+                int same_qn = (u[0] == a->pred.Ju && u[1] == a->pred.Kau && u[2] == a->pred.Kcu &&
+                               l[0] == a->pred.Jl && l[1] == a->pred.Kal && l[2] == a->pred.Kcl);
+                if (pass == 0 && !same_qn) continue;   /* exact match first */
+                a->fit_enabled = row->enabled;
+                used[k] = 1;
+                break;
+            }
+        }
+    }
+
+    /* Anything the .lin has and assignments.txt does not is still part of the
+       session: keep it, with the little the .lin can say about it. */
+    for (int k = 0; k < n_rows && s->n_assignments < MAX_ASSIGNMENTS; k++) {
+        if (used[k]) continue;
+        LinRow *row = &g_lin_rows[k];
+        Assignment *a = &s->assignments[s->n_assignments++];
+        memset(a, 0, sizeof(*a));
+        int *u = row->qn, *l = row->qn + row->nq;
+        a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
+        a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
+        if (row->nq > 3) { a->pred.M1u = u[3]; a->pred.M1l = l[3]; }
+        if (row->nq > 4) { a->pred.M2u = u[4]; a->pred.M2l = l[4]; }
+        if (row->nq > 5) { a->pred.M3u = u[5]; a->pred.M3l = l[5]; }
+        set_branch_and_dipole(&a->pred);
+        a->exp_freq = row->freq;
+        a->fit_enabled = row->enabled;
+    }
 }
 
 int predfit_restore_latest(AppState *s) {
@@ -345,7 +469,7 @@ int predfit_restore_latest(AppState *s) {
     fclose(flat);
     snprintf(p->work_dir,sizeof(p->work_dir),"%s",FIT_ROOT);
     import_fitted_parameters(p);
-    load_manual_parameter_errors(p);
+    predfit_load_session(s);
     import_int_settings(p);
     import_fit_lines(s);
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
