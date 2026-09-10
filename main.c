@@ -16,6 +16,8 @@
 #include "settings.h"
 #include "plotgpu.h"
 
+static int add_spectrum(AppState *state, const char *path);
+
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
     state->cat_temp_k = 0.0;
@@ -116,6 +118,40 @@ static void select_spectrum(AppState *state, int idx) {
     mirror_active(state);
 }
 
+static void restore_session_spectrum(AppState *state, int idx, const SessionSpectrum *saved) {
+    if (idx < 0 || idx >= state->n_spectra || !saved) return;
+    Spectrum *sp = &state->spectra[idx];
+    sp->visible = saved->visible != 0;
+    sp->opacity = saved->opacity >= 10 && saved->opacity <= 100 ? saved->opacity : state->settings.trace_opacity;
+    sp->vscale = saved->vscale > 0.0 && isfinite(saved->vscale) ? saved->vscale : 1.0;
+    sp->exp_offset = isfinite(saved->exp_offset) ? saved->exp_offset : 0.0;
+    sp->voffset = isfinite(saved->voffset) ? saved->voffset : 0.0;
+    sp->rolling_avg_active = saved->rolling_avg_active != 0;
+    if (sp->rolling_avg_active) {
+        apply_rolling_average(sp->raw_pts, sp->smooth_pts, sp->n_pts, state->rolling_avg_window);
+        sp->current_pts = sp->smooth_pts;
+    }
+    /* add_spectrum made this the active trace; refresh its live mirror before
+       loading the next one, otherwise commit_active would overwrite it. */
+    if (state->active_spec == idx) mirror_active(state);
+}
+
+static void restore_session_view(AppState *state) {
+    if (!state->session_has_view) return;
+    if (isfinite(state->session_vxmin) && isfinite(state->session_vxmax) && state->session_vxmax > state->session_vxmin) {
+        state->vxmin = state->session_vxmin; state->vxmax = state->session_vxmax;
+    }
+    if (isfinite(state->session_vymin) && isfinite(state->session_vymax) && state->session_vymax > state->session_vymin) {
+        state->vymin = state->session_vymin; state->vymax = state->session_vymax;
+    }
+    state->sync_active = state->session_sync_active;
+    if (!state->sync_active && isfinite(state->session_pvxmin) && isfinite(state->session_pvxmax) &&
+        state->session_pvxmax > state->session_pvxmin) {
+        state->pvxmin = state->session_pvxmin; state->pvxmax = state->session_pvxmax;
+    }
+    state->session_has_view = 0;  /* restore once; navigation is live afterwards */
+}
+
 static void ensure_aux_loaded(AppState *state) {
     if (state->lin_data) return;
     state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
@@ -160,8 +196,38 @@ static void free_dataset(AppState *state) {
     state->data_loaded = 0;
 }
 
+/* Open the state file as a session, not as a two-column trace.  A dropped
+   spectravisual.state intentionally replaces the active working set, just as
+   opening a project file would in a conventional program. */
+static void reopen_predfit_session(AppState *state) {
+    free_dataset(state);
+    state->pending_pred_path[0] = '\0';
+    state->pending_spec_path[0] = '\0';
+    state->pending_load = 0;
+
+    predfit_load_session(state);
+    predfit_restore_latest(state);
+    if (state->session_has_view && state->session_rolling_avg_window > 0)
+        state->rolling_avg_window = state->session_rolling_avg_window;
+    for (int k = 0; k < state->n_session_spec; k++) {
+        int before = state->n_spectra;
+        if (add_spectrum(state, state->session_spectrum[k].path))
+            restore_session_spectrum(state, before, &state->session_spectrum[k]);
+    }
+    if (state->session_active_spec >= 0 && state->session_active_spec < state->n_spectra)
+        select_spectrum(state, state->session_active_spec);
+    snprintf(state->status_message, sizeof(state->status_message),
+             "Restored %d experimental spectrum%s from the Pred&Fit session.",
+             state->n_spectra, state->n_spectra == 1 ? "" : "s");
+}
+
 // Load an experimental spectrum and append it to the store (becomes active).
 static int add_spectrum(AppState *state, const char *path) {
+    if (predfit_is_session_file(state, path)) {
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "The session state is not an experimental spectrum.");
+        return 0;
+    }
     if (state->n_spectra >= MAX_SPECTRA) {
         snprintf(state->error_message, sizeof(state->error_message),
                  "Maximum of %d spectra already loaded.", MAX_SPECTRA);
@@ -311,6 +377,12 @@ int main(int argc, char *argv[])
     const char *pred_arg = NULL;
     for (int k = argi; k < argc; k++) {
         int len = (int)strlen(argv[k]);
+        const char *base = strrchr(argv[k], '/');
+        base = base ? base + 1 : argv[k];
+        /* The default state is a project/session file.  Session restoration
+           below already opens its experimental spectrum(s), so never pass it
+           to the generic two-column spectrum reader. */
+        if (strcmp(base, "spectravisual.state") == 0) continue;
         if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
@@ -353,9 +425,19 @@ int main(int argc, char *argv[])
     /* No file on the command line: reopen the spectra of the previous session,
        so the assignments come back with the trace they were measured on. */
     if (n_spec_args == 0) {
-        for (int k = 0; k < state.n_session_spec; k++) add_spectrum(&state, state.session_spec_path[k]);
+        if (state.session_has_view && state.session_rolling_avg_window > 0)
+            state.rolling_avg_window = state.session_rolling_avg_window;
+        for (int k = 0; k < state.n_session_spec; k++) {
+            int before = state.n_spectra;
+            if (add_spectrum(&state, state.session_spectrum[k].path))
+                restore_session_spectrum(&state, before, &state.session_spectrum[k]);
+        }
         if (state.session_active_spec >= 0 && state.session_active_spec < state.n_spectra)
             select_spectrum(&state, state.session_active_spec);
+    } else {
+        /* A spectrum explicitly passed on the command line is a fresh task,
+           not a request to impose the previous session's zoom and offsets. */
+        state.session_has_view = 0;
     }
     /* Opening a file makes it part of the session straight away, so a crash or
        a force-quit does not lose what was loaded. */
@@ -423,11 +505,16 @@ int main(int argc, char *argv[])
         layout.pred_w = layout.exp_w;
 
         handle_app_events(&state, &layout, &running);
+        if (state.pending_session_load) {
+            state.pending_session_load = 0;
+            reopen_predfit_session(&state);
+        }
         if(state.pending_load) {
             state.pending_load = 0;
             if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); predfit_adopt_generated_catalog(&state); state.pending_pred_path[0] = '\0'; }
             if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; predfit_save_session(&state); }
         }
+        restore_session_view(&state);
         predfit_render_advanced(&state);
         settings_render(&state);
         if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; predfit_save_session(&state); }

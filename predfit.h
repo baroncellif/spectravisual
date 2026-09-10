@@ -16,6 +16,9 @@ int predfit_restore_latest(AppState *state);
    fit uncertainties the user chose. Save it whenever the working set changes. */
 void predfit_load_session(AppState *state);
 void predfit_save_session(const AppState *state);
+/* Guard against accidentally treating .fit/spectravisual.state as a two-column
+   experimental spectrum: its numeric settings make it superficially valid. */
+int predfit_is_session_file(const AppState *state, const char *path);
 void predfit_open_advanced(AppState *state);
 void predfit_close_advanced(AppState *state);
 void predfit_dispose(AppState *state);

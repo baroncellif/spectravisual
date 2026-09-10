@@ -57,11 +57,20 @@ static void work_file(const PredFitState *p, const char *name, char *out, size_t
    not a session, and the app used to reopen with the catalogue restored and no
    trace to compare it against. */
 static void session_path(const AppState *s, char *out, size_t size) {
-    const PredFitState *p = &s->predfit;
     char root[600];
-    if (p->work_dir[0]) snprintf(root, sizeof(root), "%s", p->work_dir);
-    else                fit_root(s, root, sizeof(root));
+    /* The configured data directory is authoritative.  work_dir may still
+       refer to the preceding location immediately after Settings is edited. */
+    fit_root(s, root, sizeof(root));
     snprintf(out, size, "%s/spectravisual.state", root);
+}
+
+int predfit_is_session_file(const AppState *s, const char *path) {
+    if (!path || !path[0]) return 0;
+    char state_path[600], state_real[PATH_MAX], candidate_real[PATH_MAX];
+    session_path(s, state_path, sizeof(state_path));
+    if (realpath(state_path, state_real) && realpath(path, candidate_real))
+        return strcmp(state_real, candidate_real) == 0;
+    return strcmp(state_path, path) == 0;
 }
 
 void predfit_save_session(const AppState *s) {
@@ -69,19 +78,38 @@ void predfit_save_session(const AppState *s) {
     char root[600];
     fit_root(s, root, sizeof(root));
     if (mkdir(root, 0700) != 0 && errno != EEXIST) return;
-    char path[600]; session_path(s, path, sizeof(path));
-    FILE *fp = fopen(path, "w");
+    char path[600], tmp_path[640];
+    session_path(s, path, sizeof(path));
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    FILE *fp = fopen(tmp_path, "w");
     if (!fp) return;
-    fputs("# SpectraVisual session\n", fp);
+    fputs("# SpectraVisual session v2\n", fp);
     fputs("# Pickett parameter ID and user-selected fit uncertainty\n", fp);
     for (int i = 0; i < p->n_param; i++) fprintf(fp, "%d %.17g\n", p->param[i].id, p->param[i].error);
+    fprintf(fp, "view %.17g %.17g %.17g %.17g %.17g %.17g %d %d\n",
+            s->vxmin, s->vxmax, s->vymin, s->vymax, s->pvxmin, s->pvxmax,
+            s->sync_active != 0, s->rolling_avg_window);
+    int saved_active = -1;
+    int saved_count = 0;
     for (int i = 0; i < s->n_spectra; i++) {
+        const Spectrum *sp = &s->spectra[i];
+        /* Repair old contaminated sessions while saving.  The state file has
+           numeric rows and must never be accepted as experimental data. */
+        if (predfit_is_session_file(s, sp->path)) continue;
         char full[PATH_MAX];
-        const char *stored = realpath(s->spectra[i].path, full) ? full : s->spectra[i].path;
-        fprintf(fp, "spectrum %s\n", stored);
+        const char *stored = realpath(sp->path, full) ? full : sp->path;
+        /* The active trace is mirrored in AppState until the end of a frame.
+           Saving from a Fit click must therefore take those live values. */
+        double offset = i == s->active_spec ? s->exp_offset : sp->exp_offset;
+        int smoothing = i == s->active_spec ? s->rolling_avg_active : sp->rolling_avg_active;
+        fprintf(fp, "spectrum2 %d %d %d %.17g %.17g %.17g %s\n",
+                sp->visible != 0, smoothing != 0, sp->opacity, sp->vscale,
+                offset, sp->voffset, stored);
+        if (i == s->active_spec) saved_active = saved_count;
+        saved_count++;
     }
-    if (s->active_spec >= 0) fprintf(fp, "active %d\n", s->active_spec);
-    fclose(fp);
+    if (saved_active >= 0) fprintf(fp, "active %d\n", saved_active);
+    if (fclose(fp) == 0) rename(tmp_path, path);
 }
 
 void predfit_load_session(AppState *s) {
@@ -91,15 +119,51 @@ void predfit_load_session(AppState *s) {
     if (!fp) return;
     s->n_session_spec = 0;
     s->session_active_spec = -1;
+    s->session_has_view = 0;
     char line[700];
     while (fgets(line, sizeof(line), fp)) {
         if (line[0] == '#') continue;
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
+        if (strncmp(line, "view ", 5) == 0) {
+            int sync = 1, average_window = s->rolling_avg_window;
+            if (sscanf(line + 5, "%lf %lf %lf %lf %lf %lf %d %d",
+                       &s->session_vxmin, &s->session_vxmax,
+                       &s->session_vymin, &s->session_vymax,
+                       &s->session_pvxmin, &s->session_pvxmax,
+                       &sync, &average_window) == 8) {
+                s->session_has_view = 1;
+                s->session_sync_active = sync != 0;
+                s->session_rolling_avg_window = average_window;
+            }
+            continue;
+        }
+        if (strncmp(line, "spectrum2 ", 10) == 0) {
+            SessionSpectrum saved = {0};
+            int consumed = 0;
+            int got = sscanf(line + 10, "%d %d %d %lf %lf %lf %n",
+                             &saved.visible, &saved.rolling_avg_active,
+                             &saved.opacity, &saved.vscale, &saved.exp_offset,
+                             &saved.voffset, &consumed);
+            const char *stored = line + 10 + consumed;
+            while (*stored == ' ' || *stored == '\t') stored++;
+            if (got == 6 && s->n_session_spec < MAX_SPECTRA && *stored &&
+                !predfit_is_session_file(s, stored)) {
+                snprintf(saved.path, sizeof(saved.path), "%s", stored);
+                s->session_spectrum[s->n_session_spec++] = saved;
+            }
+            continue;
+        }
+        /* v1 sessions only had the path.  Preserve backward compatibility
+           and give their trace the same defaults as a freshly opened file. */
         if (strncmp(line, "spectrum ", 9) == 0) {
-            if (s->n_session_spec < MAX_SPECTRA && line[9])
-                snprintf(s->session_spec_path[s->n_session_spec++],
-                         sizeof(s->session_spec_path[0]), "%s", line + 9);
+            if (s->n_session_spec < MAX_SPECTRA && line[9] &&
+                !predfit_is_session_file(s, line + 9)) {
+                SessionSpectrum saved = {0};
+                saved.visible = 1; saved.opacity = s->settings.trace_opacity; saved.vscale = 1.0;
+                snprintf(saved.path, sizeof(saved.path), "%s", line + 9);
+                s->session_spectrum[s->n_session_spec++] = saved;
+            }
             continue;
         }
         if (strncmp(line, "active ", 7) == 0) { s->session_active_spec = atoi(line + 7); continue; }

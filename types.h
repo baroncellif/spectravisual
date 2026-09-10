@@ -39,6 +39,19 @@ typedef struct {
     char   name[64];          // short label for the legend
 } Spectrum;
 
+/* On-disk description of one experimental trace.  The point data stay in the
+   original file; this records the non-destructive state needed to reopen it
+   exactly as it was shown. */
+typedef struct {
+    char   path[512];
+    double exp_offset;
+    double voffset;
+    double vscale;
+    int    rolling_avg_active;
+    int    visible;
+    int    opacity;
+} SessionSpectrum;
+
 typedef struct {
     double freq_mhz;   
     double lgint;      // log10 integrated intensity at the currently selected T
@@ -278,6 +291,7 @@ typedef struct {
                               //     1 = only the active spectrum
     char pending_spec_path[512];
     char pending_pred_path[512];
+    int pending_session_load; /* dropped .fit/spectravisual.state */
     int pending_select;       // request to switch active spectrum (-1 = none)
     int pending_remove;       // request to remove a spectrum (-1 = none)
 
@@ -418,9 +432,14 @@ typedef struct {
     /* Experimental spectra remembered from the previous session, read back from
        .fit/spectravisual.state so reopening the app restores the whole working
        set and not only the prediction. */
-    char session_spec_path[MAX_SPECTRA][512];
+    SessionSpectrum session_spectrum[MAX_SPECTRA];
     int  n_session_spec;
     int  session_active_spec;
+    int  session_has_view;
+    int  session_sync_active;
+    int  session_rolling_avg_window;
+    double session_vxmin, session_vxmax, session_vymin, session_vymax;
+    double session_pvxmin, session_pvxmax;
 
     // Text input. The focused field is a real text field: a caret, a selection
     // anchor, and the on-screen rectangle it was last drawn in, which is what

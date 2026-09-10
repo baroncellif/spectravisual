@@ -198,6 +198,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
             case SDL_DROPFILE: {
                 char *path = e.drop.file;
                 if (path_looks_like_cat(path)) snprintf(state->pending_pred_path, sizeof(state->pending_pred_path), "%s", path);
+                else if (predfit_is_session_file(state, path)) state->pending_session_load = 1;
                 else snprintf(state->pending_spec_path, sizeof(state->pending_spec_path), "%s", path);
                 state->pending_load = 1;
                 SDL_free(path);
