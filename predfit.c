@@ -279,6 +279,7 @@ typedef struct { int id; const char *watson_a, *watson_s, *other; } ParameterNam
 /* Pickett's identifiers are the actual interface; a typed ID therefore gets
    a physical label immediately, without relying on a separate lookup file. */
 static const ParameterName PARAMETER_NAMES[] = {
+    /* Watson A-reduction                 Watson S-reduction */
     {10000,"A","A",NULL},{20000,"B","B",NULL},{30000,"C","C",NULL},
     {200,"DeltaJ","DJ",NULL},{1100,"DeltaJK","DJK",NULL},{2000,"DeltaK","DK",NULL},
     {40100,"deltaJ","d1",NULL},{41000,"deltaK","d2",NULL},
@@ -288,12 +289,27 @@ static const ParameterName PARAMETER_NAMES[] = {
     {40300,"lJ","l1",NULL},{41200,"lJK","l2",NULL},{42100,"lKJ","l3",NULL},{43000,"lK","l4",NULL},
     {500,"PJ","PJ",NULL},{1400,"PJJK","PJJK",NULL},{2300,"PJK","PJK",NULL},{3200,"PKJ","PKJ",NULL},{4100,"PKKJ","PKKJ",NULL},{5000,"PK","PK",NULL},
     {40400,"pJ","p1",NULL},{41300,"pJJK","p2",NULL},{42200,"pJK","p3",NULL},{43100,"pKKJ","p4",NULL},{44000,"pK","p5",NULL},
+
+    /* Nuclear quadrupole coupling: spin 1 */
     {110010000,NULL,NULL,"chi.aa*3/2"},{110020000,NULL,NULL,"chi.bb*3/2"},{110030000,NULL,NULL,"chi.cc*3/2"},{110040000,NULL,NULL,"chi(b-c)/4"},
     {110610000,NULL,NULL,"chi.ab"},{110210000,NULL,NULL,"chi.bc"},{110410000,NULL,NULL,"chi.ac"},{110011000,NULL,NULL,"chi.k*3/2"},{110010100,NULL,NULL,"chi.J*3/2"},
-    {120010000,NULL,NULL,"D.aa*3/2"},{120040000,NULL,NULL,"D(b-c)/4"},{120610000,NULL,NULL,"Dab"},
-    {10010000,NULL,NULL,"M.aa"},{10020000,NULL,NULL,"M.bb"},{10030000,NULL,NULL,"M.cc"},
+
+    /* Nuclear quadrupole coupling: spin 2 */
+    {220010000,NULL,NULL,"chi.aa*3/2"},{220020000,NULL,NULL,"chi.bb*3/2"},{220030000,NULL,NULL,"chi.cc*3/2"},{220040000,NULL,NULL,"chi(b-c)/4"},
+    {220610000,NULL,NULL,"chi.ab"},{220210000,NULL,NULL,"chi.bc"},{220410000,NULL,NULL,"chi.ac"},{220011000,NULL,NULL,"chi.k*3/2"},{220010100,NULL,NULL,"chi.J*3/2"},
+
+    /* Spin-spin and spin-rotation (nucleus 1) */
+    {120010000,NULL,NULL,"D.aa*3/2"},{120020000,NULL,NULL,"D.bb*3/2"},{120030000,NULL,NULL,"D.cc*3/2"},{120040000,NULL,NULL,"D(b-c)/4"},
+    {120610000,NULL,NULL,"Dab"},{120210000,NULL,NULL,"Dbc"},{120410000,NULL,NULL,"Dac"},
+    {10010000,NULL,NULL,"M.aa {+IMJ}"},{10020000,NULL,NULL,"M.bb {+IMJ}"},{10030000,NULL,NULL,"M.cc {+IMJ}"},
+
+    /* Coriolis (0 <-> 1) and Fermi (0 <-> 1) */
     {11,NULL,NULL,"E1"},{200001,NULL,NULL,"Ga"},{210001,NULL,NULL,"Fbc"},{400001,NULL,NULL,"Gb"},{410001,NULL,NULL,"Fca"},{600001,NULL,NULL,"Gc"},{610001,NULL,NULL,"Fab"},
-    {1,NULL,NULL,"Fermi F"},{200000,NULL,NULL,"D_a"},{200100,NULL,NULL,"D_aJ"},{201000,NULL,NULL,"D_aK"},{400000,NULL,NULL,"D_b"},{600000,NULL,NULL,"D_c"}
+    {1,NULL,NULL,"F"},
+
+    /* Internal rotation */
+    {200000,NULL,NULL,"D_a"},{200100,NULL,NULL,"D_aJ"},{201000,NULL,NULL,"D_aK"},
+    {400000,NULL,NULL,"D_b"},{600000,NULL,NULL,"D_c"}
 };
 
 static const ParameterName *parameter_name(int id) {
@@ -306,7 +322,7 @@ static void parameter_label(PickettParameter *x) {
     const ParameterName *name=parameter_name(x->id);
     const char *label=name ? (name->watson_s ? name->watson_s : name->other) : NULL;
     if (label) snprintf(x->label,sizeof(x->label),"%s",label);
-    else if (!x->label[0]) snprintf(x->label,sizeof(x->label),"Pickett parameter");
+    else snprintf(x->label,sizeof(x->label),"SPFIT parameter %d", x->id);
 }
 
 static int write_inputs(AppState *s, int for_fit) {
@@ -671,6 +687,8 @@ static void advanced_begin_edit(PredFitState *p, int row, int col) {
     if (col == 0) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->id);
     else if (col == 1) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.15g", x->value);
     else snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.8g", x->error);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
     SDL_StartTextInput();
 }
 
@@ -679,7 +697,66 @@ static void advanced_begin_line_error(PredFitState *p) {
     p->advanced_edit_col = 0;
     p->advanced_edit_replace = 1;
     snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.8g", p->line_error_mhz);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
     SDL_StartTextInput();
+}
+
+static void advanced_edit_clamp(PredFitState *p) {
+    int n = (int)strlen(p->advanced_edit_buf);
+    if (p->advanced_edit_caret < 0) p->advanced_edit_caret = 0;
+    if (p->advanced_edit_caret > n) p->advanced_edit_caret = n;
+    if (p->advanced_edit_anchor < 0) p->advanced_edit_anchor = 0;
+    if (p->advanced_edit_anchor > n) p->advanced_edit_anchor = n;
+}
+
+static int advanced_edit_delete_selection(PredFitState *p) {
+    advanced_edit_clamp(p);
+    int lo = p->advanced_edit_caret < p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    int hi = p->advanced_edit_caret > p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    if (lo == hi) return 0;
+    memmove(p->advanced_edit_buf + lo, p->advanced_edit_buf + hi, strlen(p->advanced_edit_buf + hi) + 1);
+    p->advanced_edit_anchor = p->advanced_edit_caret = lo;
+    return 1;
+}
+
+static void advanced_edit_insert(PredFitState *p, const char *text) {
+    advanced_edit_delete_selection(p);
+    int n = (int)strlen(p->advanced_edit_buf), add = (int)strlen(text);
+    int room = (int)sizeof(p->advanced_edit_buf) - 1 - n;
+    if (add > room) add = room;
+    if (add <= 0) return;
+    memmove(p->advanced_edit_buf + p->advanced_edit_caret + add,
+            p->advanced_edit_buf + p->advanced_edit_caret,
+            (size_t)(n - p->advanced_edit_caret) + 1);
+    memcpy(p->advanced_edit_buf + p->advanced_edit_caret, text, (size_t)add);
+    p->advanced_edit_caret += add;
+    p->advanced_edit_anchor = p->advanced_edit_caret;
+}
+
+static void advanced_edit_copy(PredFitState *p, int cut) {
+    advanced_edit_clamp(p);
+    int lo = p->advanced_edit_caret < p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    int hi = p->advanced_edit_caret > p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    if (lo == hi) return;
+    char text[sizeof(p->advanced_edit_buf)];
+    int n = hi - lo;
+    memcpy(text, p->advanced_edit_buf + lo, (size_t)n);
+    text[n] = '\0';
+    SDL_SetClipboardText(text);
+    if (cut) advanced_edit_delete_selection(p);
+}
+
+static void advanced_edit_paste(PredFitState *p) {
+    char *clip = SDL_GetClipboardText();
+    if (!clip) return;
+    char clean[sizeof(p->advanced_edit_buf)];
+    int n = 0;
+    for (const char *q = clip; *q && n < (int)sizeof(clean) - 1; q++)
+        if (*q != '\r' && *q != '\n' && *q != '\t') clean[n++] = *q;
+    clean[n] = '\0';
+    SDL_free(clip);
+    advanced_edit_insert(p, clean);
 }
 
 static void advanced_commit_edit(PredFitState *p) {
@@ -688,14 +765,19 @@ static void advanced_commit_edit(PredFitState *p) {
         if (end != p->advanced_edit_buf && isfinite(v) && v > 0.0) p->line_error_mhz = v;
         p->advanced_edit_param = -1;
         p->advanced_edit_replace = 0;
+        p->advanced_edit_anchor = p->advanced_edit_caret = 0;
         SDL_StopTextInput();
         return;
     }
     if (p->advanced_edit_param < 0 || p->advanced_edit_param >= p->n_param) return;
     PickettParameter *x = &p->param[p->advanced_edit_param];
     if (p->advanced_edit_col == 0) {
-        char *end = NULL; long id = strtol(p->advanced_edit_buf, &end, 10);
-        if (end != p->advanced_edit_buf && id > 0 && id < 1000000) x->id = (int)id;
+        char *end = NULL;
+        errno = 0;
+        long id = strtol(p->advanced_edit_buf, &end, 10);
+        while (end && (*end == ' ' || *end == '\t')) end++;
+        if (end != p->advanced_edit_buf && end && *end == '\0' && errno != ERANGE &&
+            id > 0 && id <= INT_MAX) x->id = (int)id;
     } else {
         char *end = NULL; double v = strtod(p->advanced_edit_buf, &end);
         if (end != p->advanced_edit_buf && isfinite(v) &&
@@ -707,6 +789,7 @@ static void advanced_commit_edit(PredFitState *p) {
     sync_basic_from_parameters(p);
     p->advanced_edit_param = -1;
     p->advanced_edit_replace = 0;
+    p->advanced_edit_anchor = p->advanced_edit_caret = 0;
     SDL_StopTextInput();
 }
 
@@ -714,16 +797,47 @@ static int advanced_edit_event(AppState *s, const SDL_Event *e) {
     PredFitState *p = &s->predfit;
     if (p->advanced_edit_param < 0) return 0;
     if (e->type == SDL_TEXTINPUT && e->text.windowID == p->advanced_window_id) {
-        if (p->advanced_edit_replace) { p->advanced_edit_buf[0] = '\0'; p->advanced_edit_replace = 0; }
-        size_t n = strlen(p->advanced_edit_buf), add = strlen(e->text.text);
-        if (n + add < sizeof(p->advanced_edit_buf)) strcat(p->advanced_edit_buf, e->text.text);
+        advanced_edit_insert(p, e->text.text);
+        p->advanced_edit_replace = 0;
         return 1;
     }
     if (e->type == SDL_KEYDOWN && e->key.windowID == p->advanced_window_id) {
         SDL_Keycode k = e->key.keysym.sym;
-        if (k == SDLK_BACKSPACE) { if (p->advanced_edit_replace) { p->advanced_edit_buf[0]='\0'; p->advanced_edit_replace=0; } else { size_t n = strlen(p->advanced_edit_buf); if (n) p->advanced_edit_buf[n - 1] = '\0'; } return 1; }
+        SDL_Keymod mod = e->key.keysym.mod;
+        int cmd = (mod & (KMOD_GUI | KMOD_CTRL)) != 0;
+        int shift = (mod & KMOD_SHIFT) != 0;
+        if (cmd && k == SDLK_a) { p->advanced_edit_anchor = 0; p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf); return 1; }
+        if (cmd && k == SDLK_c) { advanced_edit_copy(p, 0); return 1; }
+        if (cmd && k == SDLK_x) { advanced_edit_copy(p, 1); return 1; }
+        if (cmd && k == SDLK_v) { advanced_edit_paste(p); return 1; }
+        if (k == SDLK_BACKSPACE) {
+            if (!advanced_edit_delete_selection(p) && p->advanced_edit_caret > 0) {
+                p->advanced_edit_anchor = p->advanced_edit_caret - 1;
+                advanced_edit_delete_selection(p);
+            }
+            return 1;
+        }
+        if (k == SDLK_DELETE) {
+            if (!advanced_edit_delete_selection(p) && p->advanced_edit_caret < (int)strlen(p->advanced_edit_buf)) {
+                p->advanced_edit_anchor = p->advanced_edit_caret + 1;
+                advanced_edit_delete_selection(p);
+            }
+            return 1;
+        }
+        if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_HOME || k == SDLK_END) {
+            int caret = p->advanced_edit_caret;
+            int length = (int)strlen(p->advanced_edit_buf);
+            if (k == SDLK_HOME || (cmd && k == SDLK_LEFT)) caret = 0;
+            else if (k == SDLK_END || (cmd && k == SDLK_RIGHT)) caret = length;
+            else if (k == SDLK_LEFT) caret--;
+            else if (k == SDLK_RIGHT) caret++;
+            p->advanced_edit_caret = caret;
+            if (!shift) p->advanced_edit_anchor = caret;
+            advanced_edit_clamp(p);
+            return 1;
+        }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { advanced_commit_edit(p); return 1; }
-        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_replace=0; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
         return 1;
     }
     return 0;
@@ -1059,18 +1173,29 @@ void predfit_render_advanced(AppState *s) {
             else if (i % 2)                       ui_fill(r, row, UI_PANEL);
 
             int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO)) / 2;
+            int editing = actual == p->advanced_edit_param;
+            SDL_Rect id_cell = {adv_col(u.table, 0.00) - 4, y + 2,
+                                adv_col(u.table, 0.11) - adv_col(u.table, 0.00) - 6, u.row_h - 6};
+            SDL_Rect value_cell = {adv_col(u.table, 0.56) - 4, y + 2,
+                                   adv_col(u.table, 0.80) - adv_col(u.table, 0.56) - 6, u.row_h - 6};
+            SDL_Rect error_cell = {adv_col(u.table, 0.80) - 4, y + 2,
+                                   u.table.x + u.table.w - 38 - adv_col(u.table, 0.80), u.row_h - 6};
+            if (editing && p->advanced_edit_col == 0) { ui_fill(r, id_cell, UI_INPUT); ui_frame(r, id_cell, UI_ACCENT); }
+            if (editing && p->advanced_edit_col == 1) { ui_fill(r, value_cell, UI_INPUT); ui_frame(r, value_cell, UI_ACCENT); }
+            if (editing && p->advanced_edit_col == 2) { ui_fill(r, error_cell, UI_INPUT); ui_frame(r, error_cell, UI_ACCENT); }
+
             snprintf(b, sizeof(b), "%d", x->id);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.00), ty,
-                    actual == p->advanced_edit_param && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : UI_TEXT);
+            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 0 ? p->advanced_edit_buf : b,
+                    adv_col(u.table, 0.00), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : UI_TEXT);
             ui_text(r, UI_FONT_SANS_SM, name && name->watson_a ? name->watson_a : "—", adv_col(u.table, 0.11), ty, UI_DIM);
             ui_text(r, UI_FONT_SANS_SM, name && name->watson_s ? name->watson_s : "—", adv_col(u.table, 0.28), ty, UI_ACCENT_TEXT);
             ui_text(r, UI_FONT_SANS_SM, name && name->other ? name->other : (name ? "—" : x->label), adv_col(u.table, 0.41), ty, UI_DIM);
             snprintf(b, sizeof(b), "%.11E", x->value);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.56), ty,
-                    actual == p->advanced_edit_param && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
+            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 1 ? p->advanced_edit_buf : b,
+                    adv_col(u.table, 0.56), ty, editing && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
             snprintf(b, sizeof(b), "%.5E", x->error);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.80), ty,
-                    actual == p->advanced_edit_param && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
+            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 2 ? p->advanced_edit_buf : b,
+                    adv_col(u.table, 0.80), ty, editing && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
 
             SDL_Rect del = {u.table.x + u.table.w - 32, y + (u.row_h - 2 - 22) / 2, 22, 22};
             ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del.x + 5, del.y + 5, 12, 12}, UI_DANGER_TEXT);
@@ -1080,13 +1205,11 @@ void predfit_render_advanced(AppState *s) {
         snprintf(b, sizeof(b), ".lin uncertainty: %.8g MHz", p->line_error_mhz);
         ui_text(r, UI_FONT_SANS_SM, b, u.w - ADV_PAD - 290, u.footer.y + 17,
                 p->advanced_edit_param == -2 ? UI_ACCENT_TEXT : UI_DIM);
-        if (p->advanced_edit_param >= 0 || p->advanced_edit_param == -2) {
-            snprintf(b, sizeof(b), "editing: %s", p->advanced_edit_buf);
-            ui_text(r, UI_FONT_MONO_SM, b, u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_ACCENT_TEXT);
-        } else {
-            ui_text(r, UI_FONT_SANS_SM, "0 as fit error fixes a parameter · × removes a row",
-                    u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_FAINT);
-        }
+        ui_text(r, UI_FONT_SANS_SM,
+                p->advanced_edit_param >= 0 ? "Enter applies in this cell · Esc cancels · × removes a row"
+                                             : "0 as fit error fixes a parameter · × removes a row",
+                u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17,
+                p->advanced_edit_param >= 0 ? UI_ACCENT_TEXT : UI_FAINT);
 
     } else if (p->advanced_tab == 1) {
         ui_text(r, UI_FONT_SANS, "Assigned transitions — click a row to exclude it from SPFIT only",

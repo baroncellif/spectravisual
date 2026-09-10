@@ -12,6 +12,7 @@
 #define MAX_LIN_POINTS 50000 // New constant for LIN file
 #define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
 #define MAX_PICKETT_PARAMS 128
+#define MAX_PICKETT_LABEL 128
 
 // --- DATA STRUCTURES ---
 
@@ -78,7 +79,7 @@ typedef struct {
     int id;
     double value;
     double error;
-    char label[24];
+    char label[MAX_PICKETT_LABEL];
 } PickettParameter;
 
 /* A reversible point saved immediately before an SPFIT run.  It remains in
@@ -111,6 +112,8 @@ typedef struct {
     int advanced_edit_param;  // -1 while no cell in the Parameters table is edited
     int advanced_edit_col;    // 0=id, 1=value, 2=parameter uncertainty
     int advanced_edit_replace;
+    int advanced_edit_caret;
+    int advanced_edit_anchor;
     int advanced_param_scroll;
     int advanced_line_scroll;
     int advanced_hover_line;
