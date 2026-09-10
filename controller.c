@@ -952,6 +952,12 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     int is_shift = (mod & KMOD_SHIFT);
     double speed_mult = (mod & KMOD_CAPS) ? s->settings.nav_fast_mult : 1.0;
 
+    /* Command on a Mac, Control elsewhere.  The unmodified keys keep their
+       meaning: F is the frequency-jump panel and B the transition filter. */
+    if (mod & (KMOD_GUI | KMOD_CTRL)) {
+        if (sym == SDLK_f) { predfit_fit(s); return; }            /* run SPFIT      */
+        if (sym == SDLK_b) { predfit_undo_last_fit(s); return; }  /* undo that fit  */
+    }
     if (sym == SDLK_COMMA) { settings_open(s); return; }
     if (sym == SDLK_h || sym == SDLK_SLASH) {
         s->show_help = !s->show_help;

@@ -1601,12 +1601,6 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
     SDL_Rect card = {l->win_w / 2 - 340, 86, 680, 440};
     if (card.x < 24) card.x = 24;
     if (card.w > l->win_w - 48) card.w = l->win_w - 48;
-    fill_rounded_rect(ren, card, 8, (SDL_Color){19, 20, 22, 250});
-    ui_frame(ren, card, UI_LINE);
-
-    SDL_Rect head = {card.x, card.y, card.w, 38};
-    ui_text_v(ren, UI_FONT_TITLE, "Keyboard and mouse", head.x + 20, head, UI_TEXT);
-    ui_hline(ren, card.x, card.x + card.w, card.y + 38, UI_LINE);
 
     struct { const char *group; const char *key; const char *what; } rows[] = {
         {"Navigate",  "Q  E",      "Zoom out / in on frequency"},
@@ -1629,6 +1623,8 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "C",         "Intensity range"},
         {NULL,        "F",         "Frequency jump"},
         {NULL,        "B",         "Transition filter"},
+        {NULL,        "cmd F",     "Run SPFIT (Pred&Fit)"},
+        {NULL,        "cmd B",     "Undo the last fit"},
         {"Mouse",     "left drag", "Zoom into a frequency range"},
         {NULL,        "right drag","Pick the peak in the range"},
         {NULL,        "alt drag",  "Slide the spectrum onto the prediction"},
@@ -1639,12 +1635,31 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "shift+key", "Without Sync, acts on the prediction only"}
     };
     int n = (int)(sizeof(rows) / sizeof(rows[0]));
+
+    /* Split at a group boundary past the middle, and size the card to the
+       taller of the two columns: the list grows as the program does, and a
+       fixed height quietly cut the last rows off. */
+    int split = n;
+    for (int i = 0; i < n; i++) if (rows[i].group && i >= n / 2) { split = i; break; }
+    int h1 = 0, h2 = 0;
+    for (int i = 0; i < n; i++) {
+        int add = 22 + (rows[i].group ? 30 : 0);
+        if (i < split) h1 += add; else h2 += add;
+    }
+    card.h = 58 + (h1 > h2 ? h1 : h2) + 20;
+    if (card.y + card.h > l->win_h - 30) card.h = l->win_h - 30 - card.y;
+    fill_rounded_rect(ren, card, 8, (SDL_Color){19, 20, 22, 250});
+    ui_frame(ren, card, UI_LINE);
+    SDL_Rect head = {card.x, card.y, card.w, 38};
+    ui_text_v(ren, UI_FONT_TITLE, "Keyboard and mouse", head.x + 20, head, UI_TEXT);
+    ui_hline(ren, card.x, card.x + card.w, card.y + 38, UI_LINE);
+
     int col_w = (card.w - 60) / 2;
     int x = card.x + 24, y = card.y + 58;
     for (int i = 0; i < n; i++) {
-        if (i == 11) { x = card.x + 30 + col_w; y = card.y + 58; }   /* second column starts at Tools */
+        if (i == split) { x = card.x + 30 + col_w; y = card.y + 58; }
         if (rows[i].group) {
-            if (i != 0 && i != 11) y += 10;
+            if (i != 0 && i != split) y += 10;
             ui_text(ren, UI_FONT_SANS_SM, rows[i].group, x, y, UI_FAINT);
             y += 20;
         }

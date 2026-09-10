@@ -570,6 +570,8 @@ static const KeyRow KEY_ROWS[] = {
     {"C",          "Intensity range"},
     {"F",          "Frequency jump"},
     {"B",          "Transition filter"},
+    {"cmd F",      "Run SPFIT on the current assignments"},
+    {"cmd B",      "Undo the last fit"},
     {"Mouse",      NULL},
     {"left drag",  "Zoom into a frequency range"},
     {"right drag", "Pick the peak in the range"},
