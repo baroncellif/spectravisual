@@ -12,6 +12,7 @@
 #include "ui_theme.h"
 #include "view.h"
 #include "controller.h"
+#include "predfit.h"
 
 static void init_app_defaults(AppState *state) {
     state->pred_scale = 1.0;
@@ -63,6 +64,8 @@ static void init_app_defaults(AppState *state) {
     state->win_filt = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 402}, 0, "Transition filter"};
     state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 620}, 0, "Intensity analysis"};
     state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
+    state->win_predfit = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 430}, 0, "Pred&Fit"};
+    predfit_init(state);
 
     state->n_spectra = 0;
     state->active_spec = -1;
@@ -127,7 +130,8 @@ static void ensure_aux_loaded(AppState *state) {
     if (state->lin_data) return;
     state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
     if (!state->lin_data) return;
-    load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
+    if (state->n_assignments == 0)
+        load_existing_assignments("assignments.txt", state->assignments, &state->n_assignments);
     char f[512];
     if (find_assigned_frequency_file(f, sizeof(f)))
         state->n_lin_data = read_assigned_frequencies(f, state->lin_data, MAX_LIN_POINTS);
@@ -316,6 +320,10 @@ int main(int argc, char *argv[])
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 
+    /* An explicit .cat always wins.  Otherwise a previous Pred&Fit archive is
+       a resumable session rather than a transient cache. */
+    if (!pred_arg) predfit_restore_latest(&state);
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     if (TTF_Init() != 0) return 1;
@@ -408,9 +416,10 @@ int main(int argc, char *argv[])
         handle_app_events(&state, &layout, &running);
         if(state.pending_load) {
             state.pending_load = 0;
-            if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); state.pending_pred_path[0] = '\0'; }
+            if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); predfit_adopt_generated_catalog(&state); state.pending_pred_path[0] = '\0'; }
             if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; }
         }
+        predfit_render_advanced(&state);
         if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; }
         if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; }
 
@@ -431,6 +440,7 @@ int main(int argc, char *argv[])
     }
 
     free_dataset(&state);
+    predfit_dispose(&state);
     ui_fonts_close();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

@@ -1,4 +1,5 @@
 #include "intensity_fit.h"
+#include "predfit.h"
 
 #include <float.h>
 #include <math.h>
@@ -306,6 +307,7 @@ int intensity_fit_run(AppState *s) {
     s->intfit_scale = scale;
     s->intfit_log_rms = rms;
     if (s->intfit_fit_temperature) s->rot_temp_k = temp;
+    predfit_adopt_shared_state(s);
     for (int i = 0; i < s->n_assignments; i++) s->intfit_lines[i].valid = 0;
     for (int i = 0; i < n; i++) {
         IntFitLine *r = &s->intfit_lines[work[i].assignment_index];

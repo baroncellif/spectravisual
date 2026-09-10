@@ -506,7 +506,7 @@ double ui_smoothstep(double a) {
 void update_sidebars(AppState *s, Layout *l) {
     DraggableWindow *panels[UI_TOOL_COUNT] = {
         &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-        &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+        &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
     };
     const int TOP = UI_CONTENT_Y;
 

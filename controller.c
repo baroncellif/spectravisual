@@ -2,6 +2,7 @@
 #include "algorithms.h"
 #include "loader.h"
 #include "intensity_fit.h"
+#include "predfit.h"
 #include "layout.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
@@ -129,6 +130,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { *running = 0; return; }
+        if (predfit_handle_advanced_event(state, &e)) continue;
 
         if (state->input_state != INPUT_NONE) {
             if (e.type == SDL_TEXTINPUT) {
@@ -222,7 +224,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             DraggableWindow *p = panels[t];
@@ -470,6 +472,17 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 }
                 return;
             }
+            case UI_TOOL_PREDFIT: {
+                PredFitState *p=&s->predfit;
+                int in[]={INPUT_PF_A,INPUT_PF_B,INPUT_PF_C,INPUT_PF_MUA,INPUT_PF_MUB,INPUT_PF_MUC,INPUT_PF_TEMP,INPUT_PF_FMIN,INPUT_PF_FMAX};
+                double *v[]={&p->a,&p->b,&p->c,&p->mu[0],&p->mu[1],&p->mu[2],&p->temp_k,&p->fmin_ghz,&p->fmax_ghz};
+                for(int i=0;i<9;i++) if(point_in_rect(mx,my,ui_pf_model(w,i+1))){snprintf(s->text_input_buf,32,"%.8g",*v[i]);input_focus(s,in[i],mx);return;}
+                if(point_in_rect(mx,my,ui_pf_calculate(w))){predfit_calculate(s);return;}
+                if(point_in_rect(mx,my,ui_pf_fit(w))){predfit_fit(s);return;}
+                if(point_in_rect(mx,my,ui_pf_undo(w))){predfit_undo_last_fit(s);return;}
+                if(point_in_rect(mx,my,ui_pf_advanced(w))){predfit_open_advanced(s);return;}
+                return;
+            }
 
             default:
                 return;
@@ -483,7 +496,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     if (b->button == SDL_BUTTON_LEFT) {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             if (point_in_rect(mx, my, ui_rail_rect(t))) {
@@ -841,6 +854,7 @@ static void commit_text_input(AppState *s) {
         double temp_k = atof(s->text_input_buf);
         if (isfinite(temp_k) && temp_k > 0.0) {
             s->rot_temp_k = temp_k;
+            predfit_adopt_shared_state(s);
             if (s->pred_lines && s->n_pred > 0)
                 rescale_predicted_intensities(s->pred_lines, s->n_pred,
                                               s->cat_temp_k, s->rot_temp_k,
@@ -854,7 +868,7 @@ static void commit_text_input(AppState *s) {
         int component = which % 3;
         if (isfinite(mu)) {
             if (which < 3) s->dipole_cat[component] = mu;
-            else           s->dipole_red[component] = mu;
+            else { s->dipole_red[component] = mu; predfit_adopt_shared_state(s); }
         }
         if (s->pred_lines && s->n_pred > 0)
             rescale_predicted_intensities(s->pred_lines, s->n_pred,
@@ -865,6 +879,15 @@ static void commit_text_input(AppState *s) {
     else if (s->input_state == INPUT_FIT_WINDOW) {
         double width = atof(s->text_input_buf);
         if (isfinite(width) && width > 0.0) s->intfit_half_window_mhz = width;
+    }
+    else if (s->input_state >= INPUT_PF_A && s->input_state <= INPUT_PF_FMAX) {
+        double x=atof(s->text_input_buf); PredFitState *p=&s->predfit;
+        double *v[]={&p->a,&p->b,&p->c,&p->mu[0],&p->mu[1],&p->mu[2],&p->temp_k,&p->fmin_ghz,&p->fmax_ghz};
+        int i=s->input_state-INPUT_PF_A;
+        if (isfinite(x) && ((i == 7 && x >= 0.0) || (i != 7 && x > 0.0))) {
+            *v[i]=x;
+            if (i >= 3 && i <= 6) predfit_publish_shared_state(s);
+        }
     }
     else if (s->input_state == INPUT_FILT_JMIN)  s->filt_j_min  = atoi(s->text_input_buf);
     else if (s->input_state == INPUT_FILT_JMAX)  s->filt_j_max  = atoi(s->text_input_buf);

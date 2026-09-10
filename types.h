@@ -11,6 +11,7 @@
 #define MAX_SELECTED 100
 #define MAX_LIN_POINTS 50000 // New constant for LIN file
 #define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
+#define MAX_PICKETT_PARAMS 128
 
 // --- DATA STRUCTURES ---
 
@@ -56,7 +57,58 @@ typedef struct {
     PredLine pred;
     double exp_freq;
     double exp_int;
+    int fit_enabled;          // assignment remains visible when this is 0
 } Assignment;
+
+typedef struct {
+    int id;
+    double value;
+    double error;
+    char label[24];
+} PickettParameter;
+
+/* A reversible point saved immediately before an SPFIT run.  It remains in
+   RAM only, so closing the app intentionally starts a fresh fit history. */
+typedef struct {
+    double a, b, c;
+    double mu[3];
+    double temp_k;
+    double fmin_ghz, fmax_ghz;
+    double line_error_mhz;
+    int n_param;
+    PickettParameter param[MAX_PICKETT_PARAMS];
+    int n_assignments;
+    unsigned char assignment_fit_enabled[MAX_ASSIGNMENTS];
+} PredFitSnapshot;
+
+typedef struct {
+    double a, b, c;
+    double mu[3];
+    double temp_k;
+    double fmin_ghz, fmax_ghz;
+    double line_error_mhz;
+    int n_param;
+    PickettParameter param[MAX_PICKETT_PARAMS];
+    int advanced_open;
+    int advanced_tab;
+    SDL_Window *advanced_window;
+    SDL_Renderer *advanced_renderer;
+    Uint32 advanced_window_id;
+    int advanced_edit_param;  // -1 while no cell in the Parameters table is edited
+    int advanced_edit_col;    // 0=id, 1=value, 2=parameter uncertainty
+    int advanced_edit_replace;
+    int advanced_param_scroll;
+    int advanced_line_scroll;
+    int advanced_hover_line;
+    char advanced_edit_buf[64];
+    PredFitSnapshot *history;
+    int history_count;
+    int history_capacity;
+    int generated_catalog_pending;
+    char work_dir[512];       // persistent .fit working state (latest run)
+    int last_fit_iterations;
+    char status[160];
+} PredFitState;
 
 /* One fitted observation, retained so the intensity-fit report can be
  * exported without re-measuring the experimental trace. */
@@ -129,6 +181,15 @@ typedef enum {
     INPUT_MURED_B,
     INPUT_MURED_C,
     INPUT_FIT_WINDOW,
+    INPUT_PF_A,
+    INPUT_PF_B,
+    INPUT_PF_C,
+    INPUT_PF_MUA,
+    INPUT_PF_MUB,
+    INPUT_PF_MUC,
+    INPUT_PF_TEMP,
+    INPUT_PF_FMIN,
+    INPUT_PF_FMAX,
     // Quantum-number / branch filter inputs
     INPUT_FILT_JMIN,
     INPUT_FILT_JMAX,
@@ -253,6 +314,9 @@ typedef struct {
     DraggableWindow win_filt;
     DraggableWindow win_dip;
     DraggableWindow win_spec;
+    DraggableWindow win_predfit;
+
+    PredFitState predfit;
 
     DraggableWindow *drag_target;
     SDL_Point drag_offset;

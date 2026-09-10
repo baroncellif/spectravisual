@@ -804,7 +804,7 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 
     const DraggableWindow *panels[UI_TOOL_COUNT] = {
         &state->win_as, &state->win_pf, &state->win_avg, &state->win_br,
-        &state->win_dip, &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec
+        &state->win_dip, &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec, &state->win_predfit
     };
 
     int tip_tool = -1;
@@ -1376,6 +1376,27 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         else
             ui_text(ren, UI_FONT_SANS_SM, "Drop a file to add a trace. - / + shift it.",
                     last.x + 6, last.y + 6, UI_FAINT);
+    }
+
+    if (state->win_predfit.visible) {
+        SDL_RenderSetClipRect(ren, &state->win_predfit.clip);
+        draw_inspector_section(ren, &state->win_predfit, UI_ICON_LIST, mx, my);
+        SDL_Rect w=state->win_predfit.rect; PredFitState *p=&state->predfit;
+        ui_text(ren,UI_FONT_SANS_SM,"QUICK PREDICTION",ui_p_row(w,0).x,ui_p_row(w,0).y+8,UI_ACCENT_TEXT);
+        const char *lab[]={"A","B","C","mu a","mu b","mu c","T rot","Start","End"};
+        double val[]={p->a,p->b,p->c,p->mu[0],p->mu[1],p->mu[2],p->temp_k,p->fmin_ghz,p->fmax_ghz};
+        int inp[]={INPUT_PF_A,INPUT_PF_B,INPUT_PF_C,INPUT_PF_MUA,INPUT_PF_MUB,INPUT_PF_MUC,INPUT_PF_TEMP,INPUT_PF_FMIN,INPUT_PF_FMAX};
+        const char *unit[]={"MHz","MHz","MHz","D","D","D","K","GHz","GHz"};
+        for(int i=0;i<9;i++){field_val(state,inp[i],buf,sizeof(buf),"%.6g",val[i]);panel_field(ren,state,w,lab[i],ui_pf_model(w,i+1),inp[i],buf,unit[i]);}
+        ui_button(ren,ui_pf_calculate(w),"Calculate",-1,UI_BTN_PRIMARY,0,mx,my,m_down);
+        ui_button(ren,ui_pf_fit(w),"Fit",-1,UI_BTN_QUIET,0,mx,my,m_down);
+        ui_button(ren,ui_pf_undo(w),"Undo",-1,UI_BTN_QUIET,0,mx,my,m_down);
+        ui_button(ren,ui_pf_advanced(w),"Advanced...",UI_ICON_LIST,UI_BTN_QUIET,0,mx,my,m_down);
+        double qrot = (p->a > 0.0 && p->b > 0.0 && p->c > 0.0 && p->temp_k > 0.0)
+                    ? 5.3311e6 * sqrt((p->temp_k*p->temp_k*p->temp_k)/(p->a*p->b*p->c)) : 0.0;
+        snprintf(buf,sizeof(buf),"Qrot(T) = %.6g   S-reduction, prolate, sigma = 1",qrot);
+        panel_hint(ren,ui_p_row(w,12),buf);
+        panel_hint(ren,ui_p_row(w,13),p->status[0]?p->status:"Calculate runs SPCAT; Fit runs SPFIT then SPCAT.");
     }
 
     SDL_RenderSetClipRect(ren, NULL);

@@ -119,6 +119,7 @@ const char *ui_tool_title(int tool) {
         case UI_TOOL_FILTER:  return "Transition filter";
         case UI_TOOL_JUMP:    return "Frequency jump";
         case UI_TOOL_SPECTRA: return "Spectra";
+        case UI_TOOL_PREDFIT: return "Pred&Fit";
         default:              return "";
     }
 }
@@ -133,6 +134,7 @@ const char *ui_tool_key(int tool) {
         case UI_TOOL_CUT:    return "C";
         case UI_TOOL_FILTER: return "B";
         case UI_TOOL_JUMP:   return "F";
+        case UI_TOOL_PREDFIT:return "";
         default:             return "";     /* Spectra has no key binding */
     }
 }
@@ -148,6 +150,7 @@ int ui_tool_icon(int tool) {
         case UI_TOOL_FILTER:  return UI_ICON_FILTER;
         case UI_TOOL_JUMP:    return UI_ICON_JUMP;
         case UI_TOOL_SPECTRA: return UI_ICON_LAYERS;
+        case UI_TOOL_PREDFIT: return UI_ICON_LIST;
         default:              return UI_ICON_LIST;
     }
 }

@@ -460,9 +460,10 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
     for(int i=0; i<*n; i++) {
         // Check if freq matches (using small epsilon)
         if(fabs(list[i].pred.freq_mhz - p.freq_mhz) < 1e-6) {
-            list[i].exp_freq = exp_f;
-            list[i].exp_int  = exp_i;
-            list[i].pred = p; 
+        list[i].exp_freq = exp_f;
+        list[i].exp_int  = exp_i;
+        list[i].pred = p;
+        list[i].fit_enabled = 1;
             printf("Updated assignment for %.4f MHz\n", p.freq_mhz);
             return;
         }
@@ -471,6 +472,7 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
         list[*n].pred = p;
         list[*n].exp_freq = exp_f;
         list[*n].exp_int = exp_i;
+        list[*n].fit_enabled = 1;
         (*n)++;
         printf("Added assignment for %.4f MHz\n", p.freq_mhz);
     }

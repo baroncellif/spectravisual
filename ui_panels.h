@@ -76,6 +76,14 @@ static inline SDL_Rect ui_fit_export(SDL_Rect w) {
 }
 #define UI_DIP_ROWS 20
 
+/* --- Pred&Fit quick prediction --------------------------------------- */
+static inline SDL_Rect ui_pf_model(SDL_Rect w, int i) { SDL_Rect r=ui_p_row(w,i); return (SDL_Rect){r.x+r.w-UI_P_FIELD,r.y,UI_P_FIELD,UI_P_ROW}; }
+static inline SDL_Rect ui_pf_calculate(SDL_Rect w) { SDL_Rect r=ui_p_row(w,10); return (SDL_Rect){r.x,r.y,106,UI_P_ROW}; }
+static inline SDL_Rect ui_pf_fit(SDL_Rect w) { SDL_Rect r=ui_pf_calculate(w); r.x+=114; r.w=74; return r; }
+static inline SDL_Rect ui_pf_undo(SDL_Rect w) { SDL_Rect r=ui_pf_calculate(w); r.x+=196; r.w=82; return r; }
+static inline SDL_Rect ui_pf_advanced(SDL_Rect w) { SDL_Rect r=ui_p_row(w,11); return (SDL_Rect){r.x,r.y,196,UI_P_ROW}; }
+#define UI_PREDFIT_ROWS 14
+
 /* --- Rolling average -------------------------------------------------- */
 static inline SDL_Rect ui_avg_field(SDL_Rect w)  { return ui_p_right(w, 0, UI_P_FIELD); }
 static inline SDL_Rect ui_avg_toggle(SDL_Rect w) { return ui_p_row(w, 1); }
@@ -199,6 +207,7 @@ static inline int ui_panel_height(int tool, const AppState *s) {
             int n = s->n_spectra > 0 ? s->n_spectra : 1;
             return UI_SECTION_HEAD_H + UI_P_TOP + 3 * UI_P_STEP + 6 + n * UI_SPEC_ROW_STEP + 10 + 32 + UI_P_BOT;
         }
+        case UI_TOOL_PREDFIT: return ui_p_height(UI_PREDFIT_ROWS);
         default: return 160;
     }
 }

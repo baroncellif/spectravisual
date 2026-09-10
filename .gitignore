@@ -11,6 +11,8 @@ plotter.exe
 last_spectravisual
 
 # dati di esempio / output di lavoro (tenuti fuori dal repo)
+.fit
+.fit/*
 spettro.txt
 pred.cat
 pred.int

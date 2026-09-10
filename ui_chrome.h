@@ -24,6 +24,7 @@ typedef enum {
     UI_TOOL_FILTER,
     UI_TOOL_JUMP,
     UI_TOOL_SPECTRA,
+    UI_TOOL_PREDFIT,
     UI_TOOL_COUNT
 } UiTool;
 
@@ -34,7 +35,7 @@ typedef enum {
 
 /* A separator follows the measurement group and the prediction group. */
 static inline int ui_rail_separator_after(int tool) {
-    return (tool == UI_TOOL_AVG || tool == UI_TOOL_FILTER);
+    return (tool == UI_TOOL_AVG || tool == UI_TOOL_FILTER || tool == UI_TOOL_SPECTRA);
 }
 
 static inline SDL_Rect ui_rail_rect(int tool) {
