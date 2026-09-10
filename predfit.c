@@ -2,12 +2,14 @@
 #include "layout.h"
 #include "loader.h"
 #include "ui_theme.h"
+#include "ui_chrome.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define FIT_ROOT ".fit"
 #define SPCAT_BIN "/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spcat"
@@ -132,6 +134,9 @@ void predfit_init(AppState *s) {
     p->param[2] = (PickettParameter){30000, p->c, 1.0, "C"};
     p->advanced_edit_param = -1;
     p->advanced_hover_line = -1;
+    /* Point at the working directory straight away, so the Fitting tab shows
+       the last run even before this session calculates or fits anything. */
+    snprintf(p->work_dir, sizeof(p->work_dir), "%s", FIT_ROOT);
 }
 
 static void sync_basic_parameters(PredFitState *p) {
@@ -289,40 +294,9 @@ static void fit_summary(PredFitState *p, char *out, size_t outsz) {
         snprintf(out, outsz, "SPFIT stopped after %d/50 iterations; %s", p->last_fit_iterations, last_rms);
 }
 
-typedef struct { int found; double obs, calc, diff, unc; } FitObservation;
-
-static FitObservation fit_observation(const PredFitState *p, int line_number) {
-    FitObservation result={0};
-    char path[600]; work_file(p,"model.fit",path,sizeof(path));
-    FILE *fp=fopen(path,"r"); if (!fp) return result;
-    char line[512];
-    while (fgets(line,sizeof(line),fp)) {
-        int n=0; if (sscanf(line," %d:",&n)!=1 || n!=line_number) continue;
-        char *q=strchr(line,':'); if (!q) continue; q++;
-        for (int k=0;k<6;k++) { char *end=NULL; strtol(q,&end,10); if (end==q) break; q=end; }
-        char *end=NULL;
-        double obs=strtod(q,&end); if (end==q) continue; q=end;
-        double calc=strtod(q,&end); if (end==q) continue; q=end;
-        double diff=strtod(q,&end); if (end==q) continue; q=end;
-        double unc=strtod(q,&end); if (end==q || unc<=0.0) continue;
-        result=(FitObservation){1,obs,calc,diff,unc}; /* retain final iteration */
-    }
-    fclose(fp);
-    return result;
-}
-
-static int fitted_parameter(const PredFitState *p, int id, double *value, double *error) {
-    char path[600]; work_file(p,"model.var",path,sizeof(path));
-    FILE *fp=fopen(path,"r"); if (!fp) return 0;
-    char line[256]; int found=0;
-    while (fgets(line,sizeof(line),fp)) {
-        int got_id=0; double got_value=0, got_error=0;
-        if (!strchr(line,'/') || sscanf(line,"%d %lf %lf",&got_id,&got_value,&got_error)!=3 || got_id!=id) continue;
-        *value=got_value; *error=got_error; found=1;
-    }
-    fclose(fp);
-    return found;
-}
+/* `used` is 0 for a line SPFIT read but left out of the fit: it writes the
+   999.99999 placeholder for those, which is not a residual to colour. */
+typedef struct { int found, used; double obs, calc, diff, unc; } FitObservation;
 
 static void import_int_settings(PredFitState *p) {
     char path[600]; work_file(p,"model.int",path,sizeof(path));
@@ -541,85 +515,471 @@ static void add_parameter(PredFitState *p) {
     advanced_begin_edit(p, p->n_param - 1, 0);
 }
 
+/* Removing a row keeps the table contiguous, so the fit inputs written from it
+   never carry a stale parameter. */
+static void delete_parameter(PredFitState *p, int row) {
+    if (row < 0 || row >= p->n_param) return;
+    for (int i = row; i < p->n_param - 1; i++) p->param[i] = p->param[i + 1];
+    p->n_param--;
+    if (p->advanced_edit_param == row) { p->advanced_edit_param = -1; SDL_StopTextInput(); }
+    else if (p->advanced_edit_param > row) p->advanced_edit_param--;
+    if (p->advanced_param_scroll > 0 && p->advanced_param_scroll >= p->n_param) p->advanced_param_scroll--;
+    sync_basic_from_parameters(p);
+}
+
+/* ---------------------------------------------------------------------------
+ *  Cached view of the last SPFIT run.
+ *  model.fit is read once per change instead of once per drawn row: the fitting
+ *  tab shows every parameter and every observation, and re-scanning the file
+ *  for each of them made the window redraw in file I/O.
+ * ------------------------------------------------------------------------- */
+#define MAX_REPORT_PARAM_LINES 64
+
+typedef struct {
+    time_t mtime;
+    char   path[600];
+    char   param_line[MAX_REPORT_PARAM_LINES][100];  /* verbatim SPFIT block   */
+    int    n_param_lines;
+    FitObservation obs[MAX_ASSIGNMENTS];             /* indexed by line number */
+    int    n_obs;
+} FitReport;
+
+static FitReport g_report;
+
+static void report_reset(FitReport *rep) {
+    rep->n_param_lines = 0;
+    rep->n_obs = 0;
+    memset(rep->obs, 0, sizeof(rep->obs));
+}
+
+/* Parses one " 12: ..." observation row of model.fit. */
+static int parse_observation(const char *line, int *number, FitObservation *out) {
+    int n = 0;
+    if (sscanf(line, " %d:", &n) != 1 || n <= 0) return 0;
+    const char *q = strchr(line, ':');
+    if (!q) return 0;
+    q++;
+    for (int k = 0; k < 6; k++) { char *end = NULL; strtol(q, &end, 10); if (end == q) break; q = end; }
+    char *end = NULL;
+    double obs = strtod(q, &end); if (end == q) return 0; q = end;
+    double calc = strtod(q, &end); if (end == q) return 0; q = end;
+    double diff = strtod(q, &end); if (end == q) return 0; q = end;
+    double unc = strtod(q, &end); if (end == q || unc <= 0.0) return 0;
+    *number = n;
+    int used = (fabs(diff) < 999.0 && unc < 999.0);
+    *out = (FitObservation){1, used, obs, calc, diff, unc};
+    return 1;
+}
+
+static void report_refresh(const PredFitState *p) {
+    char path[600];
+    work_file(p, "model.fit", path, sizeof(path));
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        if (g_report.mtime != 0 || g_report.path[0]) { report_reset(&g_report); g_report.mtime = 0; g_report.path[0] = '\0'; }
+        return;
+    }
+    if (st.st_mtime == g_report.mtime && strcmp(path, g_report.path) == 0) return;
+
+    g_report.mtime = st.st_mtime;
+    snprintf(g_report.path, sizeof(g_report.path), "%s", path);
+    report_reset(&g_report);
+
+    FILE *fp = fopen(path, "r");
+    if (!fp) return;
+
+    char line[512];
+    while (fgets(line, sizeof(line), fp)) {
+        /* SPFIT prints the parameter block once per iteration; the last one
+           wins, and it is already formatted the way it should be read. */
+        if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
+            g_report.n_param_lines = 0;
+            while (fgets(line, sizeof(line), fp)) {
+                int index = 0, id = 0;
+                if (sscanf(line, " %d %d", &index, &id) != 2 || !strchr(line, '/')) break;
+                char *nl = strpbrk(line, "\r\n");
+                if (nl) *nl = '\0';
+                /* trim the trailing padding SPFIT writes */
+                for (int i = (int)strlen(line) - 1; i >= 0 && line[i] == ' '; i--) line[i] = '\0';
+                if (g_report.n_param_lines < MAX_REPORT_PARAM_LINES)
+                    snprintf(g_report.param_line[g_report.n_param_lines++],
+                             sizeof(g_report.param_line[0]), "%s", line);
+            }
+            continue;
+        }
+        int number = 0;
+        FitObservation o;
+        if (parse_observation(line, &number, &o) && number <= MAX_ASSIGNMENTS) {
+            g_report.obs[number - 1] = o;              /* the last iteration wins */
+            if (number > g_report.n_obs) g_report.n_obs = number;
+        }
+    }
+    fclose(fp);
+}
+
+static FitObservation report_observation(int line_number) {
+    if (line_number < 1 || line_number > MAX_ASSIGNMENTS) return (FitObservation){0, 0, 0, 0, 0, 0};
+    return g_report.obs[line_number - 1];
+}
+
+/* How well a line sits in the fit, read at a glance: red beyond 4 sigma, then
+   orange, yellow, and green inside 1.5 sigma. */
+static SDL_Color residual_color(double z) {
+    double a = fabs(z);
+    if (a > 4.0) return (SDL_Color){229,  83,  75, 255};
+    if (a > 2.5) return (SDL_Color){232, 138,  58, 255};
+    if (a > 1.5) return (SDL_Color){226, 190,  70, 255};
+    return (SDL_Color){ 70, 196, 138, 255};
+}
+
+/* ---------------------------------------------------------------------------
+ *  Layout
+ *  The window is resizable, so every rectangle is derived from its current
+ *  size, and the renderer and the event handler read them from here.
+ * ------------------------------------------------------------------------- */
+#define ADV_PAD        18
+#define ADV_HEADER_H   42
+#define ADV_TAB_Y      48
+#define ADV_TAB_H      30
+#define ADV_TAB_W     132
+#define ADV_TAB_STEP  145
+#define ADV_CONTENT_Y  92
+#define ADV_FOOTER_H   46
+
+typedef struct {
+    int w, h;
+    SDL_Rect tab[3];
+    SDL_Rect caption;
+    SDL_Rect table;         /* frame around the scrolling rows            */
+    SDL_Rect rows;          /* the rows themselves, header excluded       */
+    int row_h, rows_visible;
+    SDL_Rect params;        /* fitting tab: the SPFIT parameter block     */
+    int param_rows_visible;
+    SDL_Rect footer;
+    SDL_Rect btn_a, btn_b;
+} AdvUI;
+
+static AdvUI adv_ui(AppState *s, int tab) {
+    PredFitState *p = &s->predfit;
+    AdvUI u;
+    memset(&u, 0, sizeof(u));
+    SDL_GetWindowSize(p->advanced_window, &u.w, &u.h);
+    if (u.w < 620) u.w = 620;
+    if (u.h < 420) u.h = 420;
+
+    for (int i = 0; i < 3; i++) u.tab[i] = (SDL_Rect){16 + i * ADV_TAB_STEP, ADV_TAB_Y, ADV_TAB_W, ADV_TAB_H};
+
+    int footer_y = u.h - ADV_FOOTER_H;
+    u.footer  = (SDL_Rect){0, footer_y, u.w, ADV_FOOTER_H};
+    u.caption = (SDL_Rect){ADV_PAD, ADV_CONTENT_Y, u.w - 2 * ADV_PAD, 18};
+
+    int table_top = ADV_CONTENT_Y + 26;
+
+    if (tab == 2) {
+        int lines = g_report.n_param_lines > 0 ? g_report.n_param_lines : 1;
+        if (lines > 9) lines = 9;
+        u.param_rows_visible = lines;
+        u.params = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, 26 + lines * 18 + 8};
+        table_top = u.params.y + u.params.h + 12;
+        u.row_h = 22;
+    } else {
+        u.row_h = (tab == 0) ? 25 : 23;
+    }
+
+    u.table = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, footer_y - table_top - 10};
+    if (u.table.h < 80) u.table.h = 80;
+    u.rows  = (SDL_Rect){u.table.x + 2, u.table.y + 26, u.table.w - 4, u.table.h - 28};
+    u.rows_visible = u.rows.h / u.row_h;
+    if (u.rows_visible < 1) u.rows_visible = 1;
+
+    u.btn_a = (SDL_Rect){ADV_PAD, footer_y + 8, tab == 0 ? 142 : 110, 30};
+    u.btn_b = (SDL_Rect){u.btn_a.x + u.btn_a.w + 10, footer_y + 8, 132, 30};
+    return u;
+}
+
+/* Column x inside a table, as a fraction of its width: the columns follow the
+   window when it is resized instead of staying where they were designed. */
+static int adv_col(SDL_Rect table, double fraction) {
+    return table.x + 10 + (int)((table.w - 20) * fraction);
+}
+
+static int adv_scroll_limit(int total, int visible) {
+    int limit = total - visible;
+    return limit > 0 ? limit : 0;
+}
+
 int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
-    PredFitState *p=&s->predfit;
+    PredFitState *p = &s->predfit;
     if (!p->advanced_open) return 0;
-    if (e->type == SDL_WINDOWEVENT && e->window.windowID == p->advanced_window_id && e->window.event == SDL_WINDOWEVENT_CLOSE) { predfit_close_advanced(s); return 1; }
+    if (e->type == SDL_WINDOWEVENT && e->window.windowID == p->advanced_window_id &&
+        e->window.event == SDL_WINDOWEVENT_CLOSE) { predfit_close_advanced(s); return 1; }
     if (advanced_edit_event(s, e)) return 1;
-    if (p->advanced_edit_param != -1 && e->type == SDL_MOUSEBUTTONDOWN && e->button.windowID == p->advanced_window_id)
+    if (p->advanced_edit_param != -1 && e->type == SDL_MOUSEBUTTONDOWN &&
+        e->button.windowID == p->advanced_window_id)
         advanced_commit_edit(p);
+
+    report_refresh(p);
+    AdvUI u = adv_ui(s, p->advanced_tab);
+
     if (e->type == SDL_MOUSEWHEEL && e->wheel.windowID == p->advanced_window_id) {
         int *scroll = p->advanced_tab == 0 ? &p->advanced_param_scroll : &p->advanced_line_scroll;
-        int limit = p->advanced_tab == 0 ? p->n_param - 14 : s->n_assignments - (p->advanced_tab == 1 ? 16 : 11);
+        int total   = p->advanced_tab == 0 ? p->n_param : s->n_assignments;
         *scroll -= e->wheel.y;
         if (*scroll < 0) *scroll = 0;
-        if (*scroll > limit) *scroll = limit > 0 ? limit : 0;
+        int limit = adv_scroll_limit(total, u.rows_visible);
+        if (*scroll > limit) *scroll = limit;
         return 1;
     }
+
     if (e->type == SDL_MOUSEMOTION && e->motion.windowID == p->advanced_window_id) {
-        if (p->advanced_tab == 2 && e->motion.y >= 285 && e->motion.y < 525) {
-            int row=p->advanced_line_scroll+(e->motion.y-285)/24;
-            p->advanced_hover_line=row < s->n_assignments ? row : -1;
-        } else p->advanced_hover_line=-1;
+        p->advanced_hover_line = -1;
+        if (p->advanced_tab != 0 && point_in_rect(e->motion.x, e->motion.y, u.rows)) {
+            int row = p->advanced_line_scroll + (e->motion.y - u.rows.y) / u.row_h;
+            if (row >= 0 && row < s->n_assignments) p->advanced_hover_line = row;
+        }
         return 1;
     }
+
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != p->advanced_window_id) return 0;
-    int x=e->button.x, y=e->button.y;
-    if (y >= 48 && y < 82) { p->advanced_tab = x < 180 ? 0 : x < 320 ? 1 : 2; return 1; }
+    int x = e->button.x, y = e->button.y;
+
+    for (int i = 0; i < 3; i++)
+        if (point_in_rect(x, y, u.tab[i])) { p->advanced_tab = i; return 1; }
+
     if (p->advanced_tab == 0) {
-        if (y >= 146 && y < 538) { int row=p->advanced_param_scroll+(y-146)/28; if (row < p->n_param) { if (x < 110) advanced_begin_edit(p,row,0); else if (x >= 500 && x < 700) advanced_begin_edit(p,row,1); else if (x >= 700) advanced_begin_edit(p,row,2); return 1; } }
-        if (y >= 540 && y < 574 && x >= 300 && x < 500) { advanced_begin_line_error(p); return 1; }
-        if (y >= 550 && x < 160) { add_parameter(p); return 1; }
+        if (point_in_rect(x, y, u.rows)) {
+            int row = p->advanced_param_scroll + (y - u.rows.y) / u.row_h;
+            if (row >= 0 && row < p->n_param) {
+                int del_x = u.table.x + u.table.w - 32;
+                if (x >= del_x)                             delete_parameter(p, row);
+                else if (x < adv_col(u.table, 0.11))        advanced_begin_edit(p, row, 0);
+                else if (x >= adv_col(u.table, 0.56) &&
+                         x <  adv_col(u.table, 0.80))       advanced_begin_edit(p, row, 1);
+                else if (x >= adv_col(u.table, 0.80))       advanced_begin_edit(p, row, 2);
+            }
+            return 1;
+        }
+        if (point_in_rect(x, y, u.btn_a)) { add_parameter(p); return 1; }
+        SDL_Rect unc = {u.w - ADV_PAD - 300, u.footer.y + 8, 300, 30};
+        if (point_in_rect(x, y, unc)) { advanced_begin_line_error(p); return 1; }
+        return 1;
     }
-    if (p->advanced_tab == 1 && y >= 154 && y < 546) { int row=p->advanced_line_scroll+(y-154)/24; if (row >= 0 && row < s->n_assignments) s->assignments[row].fit_enabled=!s->assignments[row].fit_enabled; return 1; }
+
+    if (point_in_rect(x, y, u.rows)) {
+        int row = p->advanced_line_scroll + (y - u.rows.y) / u.row_h;
+        if (row >= 0 && row < s->n_assignments)
+            s->assignments[row].fit_enabled = !s->assignments[row].fit_enabled;
+        return 1;
+    }
     if (p->advanced_tab == 2) {
-        if (y >= 285 && y < 525) { int row=p->advanced_line_scroll+(y-285)/24; if (row >= 0 && row < s->n_assignments) s->assignments[row].fit_enabled=!s->assignments[row].fit_enabled; return 1; }
-        if (y > 550 && x < 140) { predfit_fit(s); return 1; }
-        if (y > 550 && x >= 140 && x < 280) { predfit_undo_last_fit(s); return 1; }
+        if (point_in_rect(x, y, u.btn_a)) { predfit_fit(s); return 1; }
+        if (point_in_rect(x, y, u.btn_b)) { predfit_undo_last_fit(s); return 1; }
     }
     return 1;
 }
-void predfit_render_advanced(AppState *s) {
-    PredFitState *p=&s->predfit; if (!p->advanced_open || !p->advanced_renderer) return;
-    SDL_Renderer *r=p->advanced_renderer; char b[256];
-    SDL_SetRenderDrawColor(r,19,20,22,255); SDL_RenderClear(r);
-    ui_fill(r,(SDL_Rect){0,0,920,42},UI_TITLEBAR);
-    ui_text(r,UI_FONT_TITLE,"Pred&Fit Advanced",18,12,UI_TEXT);
-    const char *tabs[]={"Parameters","Lines","Fitting"};
-    for(int i=0;i<3;i++) ui_button(r,(SDL_Rect){16+i*145,48,132,30},tabs[i],-1,UI_BTN_QUIET,p->advanced_tab==i,0,0,0);
 
-    if (p->advanced_tab==0) {
-        ui_text(r,UI_FONT_SANS,"Pickett parameter table — edit ID, value, or fit uncertainty",18,100,UI_ACCENT_TEXT);
-        SDL_Rect table={18,130,884,392}; ui_fill(r,table,UI_INPUT); ui_frame(r,table,UI_LINE);
-        ui_text(r,UI_FONT_MONO_SM,"ID",28,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"WATSON-A",118,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"WATSON-S",260,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"OTHER",380,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"VALUE",510,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"FIT ERROR",710,140,UI_DIM);
-        for(int i=0;i<14 && p->advanced_param_scroll+i<p->n_param;i++) {
-            int actual=p->advanced_param_scroll+i, y=164+i*25; PickettParameter*x=&p->param[actual]; const ParameterName *name=parameter_name(x->id);
-            SDL_Rect row={20,y-3,880,23}; if(actual==p->advanced_edit_param) ui_fill(r,row,UI_ACCENT_SOFT); else if(i%2) ui_fill(r,row,UI_PANEL);
-            snprintf(b,sizeof(b),"%d",x->id); ui_text(r,UI_FONT_MONO,b,28,y,actual==p->advanced_edit_param&&p->advanced_edit_col==0?UI_ACCENT_TEXT:UI_TEXT);
-            ui_text(r,UI_FONT_SANS_SM,name&&name->watson_a?name->watson_a:"—",118,y,UI_DIM);
-            ui_text(r,UI_FONT_SANS_SM,name&&name->watson_s?name->watson_s:"—",260,y,UI_ACCENT_TEXT);
-            ui_text(r,UI_FONT_SANS_SM,name&&name->other?name->other:(name?"—":x->label),380,y,UI_DIM);
-            snprintf(b,sizeof(b),"%.11E",x->value); ui_text(r,UI_FONT_MONO,b,510,y,actual==p->advanced_edit_param&&p->advanced_edit_col==1?UI_ACCENT_TEXT:UI_TEXT);
-            snprintf(b,sizeof(b),"%.5E",x->error); ui_text(r,UI_FONT_MONO,b,710,y,actual==p->advanced_edit_param&&p->advanced_edit_col==2?UI_ACCENT_TEXT:UI_TEXT);
+void predfit_render_advanced(AppState *s) {
+    PredFitState *p = &s->predfit;
+    if (!p->advanced_open || !p->advanced_renderer) return;
+    SDL_Renderer *r = p->advanced_renderer;
+    char b[256];
+
+    /* follow the display the window currently sits on */
+    {
+        int ww = 0, wh = 0, dw = 0, dh = 0;
+        SDL_GetWindowSize(p->advanced_window, &ww, &wh);
+        SDL_GetRendererOutputSize(r, &dw, &dh);
+        if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
+    }
+
+    report_refresh(p);
+    AdvUI u = adv_ui(s, p->advanced_tab);
+
+    SDL_SetRenderDrawColor(r, 19, 20, 22, 255);
+    SDL_RenderClear(r);
+    ui_fill(r, (SDL_Rect){0, 0, u.w, ADV_HEADER_H}, UI_TITLEBAR);
+    ui_text(r, UI_FONT_TITLE, "Pred&Fit Advanced", 18, 12, UI_TEXT);
+    ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
+
+    const char *tabs[3] = {"Parameters", "Lines", "Fitting"};
+    for (int i = 0; i < 3; i++)
+        ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, p->advanced_tab == i, 0, 0, 0);
+
+    if (p->advanced_tab == 0) {
+        ui_text(r, UI_FONT_SANS, "Pickett parameter table — edit the ID, the value or the fit uncertainty",
+                u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        ui_fill(r, u.table, UI_INPUT);
+        ui_frame(r, u.table, UI_LINE);
+
+        int hy = u.table.y + 8;
+        ui_text(r, UI_FONT_MONO_SM, "ID",        adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "WATSON-A",  adv_col(u.table, 0.11), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "WATSON-S",  adv_col(u.table, 0.28), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "OTHER",     adv_col(u.table, 0.41), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "VALUE",     adv_col(u.table, 0.56), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "FIT ERROR", adv_col(u.table, 0.80), hy, UI_DIM);
+        ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
+
+        for (int i = 0; i < u.rows_visible && p->advanced_param_scroll + i < p->n_param; i++) {
+            int actual = p->advanced_param_scroll + i;
+            int y = u.rows.y + i * u.row_h;
+            PickettParameter *x = &p->param[actual];
+            const ParameterName *name = parameter_name(x->id);
+            SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
+            if (actual == p->advanced_edit_param) ui_fill(r, row, UI_ACCENT_SOFT);
+            else if (i % 2)                       ui_fill(r, row, UI_PANEL);
+
+            int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO)) / 2;
+            snprintf(b, sizeof(b), "%d", x->id);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.00), ty,
+                    actual == p->advanced_edit_param && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : UI_TEXT);
+            ui_text(r, UI_FONT_SANS_SM, name && name->watson_a ? name->watson_a : "—", adv_col(u.table, 0.11), ty, UI_DIM);
+            ui_text(r, UI_FONT_SANS_SM, name && name->watson_s ? name->watson_s : "—", adv_col(u.table, 0.28), ty, UI_ACCENT_TEXT);
+            ui_text(r, UI_FONT_SANS_SM, name && name->other ? name->other : (name ? "—" : x->label), adv_col(u.table, 0.41), ty, UI_DIM);
+            snprintf(b, sizeof(b), "%.11E", x->value);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.56), ty,
+                    actual == p->advanced_edit_param && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
+            snprintf(b, sizeof(b), "%.5E", x->error);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.80), ty,
+                    actual == p->advanced_edit_param && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
+
+            SDL_Rect del = {u.table.x + u.table.w - 32, y + (u.row_h - 2 - 22) / 2, 22, 22};
+            ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del.x + 5, del.y + 5, 12, 12}, UI_DANGER_TEXT);
         }
-        if (p->advanced_edit_param>=0) { snprintf(b,sizeof(b),"Editing: %s",p->advanced_edit_buf); ui_text(r,UI_FONT_MONO,b,18,540,UI_ACCENT_TEXT); }
-        snprintf(b,sizeof(b),".lin uncertainty: %.8g MHz",p->line_error_mhz); ui_text(r,UI_FONT_SANS_SM,b,330,570,p->advanced_edit_param==-2?UI_ACCENT_TEXT:UI_DIM);
-        ui_text(r,UI_FONT_SANS_SM,"Scroll table • 0 fit error = fixed parameter",18,570,UI_FAINT);
-        ui_button(r,(SDL_Rect){18,582,142,30},"+ parameter",-1,UI_BTN_QUIET,0,0,0,0);
-    } else if (p->advanced_tab==1) {
-        ui_text(r,UI_FONT_SANS,"Assigned transitions — click a row to exclude it from SPFIT only",18,100,UI_ACCENT_TEXT);
-        SDL_Rect table={18,130,884,402}; ui_fill(r,table,UI_INPUT); ui_frame(r,table,UI_LINE);
-        ui_text(r,UI_FONT_MONO_SM,"FIT",28,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"OBSERVED / MHz",90,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"PREDICTED / MHz",245,140,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"UPPER  —  LOWER",440,140,UI_DIM);
-        for(int i=0;i<16 && p->advanced_line_scroll+i<s->n_assignments;i++) { int actual=p->advanced_line_scroll+i,y=164+i*23; Assignment*a=&s->assignments[actual]; if(i%2) ui_fill(r,(SDL_Rect){20,y-3,880,21},UI_PANEL); snprintf(b,sizeof(b),"[%c]",a->fit_enabled?'x':' ');ui_text(r,UI_FONT_MONO,b,28,y,a->fit_enabled?UI_OK:UI_FAINT);snprintf(b,sizeof(b),"%.6f",a->exp_freq);ui_text(r,UI_FONT_MONO,b,90,y,UI_TEXT);snprintf(b,sizeof(b),"%.6f",a->pred.freq_mhz);ui_text(r,UI_FONT_MONO,b,245,y,UI_DIM);snprintf(b,sizeof(b),"%d %d %d  —  %d %d %d",a->pred.Ju,a->pred.Kau,a->pred.Kcu,a->pred.Jl,a->pred.Kal,a->pred.Kcl);ui_text(r,UI_FONT_MONO,b,440,y,UI_TEXT); }
-        ui_text(r,UI_FONT_SANS_SM,"Excluded rows become 90000 + frequency only in .fit/model.lin.",18,570,UI_FAINT);
+
+        ui_button(r, u.btn_a, "+ parameter", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        snprintf(b, sizeof(b), ".lin uncertainty: %.8g MHz", p->line_error_mhz);
+        ui_text(r, UI_FONT_SANS_SM, b, u.w - ADV_PAD - 290, u.footer.y + 17,
+                p->advanced_edit_param == -2 ? UI_ACCENT_TEXT : UI_DIM);
+        if (p->advanced_edit_param >= 0 || p->advanced_edit_param == -2) {
+            snprintf(b, sizeof(b), "editing: %s", p->advanced_edit_buf);
+            ui_text(r, UI_FONT_MONO_SM, b, u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_ACCENT_TEXT);
+        } else {
+            ui_text(r, UI_FONT_SANS_SM, "0 as fit error fixes a parameter · × removes a row",
+                    u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_FAINT);
+        }
+
+    } else if (p->advanced_tab == 1) {
+        ui_text(r, UI_FONT_SANS, "Assigned transitions — click a row to exclude it from SPFIT only",
+                u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        ui_fill(r, u.table, UI_INPUT);
+        ui_frame(r, u.table, UI_LINE);
+
+        int hy = u.table.y + 8;
+        ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.07), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.28), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.52), hy, UI_DIM);
+        ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
+
+        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
+            int actual = p->advanced_line_scroll + i;
+            int y = u.rows.y + i * u.row_h;
+            Assignment *a = &s->assignments[actual];
+            SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
+            if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
+            else if (i % 2)                       ui_fill(r, row, UI_PANEL);
+            int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO)) / 2;
+
+            snprintf(b, sizeof(b), "[%c]", a->fit_enabled ? 'x' : ' ');
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.00), ty, a->fit_enabled ? UI_OK : UI_FAINT);
+            snprintf(b, sizeof(b), "%.6f", a->exp_freq);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.07), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            snprintf(b, sizeof(b), "%.6f", a->pred.freq_mhz);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.28), ty, UI_DIM);
+            snprintf(b, sizeof(b), "%d %d %d  —  %d %d %d",
+                     a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.Jl, a->pred.Kal, a->pred.Kcl);
+            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.52), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+        }
+        ui_text(r, UI_FONT_SANS_SM, "Excluded rows are written as 90000 + frequency in .fit/model.lin.",
+                ADV_PAD, u.footer.y + 17, UI_FAINT);
+
     } else {
-        ui_text(r,UI_FONT_SANS,"SPFIT output",18,100,UI_ACCENT_TEXT); ui_text(r,UI_FONT_MONO,p->status[0]?p->status:"Run SPFIT after selecting assignments.",18,124,UI_TEXT);
-        SDL_Rect pt={18,154,615,102}; ui_fill(r,pt,UI_INPUT); ui_frame(r,pt,UI_LINE); ui_text(r,UI_FONT_MONO_SM,"FINAL PARAMETERS (.fit / model.var)",28,164,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"ID / LABEL",28,184,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"VALUE",250,184,UI_DIM); ui_text(r,UI_FONT_MONO_SM,"SPFIT SIGMA",455,184,UI_DIM);
-        for(int i=0;i<3 && i<p->n_param;i++) { PickettParameter*x=&p->param[i]; double value=x->value,sigma=0; int got=fitted_parameter(p,x->id,&value,&sigma); const ParameterName*name=parameter_name(x->id); int y=204+i*16; snprintf(b,sizeof(b),"%d  %s",x->id,name?(name->watson_s?name->watson_s:name->other):x->label);ui_text(r,UI_FONT_MONO_SM,b,28,y,UI_TEXT);snprintf(b,sizeof(b),"%.10E",value);ui_text(r,UI_FONT_MONO_SM,b,250,y,UI_TEXT);snprintf(b,sizeof(b),got?"%.4E":"—",sigma);ui_text(r,UI_FONT_MONO_SM,b,455,y,got?UI_ACCENT_TEXT:UI_FAINT); }
-        SDL_Rect lt={18,270,615,258};ui_fill(r,lt,UI_INPUT);ui_frame(r,lt,UI_LINE);ui_text(r,UI_FONT_MONO_SM,"FIT  QNS                         OBSERVED       CALCULATED       DIFF       /UNC",28,280,UI_DIM);
-        for(int i=0;i<10 && p->advanced_line_scroll+i<s->n_assignments;i++) { int actual=p->advanced_line_scroll+i,y=304+i*22; Assignment*a=&s->assignments[actual]; FitObservation o=fit_observation(p,actual+1); SDL_Color c=actual==p->advanced_hover_line?UI_ACCENT_TEXT:(a->fit_enabled?UI_TEXT:UI_FAINT); if(actual==p->advanced_hover_line)ui_fill(r,(SDL_Rect){20,y-3,611,20},UI_ACCENT_SOFT); snprintf(b,sizeof(b),"[%c] %2d %2d %2d - %2d %2d %2d",a->fit_enabled?'x':' ',a->pred.Ju,a->pred.Kau,a->pred.Kcu,a->pred.Jl,a->pred.Kal,a->pred.Kcl);ui_text(r,UI_FONT_MONO_SM,b,28,y,c); if(o.found){snprintf(b,sizeof(b),"%11.5f %11.5f %+.5f %+.2f",o.obs,o.calc,o.diff,o.diff/o.unc);ui_text(r,UI_FONT_MONO_SM,b,230,y,c);} }
-        SDL_Rect dash={650,154,252,374};ui_fill(r,dash,UI_PANEL);ui_frame(r,dash,UI_LINE);ui_text(r,UI_FONT_SANS,"Residual dashboard",662,166,UI_ACCENT_TEXT);int h=p->advanced_hover_line; if(h>=0&&h<s->n_assignments){FitObservation o=fit_observation(p,h+1);if(o.found){double z=o.diff/o.unc;snprintf(b,sizeof(b),"line %d   (obs-calc)/unc",h+1);ui_text(r,UI_FONT_MONO_SM,b,662,202,UI_DIM);snprintf(b,sizeof(b),"%+.4f",z);ui_text(r,UI_FONT_TITLE,b,662,228,fabs(z)>3.0?UI_DANGER:UI_OK);snprintf(b,sizeof(b),"obs   %.7f MHz",o.obs);ui_text(r,UI_FONT_MONO_SM,b,662,270,UI_TEXT);snprintf(b,sizeof(b),"calc  %.7f MHz",o.calc);ui_text(r,UI_FONT_MONO_SM,b,662,290,UI_TEXT);snprintf(b,sizeof(b),"diff  %+.7f MHz",o.diff);ui_text(r,UI_FONT_MONO_SM,b,662,310,UI_TEXT);snprintf(b,sizeof(b),"unc   %.7f MHz",o.unc);ui_text(r,UI_FONT_MONO_SM,b,662,330,UI_TEXT);SDL_Rect axis={670,382,210,8};ui_fill(r,axis,UI_LINE);SDL_Rect zero={774,374,2,24};ui_fill(r,zero,UI_TEXT);double clipped=fmax(-5.0,fmin(5.0,z));int w=(int)(fabs(clipped)*20.0);SDL_Rect bar={clipped<0?774-w:776,382,w,8};ui_fill(r,bar,fabs(z)>3.0?UI_DANGER:UI_OK);ui_text(r,UI_FONT_MONO_SM,"-5σ          0          +5σ",670,402,UI_DIM);}else ui_text(r,UI_FONT_SANS_SM,"No calculated row yet.",662,202,UI_FAINT);}else ui_text(r,UI_FONT_SANS_SM,"Hover a fit row to inspect\nits normalized residual.",662,202,UI_FAINT);
-        ui_button(r,(SDL_Rect){18,582,110,30},"Fit",-1,UI_BTN_PRIMARY,0,0,0,0);ui_button(r,(SDL_Rect){138,582,132,30},"Undo fit",-1,UI_BTN_QUIET,0,0,0,0);ui_text(r,UI_FONT_SANS_SM,"Latest generated files are kept in .fit/ and updated by Undo.",300,592,UI_FAINT);
+        ui_text(r, UI_FONT_SANS, "SPFIT output", u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        ui_text(r, UI_FONT_MONO_SM,
+                p->status[0] ? p->status : "Run SPFIT after selecting the assignments to fit.",
+                u.caption.x + 110, u.caption.y + 2, UI_TEXT);
+
+        /* Every fitted parameter, in the form SPFIT reports it:
+              1         10000       A  /       1151.36042( 32)   -0.00000     */
+        ui_fill(r, u.params, UI_INPUT);
+        ui_frame(r, u.params, UI_LINE);
+        ui_text(r, UI_FONT_MONO_SM, "FITTED PARAMETERS      N / ID / LABEL / VALUE(EST. ERROR) / CHANGE THIS ITERATION",
+                u.params.x + 10, u.params.y + 8, UI_DIM);
+        for (int i = 0; i < u.param_rows_visible; i++) {
+            int y = u.params.y + 26 + i * 18;
+            if (i < g_report.n_param_lines)
+                ui_text(r, UI_FONT_MONO_SM, g_report.param_line[i], u.params.x + 10, y, UI_TEXT);
+            else if (g_report.n_param_lines == 0 && i == 0)
+                ui_text(r, UI_FONT_MONO_SM, "no SPFIT run in .fit yet", u.params.x + 10, y, UI_FAINT);
+        }
+        if (g_report.n_param_lines > u.param_rows_visible) {
+            snprintf(b, sizeof(b), "+%d more — enlarge the window",
+                     g_report.n_param_lines - u.param_rows_visible);
+            ui_text(r, UI_FONT_MONO_SM, b, u.params.x + u.params.w - 240, u.params.y + 8, UI_FAINT);
+        }
+
+        ui_fill(r, u.table, UI_INPUT);
+        ui_frame(r, u.table, UI_LINE);
+        int hy = u.table.y + 8;
+        ui_text(r, UI_FONT_MONO_SM, "FIT  QNS",        adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "OBSERVED",        adv_col(u.table, 0.30), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "CALCULATED",      adv_col(u.table, 0.47), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "OBS-CALC",        adv_col(u.table, 0.64), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "/UNC",            adv_col(u.table, 0.80), hy, UI_DIM);
+        ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
+
+        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
+            int actual = p->advanced_line_scroll + i;
+            int y = u.rows.y + i * u.row_h;
+            Assignment *a = &s->assignments[actual];
+            FitObservation o = report_observation(actual + 1);
+            SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
+            if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
+            else if (i % 2)                       ui_fill(r, row, UI_PANEL);
+
+            /* The colour is the whole readout: how many sigma this line sits at. */
+            SDL_Color c = UI_FAINT;
+            double z = 0.0;
+            if (o.found && o.used && a->fit_enabled) {
+                z = o.diff / o.unc;
+                c = residual_color(z);
+                ui_fill(r, (SDL_Rect){u.rows.x, y, 3, u.row_h - 2}, c);
+            }
+
+            int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
+            snprintf(b, sizeof(b), "[%c] %2d %2d %2d - %2d %2d %2d", a->fit_enabled ? 'x' : ' ',
+                     a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.Jl, a->pred.Kal, a->pred.Kcl);
+            ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00) + 6, ty, c);
+            if (o.found) {
+                snprintf(b, sizeof(b), "%.5f", o.used ? o.obs : o.obs - 90000.0);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.30), ty, c);
+                snprintf(b, sizeof(b), "%.5f", o.calc);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.47), ty, c);
+                if (o.used) {
+                    snprintf(b, sizeof(b), "%+.5f", o.diff);
+                    ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.64), ty, c);
+                    snprintf(b, sizeof(b), "%+.2f", z);
+                    ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.80), ty, c);
+                } else {
+                    ui_text(r, UI_FONT_MONO_SM, "not used in the fit", adv_col(u.table, 0.64), ty, UI_FAINT);
+                }
+            }
+        }
+
+        ui_button(r, u.btn_a, "Fit", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+        ui_button(r, u.btn_b, "Undo fit", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+
+        /* legend of the residual scale */
+        int lx = u.btn_b.x + u.btn_b.w + 24, ly = u.footer.y + 17;
+        const char *band[4] = {"0-1.5", "1.5-2.5", "2.5-4", ">4 sigma"};
+        double mid[4] = {0.5, 2.0, 3.2, 5.0};
+        for (int i = 0; i < 4; i++) {
+            ui_fill(r, (SDL_Rect){lx, ly + 3, 8, 8}, residual_color(mid[i]));
+            ui_text(r, UI_FONT_SANS_SM, band[i], lx + 13, ly, UI_FAINT);
+            lx += 13 + ui_text_w(UI_FONT_SANS_SM, band[i]) + 14;
+        }
     }
     SDL_RenderPresent(r);
 }
