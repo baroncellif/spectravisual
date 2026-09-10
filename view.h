@@ -13,4 +13,8 @@ void render_app(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *layo
 // the back buffer, which made the export save a stale frame.
 void render_app_frame(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *layout);
 
+// Returns the visible maximum of the rendered prediction: sticks when no
+// usable broadening profile is active, otherwise the broadened profile.
+double prediction_visible_max(const AppState *state, int samples);
+
 #endif

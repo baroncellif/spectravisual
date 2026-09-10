@@ -120,6 +120,66 @@ static double spectrum_df(const AppState *s) {
     return (d > 0.0) ? d : 0.0;
 }
 
+double prediction_visible_max(const AppState *state, int samples) {
+    if (!state || state->n_pred <= 0 || state->pvxmax <= state->pvxmin) return 0.0;
+
+    int p_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin);
+    int p_end = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax);
+    if (p_start < 0) p_start = 0;
+    if (p_end >= state->n_pred) p_end = state->n_pred - 1;
+    if (p_start > p_end) return 0.0;
+
+    double stick_max = 0.0;
+    for (int k = p_start; k <= p_end; k++)
+        if (pred_passes_filter(state, k) && state->pred_lines[k].linear_int > stick_max)
+            stick_max = state->pred_lines[k].linear_int;
+
+    int kmode = (state->broaden_mode == 1);
+    double bw = fmax(state->lorentz_gamma, state->gauss_gamma);
+    double dnu = 0.0, cutoff = 0.0;
+    int draw_broad = 0;
+    if (state->broadening_active) {
+        if (kmode) {
+            double df = spectrum_df(state);
+            int cer = state->kaiser_ceros > 0 ? state->kaiser_ceros : 1;
+            dnu = cer * df;
+            if (dnu > 0.0) {
+                kaiser_build_kernel(state->kaiser_beta, state->kaiser_intrinsic / dnu);
+                cutoff = KAISER_RMAX * dnu;
+                draw_broad = 1;
+            }
+        } else if (bw > 0.0) {
+            cutoff = 50.0 * bw;
+            draw_broad = 1;
+        }
+    }
+    if (!draw_broad) return stick_max;
+
+    int calc_start = binary_search_pred_lower(state->pred_lines, state->n_pred, state->pvxmin - cutoff);
+    int calc_end = binary_search_pred_upper(state->pred_lines, state->n_pred, state->pvxmax + cutoff);
+    if (calc_start < 0) calc_start = 0;
+    if (calc_end >= state->n_pred) calc_end = state->n_pred - 1;
+    if (calc_start > calc_end) return 0.0;
+
+    if (samples < 2) samples = 1024;
+    if (samples > 4096) samples = 4096;
+    double profile_max = 0.0;
+    for (int i = 0; i < samples; i++) {
+        double f = state->pvxmin + (double)i / samples * (state->pvxmax - state->pvxmin);
+        double intensity = 0.0;
+        for (int k = calc_start; k <= calc_end; k++) {
+            double dist = f - state->pred_lines[k].freq_mhz;
+            if (fabs(dist) > cutoff || !pred_passes_filter(state, k)) continue;
+            if (kmode) intensity += state->pred_lines[k].linear_int * kaiser_kernel(dist / dnu);
+            else       intensity += state->pred_lines[k].linear_int
+                                  * broaden_profile(dist, state->lorentz_gamma, state->gauss_gamma);
+        }
+        if (kmode) intensity = fabs(intensity);
+        if (intensity > profile_max) profile_max = intensity;
+    }
+    return profile_max;
+}
+
 // --- PALETTE ---
 // The chrome palette lives in ui_theme.h so the renderer and the design stay in
 // step; these aliases keep the plotting code below reading the way it did.
@@ -703,14 +763,14 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
         SDL_Rect cat_temp = ui_top_rect(UI_TOP_CAT_TEMP, l->win_w);
         char cat_temp_val[40];
         if (field_focus(state, INPUT_CAT_TEMP)) snprintf(cat_temp_val, sizeof(cat_temp_val), "%s", state->text_input_buf);
-        else if (state->cat_temp_k > 0.0)       snprintf(cat_temp_val, sizeof(cat_temp_val), "%.1f", state->cat_temp_k);
+        else if (state->cat_temp_k > 0.0)       snprintf(cat_temp_val, sizeof(cat_temp_val), "%.2f", state->cat_temp_k);
         else                                     snprintf(cat_temp_val, sizeof(cat_temp_val), "set");
         draw_field(ren, state, cat_temp, "T cat", cat_temp_val, "K", INPUT_CAT_TEMP);
 
         SDL_Rect temp = ui_top_rect(UI_TOP_ROT_TEMP, l->win_w);
         char temp_val[40];
         if (field_focus(state, INPUT_ROT_TEMP)) snprintf(temp_val, sizeof(temp_val), "%s", state->text_input_buf);
-        else if (state->rot_temp_k > 0.0)       snprintf(temp_val, sizeof(temp_val), "%.1f", state->rot_temp_k);
+        else if (state->rot_temp_k > 0.0)       snprintf(temp_val, sizeof(temp_val), "%.2f", state->rot_temp_k);
         else                                     snprintf(temp_val, sizeof(temp_val), "set");
         draw_field(ren, state, temp, "T rot", temp_val, "K", INPUT_ROT_TEMP);
 
@@ -1338,6 +1398,7 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "W  Z",      "Scale experimental intensity"},
         {NULL,        "Tab",       "Autoscale intensity to the view"},
         {NULL,        "R",         "Reset the view"},
+        {NULL,        "Shift+Tab", "Normalize prediction"},
         {NULL,        "Up Down",   "Shift the spectrum vertically"},
         {"Measure",   "K  L",      "Move the bar"},
         {NULL,        "G",         "Distance between two points"},

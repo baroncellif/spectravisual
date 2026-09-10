@@ -71,6 +71,7 @@ Cursor and measurements
 Spectrum positioning
 	•	Up / Down arrows : shift experimental spectrum up / down
 	•	Tab : auto-fit experimental spectrum on the y-axis
+	•	Shift + Tab : normalize the prediction in the visible frequency range (uses the broadened profile when active)
 
 Mouse interactions
 	•	Right-click + drag (on experimental spectrum): zoom into a selected frequency region

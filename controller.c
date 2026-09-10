@@ -4,6 +4,7 @@
 #include "layout.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
+#include "view.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <math.h>
@@ -489,12 +490,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 return;
             }
             if (point_in_rect(mx, my, ui_top_rect(UI_TOP_CAT_TEMP, l->win_w))) {
-                snprintf(s->text_input_buf, 32, "%.1f", s->cat_temp_k);
+                snprintf(s->text_input_buf, 32, "%.2f", s->cat_temp_k);
                 input_focus(s, INPUT_CAT_TEMP, mx);
                 return;
             }
             if (point_in_rect(mx, my, ui_top_rect(UI_TOP_ROT_TEMP, l->win_w))) {
-                snprintf(s->text_input_buf, 32, "%.1f", s->rot_temp_k);
+                snprintf(s->text_input_buf, 32, "%.2f", s->rot_temp_k);
                 input_focus(s, INPUT_ROT_TEMP, mx);
                 return;
             }
@@ -921,6 +922,12 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     switch(sym) {
         // Y-Axis Auto Scale
         case SDLK_TAB: {
+            if (is_shift) {
+                double max_int = prediction_visible_max(s, l->pred_w);
+                if (max_int > 0.0 && s->pred_global_max > 0.0)
+                    s->pred_scale = s->pred_global_max / max_int;
+                break;
+            }
             // Y auto-scale, mode-aware:
             //  - stack OR overlay-normalized: each subplot uses its own per-spectrum
             //    gain (vscale), so fit the GAIN of each visible spectrum to its
