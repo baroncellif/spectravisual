@@ -14,8 +14,7 @@ last_spectravisual
 .fit
 .fit/*
 spettro.txt
-pred.cat
-pred.int
+pred.*   
 linelist.csv
 assigned.lin
 assignments.txt
