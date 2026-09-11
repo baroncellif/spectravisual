@@ -139,7 +139,9 @@ Barra titolo: nomi dei file mostrati ([view.c:896-906](../../view.c#L896-L906));
 `error_message` ha precedenza, `status_message` compare solo senza dati
 ([view.c:954-958](../../view.c#L954-L958)). Dal passo #1 `set_predictions` mette in
 `error_message` anche il numero di righe del catalogo scartate perché hanno NQN 0
-o > 6. Dal passo #2 *Save all* ed *Export list* riportano gli errori di scrittura in
+o > 6. Dal passo #4 vi compare anche il resoconto della lettura di `assignments.txt`
+(righe ignorate, ripetute, da riassegnare) e, dopo un salvataggio, il numero di righe
+non scritte perché senza NQN. Dal passo #2 *Save all* ed *Export list* riportano gli errori di scrittura in
 `error_message` (l'esito positivo va in `status_message`, che con dati caricati non
 si vede); nessun messaggio per *Find peaks*; *Export fit* solo in `intfit_message`.
 
@@ -180,7 +182,7 @@ agisce ([controller.c:269](../../controller.c#L269)).
 | Controllo | Geometria | Render | Handler | Effetto |
 |---|---|---|---|---|
 | righe (4..12) | `ui_as_row` [ui_panels.h:200-203](../../ui_panels.h#L200-L203) | [view.c:1239-1253](../../view.c#L1239-L1253) (`format_pred_qn` usa `n_qn`, fallback 3 [view.c:17-39](../../view.c#L17-L39)); dal passo #2 le righe da riassegnare sono in ambra | [controller.c:278-282](../../controller.c#L278-L282) | `selected_assignment` |
-| Save all | `ui_as_save` [ui_panels.h:204-207](../../ui_panels.h#L204-L207) | [view.c:1261](../../view.c#L1261) | [controller.c:283-319](../../controller.c#L283-L319) | dedup + `save_assignments` (dal passo #2: file temporaneo, copia `.bak`, errori in `error_message`; vedi [README §6.2](README.md#62-assignmentstxt)) |
+| Save all | `ui_as_save` [ui_panels.h:204-207](../../ui_panels.h#L204-L207) | [view.c:1261](../../view.c#L1261) | [controller.c:283-319](../../controller.c#L283-L319) | dedup + `save_assignments` (dal passo #2: file temporaneo, copia `.bak`, errori in `error_message`; dal passo #4 intestazione con versione e righe senza NQN non scritte; vedi [README §6.2](README.md#62-assignmentstxt)) |
 | Delete selected | `ui_as_delete` [ui_panels.h:208-211](../../ui_panels.h#L208-L211) | [view.c:1262](../../view.c#L1262) | `delete_assignment` [controller.c:854-873](../../controller.c#L854-L873) | rimuove e, dal passo #2, salva subito `assignments.txt` |
 | rotella | `win_as.rect` | — | [controller.c:729-733](../../controller.c#L729-L733) | `assignments_scroll ±3` |
 | PageUp/PageDown | — | — | [controller.c:1018-1027](../../controller.c#L1018-L1027) | `assignments_scroll ±13` |

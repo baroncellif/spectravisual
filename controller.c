@@ -52,6 +52,7 @@ static const PredLine *current_assignment_prediction(const AppState *s, const As
 }
 
 #define SAVE_ASSIGNMENTS_ERROR "Could not save the assignments"
+#define SAVE_ASSIGNMENTS_SKIPPED "Assignments saved without"
 #define EXPORT_LIST_ERROR      "Could not export the peak list"
 
 /* A failed write is reported in the title bar; the next successful write of
@@ -97,11 +98,18 @@ static int save_assignments(AppState *s) {
     snprintf(bak, sizeof(bak), "%s.bak", path);
     FILE *fp = fopen(tmp, "w");
     if (!fp) { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, tmp); return 0; }
-    fprintf(fp, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
+    /* The header names the layout and its version, so the reader never has
+       to guess it from a row (a .lin has the same field count). */
+    fprintf(fp, "# SpectraVisual assignments, format %d: upper QNs, lower QNs (SPFIT .lin order), "
+                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n", ASSIGNMENT_FORMAT);
+    int written = 0, skipped = 0;
     for (int k = 0; k < s->n_assignments; k++) {
         PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
         int nq = p2.n_qn;
-        if (nq < 1 || nq > 6) nq = 3; /* legacy rows */
+        /* Without NQN there is no record: inventing one would write numbers
+           that are not the transition.  The row stays in the list, marked,
+           until it is assigned again from a catalogue. */
+        if (nq < 1 || nq > 6) { skipped++; continue; }
         const int upper[6] = {p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u};
         const int lower[6] = {p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l};
         for (int q = 0; q < nq; q++) fprintf(fp, "%3d", upper[q]);
@@ -111,13 +119,19 @@ static int save_assignments(AppState *s) {
         fprintf(fp, "%15.6f %15.6f %15.6E %d\n",
                 s->assignments[k].exp_freq, p2.freq_mhz,
                 p2.linear_int, nq);
+        written++;
     }
     int failed = ferror(fp);
     if (fclose(fp) != 0 || failed) { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, tmp); remove(tmp); return 0; }
     if (!copy_file(path, bak))     { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, bak); remove(tmp); return 0; }
     if (rename(tmp, path) != 0)    { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, path); remove(tmp); return 0; }
-    snprintf(s->status_message, sizeof(s->status_message), "Saved %d assignments to %s.", s->n_assignments, path);
+    snprintf(s->status_message, sizeof(s->status_message), "Saved %d assignments to %s.", written, path);
     clear_write_error(s, SAVE_ASSIGNMENTS_ERROR);
+    clear_write_error(s, SAVE_ASSIGNMENTS_SKIPPED);
+    if (skipped)
+        snprintf(s->error_message, sizeof(s->error_message),
+                 SAVE_ASSIGNMENTS_SKIPPED " %d row%s whose NQN is unknown: assign %s again from a catalogue.",
+                 skipped, skipped == 1 ? "" : "s", skipped == 1 ? "it" : "them");
     return 1;
 }
 

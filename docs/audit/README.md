@@ -96,6 +96,8 @@ Appendici: [A1 funzioni e call graph](A1-funzioni.md) ·
    non esiste autosave [RIPR R-13]. **Dal passo #2** il restore legge
    `assignments.txt` da `data_dir`, le righe `.lin` corte non si perdono e ogni
    modifica della lista è salvata subito (file temporaneo, `rename`, copia `.bak`).
+   **Dal passo #4** `exp_int` di una riga letta è 0 e il file ha un'intestazione con
+   la versione del formato, da cui il lettore lo riconosce.
 5. **Esclusione e Undo fragili — P1.** L'esclusione "90000 + f" funziona solo
    perché ERRTST vale 1e6 (`calpgm/calfit.c:448`): con un'incertezza `.lin`
    ≥ 0,09 MHz la riga "esclusa" entra nel fit e SPFIT diverge (A da 1151 a
@@ -160,10 +162,10 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 |---|---|---|---|
 | 1 | Qualsiasi `.cat` si apre e si assegna senza Pred&Fit | **violato** | B-37 (`.CAT` maiuscolo aperto come spettro); risolti al passo #1: B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10) |
 | 2 | Flusso catalogo → assignment → `assignments.txt` autonomo | **violato** | la stessa lista è ricostruita da `import_fit_lines` (dal passo #2 a partire dal file di `data_dir`: B-15 risolto), deduplicata da `write_inputs`, modificata da Undo (B-17); la modalità di avvio dipende dall'esistenza di `.fit/model.cat`; B-40 (lista ricostruita male che sovrascrive `assignments.txt`) risolto al passo #2 |
-| 3 | NQN proprietà della riga CAT | rispettato nel modello dati ([types.h:66](../../types.h#L66)), **violato** nel fallback `nq=3` del writer ([controller.c:304](../../controller.c#L304)) e nel restore da `.lin` ([predfit.c:936](../../predfit.c#L936)); il parser (B-01) è corretto dal passo #1 |
+| 3 | NQN proprietà della riga CAT | rispettato nel modello dati ([types.h:66](../../types.h#L66)), **violato** nel restore da `.lin` ([predfit.c:936](../../predfit.c#L936)); il parser (B-01) è corretto dal passo #1 e il fallback `nq=3` del writer (B-05, [controller.c:304](../../controller.c#L304)) è tolto al passo #4 |
 | 4 | Pred&Fit opt-in | **violato** | avvio senza `.cat` + `.fit/model.cat` presente → restore automatico ([main.c:401](../../main.c#L401)); `.fit/spectravisual.state` scritto a ogni caricamento di spettro e all'uscita ([main.c:450](../../main.c#L450), [545](../../main.c#L545)); Pred&Fit pubblica T/μ nell'Intensity analysis; con un `.cat` sulla riga di comando il salvataggio all'avvio riscrive la sessione Pred&Fit con i default (B-39) |
 | 5 | Fit intensità indipendente | **violato** | B-11, B-13, B-20, B-21; B-32 (un fit rifiutato modifica comunque intensità e μ red) |
-| 6 | `assignments.txt` in ordine `.lin` con NQN | forma rispettata ([controller.c:300-314](../../controller.c#L300-L314)), contenuto corrotto da B-01; il reader accetta anche `.lin` veri (B-08) |
+| 6 | `assignments.txt` in ordine `.lin` con NQN | forma rispettata ([controller.c:300-314](../../controller.c#L300-L314)); contenuto corretto dal passo #1 (B-01); dal passo #4 intestazione con versione, nessun NQN inventato e `.lin` rifiutati dal lettore (B-05, B-08) |
 
 ---
 
@@ -212,7 +214,7 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 | File | Chi lo scrive | Chi lo legge | Stato |
 |---|---|---|---|
 | `pred.cat`, `pred.par/.var/.int/.lin/.fit/.out/.bak` | l'utente con SPCAT/SPFIT, fuori dall'app | l'app legge solo `pred.cat` | `.gitignore` li esclude (`pred.*`) ma `pred.fit/.par/.var` compaiono nel commit `1f4df65` |
-| `assignments.txt` | *Save all* e, dal passo #2, ogni modifica della lista (copia precedente in `assignments.txt.bak`) | `ensure_aux_loaded`, `import_fit_lines` (dal passo #2 da `data_dir`, prima dalla CWD) | contiene una riga `11 10 … 1`: **prodotto di B-01** (è `pred.cat:755`) |
+| `assignments.txt` | *Save all* e, dal passo #2, ogni modifica della lista (copia precedente in `assignments.txt.bak`) | `ensure_aux_loaded`, `import_fit_lines` (dal passo #2 da `data_dir`, prima dalla CWD) | contiene una riga `11 10 … 1`: **prodotto di B-01** (è `pred.cat:755`); dal passo #4 è letta e marcata da riassegnare |
 | `assignments_backup.txt`, `assignment.txt`, `assigned.lin` | l'utente | `assigned.lin` è letto per i marcatori verdi (`find_assigned_frequency_file` [loader.c:121-152](../../loader.c#L121-L152)) | formati `.lin` (con e senza NQN) |
 | `.fit/` | Pred&Fit e `predfit_save_session` | restore | `model.*` (3 specie, `s 1 3 0`, QNFMT 1404), `species_XX.*` (in parte da versioni precedenti), `spectravisual.state` |
 | `.predfit/` | versione precedente (cartella di lavoro storica) | nessuno | orfana |
@@ -349,7 +351,8 @@ Save all
   → handle_mouse_down UI_TOOL_ASSIGN [controller.c:283-319]
       deduplicate_assignments → settings_data_file("assignments.txt") [settings.c:302-305]
       per ogni assignment: current_assignment_prediction [37-50] (riga del catalogo corrente con stesso NQN e QN, altrimenti la copia)
-      scrive nq = n_qn QN superiori e inferiori (fallback 3 se n_qn non è 1..6), riempie fino a 36 colonne,
+      scrive nq = n_qn QN superiori e inferiori (dal passo #4 una riga con n_qn fuori da 1..6 non è scritta ed è contata
+      nel messaggio; prima fallback 3), riempie fino a 36 colonne; l'intestazione porta la versione del formato,
       poi ObsFreq, CalcFreq, CalcIntensity (= linear_int corrente), NQN
   → FILE data_dir/assignments.txt: dal passo #2 save_assignments [controller.c:93-122] scrive assignments.txt.tmp,
       copia la versione precedente in assignments.txt.bak e fa rename; errori in error_message;
@@ -373,11 +376,13 @@ vengono scritti durante un normale caricamento di spettro.
 riavvio A: `spectravisual spettro.txt pred.cat`
   → main: pred_arg ≠ NULL → predfit_restore_latest NON chiamata [main.c:401]
   → set_predictions(pred.cat) [429] → ensure_aux_loaded → load_existing_assignments(data_dir/assignments.txt)
-      per riga: parse_assignment_lin_order [loader.c:579-607] (accetta se numero di valori = 2·NQN+4)
-        QN ← primi 2·NQN valori; exp_freq ← ObsFreq; freq_mhz ← CalcFreq; linear_int ← CalcIntensity; n_qn ← NQN
-      add_or_update_assignment(p, ObsFreq, exp_i = CalcIntensity)  → exp_int cambia significato (B-07)
-        dedup per NQN+QN: righe troncate con lo stesso J si fondono (B-06)
-      fit_enabled = 1 per tutte
+      dal passo #4 load_assignments_file [loader.c:710-748]: il formato si riconosce dall'intestazione
+        "... (SPFIT .lin order) ..." (con versione, o senza come la scriveva 1f4df65); senza intestazione solo i
+        layout legacy a 14 e a 15/16 campi; ogni altra riga (un .lin) è ignorata e contata
+      riga del formato nuovo: QN ← primi 2·NQN valori; exp_freq ← ObsFreq; freq_mhz ← CalcFreq;
+        linear_int ← CalcIntensity; n_qn ← NQN; exp_int = 0 (prima CalcIntensity, B-07)
+      transizione ripetuta: contata, vince l'ultima (B-06); NQN sconosciuto o troncato da B-01 → marcata da riassegnare
+      resoconto nella barra del titolo (assignment_file_message); fit_enabled = 1 per tutte
   → add_spectrum(spettro.txt) [430] (ensure_aux_loaded già fatto)
   → sessione non usata per gli spettri perché ce n'è uno sulla riga di comando [443-447]
 
@@ -388,7 +393,8 @@ riavvio B: `spectravisual` (nessun argomento) con .fit/model.cat presente
 
 Esito [RIPR R-02, R-07]: le transizioni con J < 10 tornano identiche; quelle
 con J ≥ 10 tornano con 1–2 QN per stato e, se due di esse hanno lo stesso J,
-come **un solo** assignment.
+come **un solo** assignment. **Dal passo #1** tornano tutte identiche: R-02..R-07
+rieseguiti al passo #4 danno 0 differenze.
 
 <a id="flusso-3"></a>
 ### Flusso 3 — Stesso flusso con 4, 5 e 6 QN per stato
@@ -410,8 +416,8 @@ tre QN e diverse nel quarto (F o v) restano distinte solo se NQN è letto giusto
 (QN < 10 oppure QNFMT a quattro cifre).
 
 **Dal passo #1** NQN è letto correttamente con ogni QNFMT: la colonna "primo QN
-≥ 10" è uguale a quella accanto [RIPR R-01 rieseguito]; il round-trip completo
-(colonna *Round-trip*) è verificato al passo #4.
+≥ 10" è uguale a quella accanto [RIPR R-01 rieseguito], e il round-trip è identico
+per ogni QNFMT (passo #4, `test_roundtrip_every_qnfmt`, R-02..R-07 rieseguiti).
 
 <a id="flusso-4"></a>
 ### Flusso 4 — CAT esterno aperto dopo un Pred&Fit nello stesso processo
@@ -1053,10 +1059,10 @@ flowchart TB
   E_CAT80 -->|"sì"| E_QN{"E_QN NQN = QNFMT % 10<br/>colonne 52-55"}
   E_QN -->|"NQN 0 o maggiore di 6, D6"| E_QN0["riga scartata e contata<br/>messaggio di set_predictions"]
   E_QN -->|"NQN 1..6"| E_QNOK["riga caricata"]
-  E_NQNBAD["E_NQNBAD n_qn non valido<br/>righe legacy di assignments.txt"] -->|"Save all"| E_NQ3["fallback nq = 3<br/>controller.c:304"]
+  E_NQNBAD["E_NQNBAD n_qn non valido<br/>righe legacy di assignments.txt"] -->|"Save all"| E_NQ3["riga non scritta, contata nel messaggio<br/>dal passo 4"]
   E_NQNBAD -->|"Fit"| E_FITBLOCK["fit bloccato, messaggio<br/>predfit.c:636-644"]
-  E_ASGP{"E_ASGP riga assignments.txt:<br/>conteggio = 2·NQN + 4?<br/>loader.c:592-594"} -->|"sì"| E_ASGNEW["letta come nuovo formato,<br/>anche se è un .lin o un legacy (B-08)"]
-  E_ASGP -->|"no"| E_ASGOLD["sscanf a 16 campi,<br/>legacy 14 mai raggiunto"]
+  E_ASGP{"E_ASGP intestazione SPFIT .lin order presente?<br/>loader.c:690-699, dal passo 4"} -->|"sì"| E_ASGNEW["riga del formato nuovo, 2 NQN + 4 campi,<br/>altrimenti ignorata e contata"]
+  E_ASGP -->|"no"| E_ASGOLD["solo legacy a 14 o 15-16 campi,<br/>il resto ignorato e contato, per esempio un .lin"]
   E_PROG{"E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005"} -->|"no"| E_PROGN["status: Set the SPCAT/SPFIT program"]
   E_RC{"E_RC exit code ≠ 0?<br/>predfit.c:717-721"} -->|"sì"| E_RCN["status ... failed; history_count--"]
   E_SPFITBAD{"E_SPFITBAD righe Bad Line o rifiutate?"} -->|"sì"| E_SILENT["nessun segnale: status mostra solo RMS (B-22)"]
@@ -1072,7 +1078,7 @@ flowchart TB
   E_SEL -->|"render"| E_SELR["ignorato, dal passo 3<br/>view.c:1817-1818"]
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
-  class E_NQNBAD,E_ASGNEW,E_ASGOLD,E_SILENT,E_SENTBAD,E_RESTY bad
+  class E_SILENT,E_SENTBAD,E_RESTY bad
 ```
 
 Altri rami rilevanti: `read_data_alloc` riconosce il separatore dalla prima riga
@@ -1371,7 +1377,7 @@ dipende da NVIB: `.fit/model.out` riporta `IQNFMT = 1404` con `s 1 3 0`
 | ObsFreq (MHz) | frequenza sperimentale assegnata | `Assignment.exp_freq` |
 | CalcFreq (MHz) | frequenza calcolata | `freq_mhz` della riga trovata |
 | CalcIntensity | intensità lineare **visualizzata** (dopo Tcat/Trot/μ/concentrazione) | `linear_int` della riga trovata (B-27) |
-| NQN | QN per stato | `n_qn`, **3 se non valido** ([controller.c:304](../../controller.c#L304)) |
+| NQN | QN per stato | `n_qn`; dal passo #4 una riga con NQN non valido non è scritta (prima **3**, [controller.c:304](../../controller.c#L304)) |
 
 **Dal passo #2** il writer è `save_assignments`
 ([controller.c:93-122](../../controller.c#L93-L122)): scrive `assignments.txt.tmp`,
@@ -1387,6 +1393,20 @@ accetta la riga se il conteggio è `2·NQN + 4`. In memoria: `exp_freq` ← ObsF
 `pred.freq_mhz` ← CalcFreq, `linear_int` ← CalcIntensity, `n_qn` ← NQN,
 **`exp_int` ← CalcIntensity** (B-07), `fit_enabled` = 1.
 
+**Dal passo #4** l'intestazione scritta è `# SpectraVisual assignments, format 1: upper
+QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN` e la
+lettura è `load_assignments_file` ([loader.c:598-773](../../loader.c#L598-L773)): il
+formato nuovo si riconosce dall'intestazione (quella senza versione di `1f4df65` vale
+come formato 1; una versione maggiore fa ignorare il file con un messaggio); senza
+intestazione si provano il layout legacy a 14 campi (12 QN, ExpFreq, ExpInt) e poi
+quello a 15/16 (PredFreq, 12 QN, ExpFreq, ExpInt, NQN facoltativo); ogni altra riga,
+per esempio di un `.lin`, è ignorata e contata. `exp_int` delle righe del formato
+nuovo è 0 (quelle legacy tengono ExpInt); una transizione ripetuta è contata e vince
+l'ultima occorrenza; le righe con NQN sconosciuto o troncate da B-01 (NQN 1 con J
+10–19, NQN 2 con J 20–29) sono marcate da riassegnare. Il resoconto
+(`assignment_file_message`) va nella barra del titolo. Il writer non scrive le righe
+senza NQN valido e ne riporta il numero.
+
 **Formati precedenti** accettati da `sscanf` a 16 campi
 ([631-635](../../loader.c#L631-L635)): `PredFreq 12QN ExpFreq ExpInt [NQN]`, cioè il
 formato scritto prima di `1f4df65` (`"%12.4f %3d×12 %12.4f %12.4e"`, visibile nel
@@ -1400,8 +1420,9 @@ spezza la frequenza in `"2511"` e `".3375"` e restituisce 15 [RIPR R-09].
 assignment con CalcFreq = incertezza e CalcIntensity = peso; la sentinella
 `9xxxx` non è decodificata; una riga legacy a 16 campi con NQN = 6 e una a 14
 campi con ExpInt ≈ 5 soddisfano il test del formato nuovo e vengono scambiate.
+**Risolta al passo #4**: la lettura è guidata dall'intestazione.
 
-**Vincolo 6**: ordine dei campi conforme; contenuto dei QN corrotto da B-01;
+**Vincolo 6**: ordine dei campi conforme; contenuto dei QN corretto dal passo #1 (B-01);
 esclusione dal fit, intensità osservata, QNFMT completo e catalogo d'origine
 non sono rappresentati.
 
@@ -1678,6 +1699,13 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-05"></a>
 ### B-05 — Il writer di `assignments.txt` scrive i QN secondo un NQN non affidabile
 
+- **Stato: risolto** in (commit del passo #4) — nuova logica: `save_assignments`
+  ([controller.c:94-136](../../controller.c#L94-L136)) non scrive una riga senza NQN
+  valido ([112](../../controller.c#L112)) e riporta quante ne ha lasciate fuori
+  ("Assignments saved without N rows whose NQN is unknown…", [133](../../controller.c#L133));
+  la riga resta in memoria, marcata. Con il parser corretto (passo #1) un catalogo non
+  dà più NQN errati, quindi non si scrivono più zeri come QN. Test:
+  `test_save_skips_invalid_nqn`, `test_roundtrip_every_qnfmt`.
 - **Gravità** alta · **P0.1/P0.2** · [FATTO] + [RIPR R-02..R-07]
 - **Dove**: *Save all* [controller.c:300-314](../../controller.c#L300-L314).
 - **Causa**: scrive esattamente `n_qn` QN per stato (quindi 1 o 2 con B-01), usa 3
@@ -1692,6 +1720,14 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-06"></a>
 ### B-06 — Transizioni diverse fuse dalla deduplicazione dopo il troncamento
 
+- **Stato: risolto** in (commit del passo #4) — nuova logica: la causa, il troncamento
+  da B-01, è risolta al passo #1; in lettura una transizione ripetuta è contata e
+  segnalata nella barra del titolo e vince l'ultima occorrenza (`load_assignments_file`
+  [loader.c:710-748](../../loader.c#L710-L748)); le righe troncate da B-01 ancora nei
+  file (NQN 1 con J 10–19, NQN 2 con J 20–29) sono marcate da riassegnare
+  ([loader.c:701-703](../../loader.c#L701-L703)). Test: `test_reload_reports_collisions`,
+  `test_blend_pair_survives_reload`, `test_roundtrip_every_qnfmt`; R-02..R-07
+  rieseguiti: 0 differenze.
 - **Gravità** alta · **P0.2** · [FATTO] + [RIPR R-02, R-03, R-07]
 - **Dove**: `same_assignment_transition` [loader.c:522-528](../../loader.c#L522-L528),
   `deduplicate_assignments` [530-547](../../loader.c#L530-L547), chiamata anche da
@@ -1707,6 +1743,10 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-07"></a>
 ### B-07 — `exp_int` riceve l'intensità calcolata al riavvio
 
+- **Stato: risolto** in (commit del passo #4) — nuova logica: il file non contiene
+  l'intensità osservata, quindi `exp_int` di una riga del formato nuovo è 0 (le righe
+  legacy tengono il proprio ExpInt); CalcIntensity resta in `pred.linear_int`. Test:
+  `test_reload_exp_int_zero`.
 - **Gravità** bassa (campo oggi senza lettori) · **P1** · [FATTO] + [RIPR R-02]
 - **Dove**: [loader.c:602-603](../../loader.c#L602-L603) → [625](../../loader.c#L625).
 - **Causa**: il file non contiene l'intensità osservata; il valore CalcIntensity
@@ -1717,6 +1757,14 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-08"></a>
 ### B-08 — Formato di `assignments.txt` ambiguo con `.lin` e con i formati precedenti
 
+- **Stato: risolto** in (commit del passo #4) — nuova logica: il writer scrive
+  l'intestazione `# SpectraVisual assignments, format 1: … (SPFIT .lin order) …`
+  ([controller.c:103](../../controller.c#L103)); il lettore riconosce il formato nuovo
+  solo da quell'intestazione (anche senza versione, come la scriveva `1f4df65`) e,
+  senza intestazione, prova il layout legacy a 14 campi e poi quello a 15/16
+  ([loader.c:668-686](../../loader.c#L668-L686)); le altre righe, per esempio di un
+  `.lin`, sono ignorate e contate. Test: `test_reader_rejects_lin_file`,
+  `test_reader_legacy_14_and_16`; R-09 rieseguito.
 - **Gravità** media · **P0/P1** · [FATTO] + [RIPR R-09]
 - **Dove**: `parse_assignment_lin_order` [loader.c:579-607](../../loader.c#L579-L607),
   `load_existing_assignments` [609-667](../../loader.c#L609-L667).
@@ -1745,7 +1793,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-10"></a>
 ### B-10 — Selezione stantia dopo un cambio di catalogo
 
-- **Stato: risolto** in (commit del passo #3) — nuova logica: `set_predictions` azzera
+- **Stato: risolto** in `7d6ece4` — nuova logica: `set_predictions` azzera
   la selezione quando sostituisce il catalogo ([main.c:306-308](../../main.c#L306-L308)):
   dopo un drop di `.cat`, Calculate, Fit, Undo o restore nessun indice selezionato
   punta a un'altra transizione (scelta fatta: azzerare, non rimappare per identità).
@@ -2542,7 +2590,7 @@ regressioni sono possibili.
 |---|---|---|---|---|
 | B-01, B-03, B-04 (risolti al passo #1, con B-25) | `parse_cat_record`, `parse_qn2`, controllo di lunghezza | `read_pred_cat(_alloc)` ← `set_predictions` (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di `n_qn`: `same_assignment_transition`, `current_assignment_prediction`, `same_qn`, `rescale_by_species`, `write_inputs` (controllo e writer), *Save all*, `format_pred_qn`, `format_assignment_qn`; file `assignments.txt` esistenti con righe troncate | le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT | T-01..T-07 |
 | B-02 | `update_hamiltonian_nstates` e i suoi 5 chiamanti | `write_multi_state_int` (ID per v ≥ NVIB), `int_maxv_at`, `rescale_by_species` (stato da `M1u`), QNFMT di `model.cat`, identità degli assignment su `model.cat`, sessione (`hamiltonian`) | un NVIB minore del numero di specie produce parametri e dipoli per stati inesistenti; cambia NQN delle righe generate | T-11, T-13 |
-| B-05, B-06, B-08 | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
+| B-05, B-06, B-08 (risolti al passo #4, con B-07) | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
 | B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |
 | B-10 (risolto al passo #3) | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
 | B-11, B-13, B-21, B-27 | `commit_text_input`, *Run fit*, `predfit_adopt_shared_state`, `intensity_fit_run` | intensità mostrate, filtro di intensità (righe selezionabili), Shift+Tab, CalcIntensity salvata, `.int` del Calculate successivo | intensità mostrate diverse da prima per chi usava i campi della command bar su cataloghi generati | T-17, T-18 |

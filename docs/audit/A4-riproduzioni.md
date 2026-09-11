@@ -141,6 +141,12 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
   exp_int dopo il riavvio = intensità calcolata (1.000e+00 -> 1.000e-04)
   ```
 - Esito: bug B-01 (causa), B-05 (writer), B-06 (fusione per deduplicazione), B-07 (`exp_int`).
+- **Dopo il passo #4** (log rigenerati): rt3 6/6, rt304 4/4, rt1404 4/4, rt5 3/3, rt6 3/3,
+  rtpred 4/4 transizioni ripristinate identiche; `exp_int` 0 dopo il riavvio; la coppia a
+  392.7959 MHz torna come due assignment; il file comincia con
+  `# SpectraVisual assignments, format 1: …`. I round-trip erano già identici dopo il
+  passo #1, perché la causa era B-01. Test: `test_roundtrip_every_qnfmt`,
+  `test_blend_pair_survives_reload`, `test_reload_exp_int_zero`.
 
 ### R-08 — Campo N (NVIB) della terza riga `.par` ([nvib.log](repro/logs/nvib.log))
 - Azioni: modifica della riga opzioni nella finestra Advanced (`advanced_commit_edit`),
@@ -170,6 +176,13 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
                      CalcInt=1.0 (peso), 7 righe con exp > 90000 MHz (sentinella non decodificata)
   ```
 - Esito: bug B-08.
+- **Dopo il passo #4** ([formats.log](repro/logs/formats.log) rigenerato): legacy16 con NQN
+  3 e 6 e legacy14 con ExpInt 1e-5 e 5.2 letti con i campi giusti; `assignments_backup.txt`
+  (`.lin` con NQN, senza intestazione) → 0 assignment. I due casi del formato nuovo che
+  l'harness scrive senza intestazione ora sono ignorati: il formato nuovo si riconosce
+  dall'intestazione, e con l'intestazione è letto (`test_reload_reports_collisions`,
+  `test_reload_exp_int_zero`). Test: `test_reader_rejects_lin_file`,
+  `test_reader_legacy_14_and_16`.
 
 ### R-10 — Selezione stantia dopo un nuovo catalogo ([stale.log](repro/logs/stale.log))
 - Azioni: selezione della riga 5999.2867 di A (indice 2), caricamento di B, picco.
@@ -483,10 +496,10 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-03 | CAT 5/6 QN | `cat5_305.cat`, `cat6_306.cat` | = `n_qn` 5/6 | `test_cat_nqn_4_5_6` |
 | T-04 | QN ≥ 100 e ≤ −10 (codice lettera) | `cat_letter.cat` + riga con `a1` | = J 105; = −11 | `test_cat_letter_and_negative_qn` |
 | T-05 | Righe senza spazi finali | `cat_trim.cat` | = numero di righe lette | `test_cat_trailing_spaces_irrelevant` |
-| T-06 | Transizioni uguali nei primi 3 QN, diverse nei successivi | `cat4_304` (F), `cat4_1404` (v), `cat5_305` | = due assignment distinti dopo save/reopen | — |
-| T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt | `test_baseline_roundtrip_qnfmt1404` (solo QNFMT 1404) |
+| T-06 | Transizioni uguali nei primi 3 QN, diverse nei successivi | `cat4_304` (F), `cat4_1404` (v), `cat5_305` | = due assignment distinti dopo save/reopen | `test_roundtrip_every_qnfmt` |
+| T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt | `test_roundtrip_every_qnfmt`, `test_baseline_roundtrip_qnfmt1404`, `test_reload_exp_int_zero` |
 | T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment | `test_baseline_reassign_updates_obsfreq` |
-| T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | — |
+| T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | `test_blend_pair_survives_reload` |
 | T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | `test_selection_cleared_on_catalog_change`, `test_selection_indices_in_bounds` |
 | T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza | — |
 | T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
@@ -497,7 +510,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
 | T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T | — |
 | T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici | — |
-| T-20 | Legacy `assignments.txt` a 14/16 campi | R-09 | = campi letti correttamente o riga rifiutata con messaggio | — |
+| T-20 | Legacy `assignments.txt` a 14/16 campi | R-09 | = campi letti correttamente o riga rifiutata con messaggio | `test_reader_rejects_lin_file`, `test_reader_legacy_14_and_16` |
 | T-21 | `data_dir` con spazi e metacaratteri di shell | R-18 | = Calculate e Fit riusciti; = nessuna parte del percorso interpretata dalla shell | — |
 | T-22 | Rimozione di uno spettro prima e dopo quello attivo | R-19 | = spettro attivo per identità, con offset e smoothing | — |
 | T-23 | Find peaks con baseline 0 e 10, rumore noto, larghezza ≤ 0 | R-20 | = stessi picchi al variare della baseline; Δ larghezza ≤ 0 rifiutata; = nessuna lettura fuori limite con Guard Malloc | — |

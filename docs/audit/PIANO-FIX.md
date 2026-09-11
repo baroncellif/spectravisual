@@ -301,7 +301,7 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_selection_indices_in_bounds`: dopo ogni `set_predictions` nessun indice
     selezionato è ≥ `n_pred`.
 - **Documentazione**: report §4 flusso 4, §5.2, scheda B-10; A4 R-10.
-- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #4 —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `7d6ece4` —
   test aggiunti: `test_selection_cleared_on_catalog_change`,
   `test_selection_indices_in_bounds` (suite 18/18 PASS). Scelta: azzerare la
   selezione in `set_predictions` (non rimapparla); il controllo `idx < n_pred`
@@ -346,7 +346,21 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     NQN 6 e con ExpInt ≈ 5, lette correttamente.
 - **Documentazione**: report §6.2, §7.1, §7.3, schede B-05…B-08; A4 R-02..R-07
   e R-09.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #5 —
+  test aggiunti: `test_roundtrip_every_qnfmt`, `test_blend_pair_survives_reload`,
+  `test_save_skips_invalid_nqn`, `test_reload_reports_collisions`,
+  `test_reload_exp_int_zero`, `test_reader_rejects_lin_file`,
+  `test_reader_legacy_14_and_16` (suite 25/25 PASS). `test_roundtrip_every_qnfmt` e
+  `test_blend_pair_survives_reload` passavano già prima della correzione: la causa di
+  B-05/B-06 per i cataloghi validi era B-01, corretto al passo #1; restano come test
+  di regressione. Nuove funzioni: `load_assignments_file`,
+  `assignment_file_message` (`loader.h`, con `AssignmentFileReport` e
+  `ASSIGNMENT_FORMAT`). Intestazione scritta: `# SpectraVisual assignments,
+  format 1: …`; quella senza versione di `1f4df65` resta leggibile, e il file
+  `assignments.txt` nella radice (una riga `11 10 … 1`) viene letto e marcato da
+  riassegnare. Una riga senza NQN non è più scritta: resta in memoria marcata e il
+  messaggio lo dice, ma sparisce dal file al primo salvataggio (l'ultima copia sta
+  in `assignments.txt.bak`). R-02..R-07 e R-09 rieseguiti.
 
 ### #5 — NVIB: il valore dell'utente non viene più riscritto
 
@@ -815,4 +829,4 @@ vincoli 1–6 verificati da test dedicati.
 
 | # | Descrizione | Prova | Trovato al passo | Passo in cui correggerlo |
 |---|---|---|---|---|
-| N-01 | Il numero di righe scartate dal passo #1 sta in `error_message`, che `add_spectrum` azzera a ogni caricamento riuscito ([main.c:282](../../main.c#L282)). All'avvio `spectravisual spettro.txt catalogo.cat` il catalogo è caricato prima dello spettro, quindi l'avviso sparisce subito. È lo stesso canale unico, sovrascritto da qualsiasi messaggio, di U-06. | lettura di `add_spectrum` e dell'ordine di caricamento in `main` (prima il `.cat`, poi gli spettri) | #1 | #24 |
+| N-01 | Il numero di righe scartate dal passo #1 sta in `error_message`, che `add_spectrum` azzera a ogni caricamento riuscito ([main.c:282](../../main.c#L282)). All'avvio `spectravisual spettro.txt catalogo.cat` il catalogo è caricato prima dello spettro, quindi l'avviso sparisce subito. È lo stesso canale unico, sovrascritto da qualsiasi messaggio, di U-06; dal passo #4 vale anche per il resoconto della lettura di `assignments.txt`. | lettura di `add_spectrum` e dell'ordine di caricamento in `main` (prima il `.cat`, poi gli spettri) | #1 | #24 |

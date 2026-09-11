@@ -8,39 +8,36 @@ Peak found: 221.5461 (Copied to clipboard)
 Added assignment for 221.5761 MHz
 Assigned 1 selected predicted line to 221.5461 MHz
 click at 392.7959 MHz -> n_selected=2
-   selected f=392.7959 n_qn=1 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
-   selected f=392.7959 n_qn=1 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
+   selected f=392.7959 n_qn=3 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
+   selected f=392.7959 n_qn=3 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
 Peak found: 392.7659 (Copied to clipboard)
 Added assignment for 392.7959 MHz
 Added assignment for 392.7959 MHz
 Assigned 2 selected predicted lines to 392.7659 MHz
 click at 5999.2867 MHz -> n_selected=1
-   selected f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
+   selected f=5999.2867 n_qn=3 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
 Peak found: 5999.2567 (Copied to clipboard)
 Added assignment for 5999.2867 MHz
 Assigned 1 selected predicted line to 5999.2567 MHz
 -- in memory (before Save all): n_assignments=4
   [0] exp=221.5461 exp_int=1.000e+00 fit=1 pred: f=221.5761 n_qn=3 U=(7 2 6 0 0 0) L=(6 3 4 0 0 0) lin=6.6481e-08
-  [1] exp=392.7659 exp_int=1.000e+00 fit=1 pred: f=392.7959 n_qn=1 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
-  [2] exp=392.7659 exp_int=1.000e+00 fit=1 pred: f=392.7959 n_qn=1 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
-  [3] exp=5999.2567 exp_int=1.000e+00 fit=1 pred: f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
-Saved assignments.txt
+  [1] exp=392.7659 exp_int=1.000e+00 fit=1 pred: f=392.7959 n_qn=3 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
+  [2] exp=392.7659 exp_int=1.000e+00 fit=1 pred: f=392.7959 n_qn=3 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
+  [3] exp=5999.2567 exp_int=1.000e+00 fit=1 pred: f=5999.2867 n_qn=3 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
 -- $RUNS/rtpred/assignments.txt written by the real Save-all handler:
-  | # Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
+  | # SpectraVisual assignments, format 1: upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
   |   7  2  6  6  3  4                       221.546100      221.576100    6.648138E-08 3
-  |  13 14                                   392.765900      392.795900    1.557758E-08 1
-  |  13 14                                   392.765900      392.795900    1.557758E-08 1
-  |  11 10                                  5999.256700     5999.286700    1.364897E-04 1
+  |  13  6  7 14  5  9                       392.765900      392.795900    1.557758E-08 3
+  |  13  6  8 14  5 10                       392.765900      392.795900    1.557758E-08 3
+  |  11  0 11 10  1  9                      5999.256700     5999.286700    1.364897E-04 3
 Added assignment for 221.5761 MHz
 Added assignment for 392.7959 MHz
-Updated assignment for transition at 392.7959 MHz
+Added assignment for 392.7959 MHz
 Added assignment for 5999.2867 MHz
 Loaded 4 assignments from $RUNS/rtpred/assignments.txt
--- after restart (set_predictions -> ensure_aux_loaded): n_assignments=3
-  [0] exp=221.5461 exp_int=6.648e-08 fit=1 pred: f=221.5761 n_qn=3 U=(7 2 6 0 0 0) L=(6 3 4 0 0 0) lin=6.6481e-08
-  [1] exp=392.7659 exp_int=1.558e-08 fit=1 pred: f=392.7959 n_qn=1 U=(13 0 0 0 0 0) L=(14 0 0 0 0 0) lin=1.5578e-08
-  [2] exp=5999.2567 exp_int=1.365e-04 fit=1 pred: f=5999.2867 n_qn=1 U=(11 0 0 0 0 0) L=(10 0 0 0 0 0) lin=1.3649e-04
-   NOT RESTORED IDENTICALLY: f=392.7959 n_qn=1 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
-   NOT RESTORED IDENTICALLY: f=392.7959 n_qn=1 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
-   NOT RESTORED IDENTICALLY: f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
-RESULT: 4 in memory, 3 restored, 3 transitions not restored identically
+-- after restart (set_predictions -> ensure_aux_loaded): n_assignments=4
+  [0] exp=221.5461 exp_int=0.000e+00 fit=1 pred: f=221.5761 n_qn=3 U=(7 2 6 0 0 0) L=(6 3 4 0 0 0) lin=6.6481e-08
+  [1] exp=392.7659 exp_int=0.000e+00 fit=1 pred: f=392.7959 n_qn=3 U=(13 6 7 0 0 0) L=(14 5 9 0 0 0) lin=1.5578e-08
+  [2] exp=392.7659 exp_int=0.000e+00 fit=1 pred: f=392.7959 n_qn=3 U=(13 6 8 0 0 0) L=(14 5 10 0 0 0) lin=1.5578e-08
+  [3] exp=5999.2567 exp_int=0.000e+00 fit=1 pred: f=5999.2867 n_qn=3 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
+RESULT: 4 in memory, 4 restored, 0 transitions not restored identically

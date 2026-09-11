@@ -599,93 +599,175 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
    upper QNs, lower QNs, observed frequency, calculated frequency, calculated
    intensity, NQN.  The trailing NQN is not an SPFIT field; it is the small
    piece of CAT/QNFMT information needed to reconstruct whether the QN record
-   used 3, 4, 5 or 6 fields per state on the next launch. */
-static int parse_assignment_lin_order(const char *line, PredLine *p,
-                                      double *exp_freq, double *calc_int)
-{
-    double v[32];
-    int count = 0;
+   used 3, 4, 5 or 6 fields per state on the next launch.
+
+   The layout is announced by the header the writer puts on the first line,
+   "... (SPFIT .lin order) ...", which carries a format version from format 1
+   on.  A row is never recognised from its field count alone: a .lin with an
+   NQN column has the same count, with the uncertainty and the weight where
+   CalcFreq and CalcIntensity are.  A file without that header is read only in
+   the two layouts written before the header existed. */
+
+typedef struct { double v[32]; int integer[32]; int n; } NumberRow;
+
+static int number_separator(char c) {
+    return c == ' ' || c == '\t' || c == '|' || c == ',' || c == '\r' || c == '\n';
+}
+
+/* The numbers of a line.  Returns 1, 0 for a blank line, -1 if a field is not
+   a number. */
+static int split_numbers(const char *line, NumberRow *row) {
+    row->n = 0;
     const char *q = line;
-    while (*q && count < (int)(sizeof(v) / sizeof(v[0]))) {
+    for (;;) {
+        while (*q && number_separator(*q)) q++;
+        if (!*q) break;
+        if (row->n >= 32) return -1;
         char *end = NULL;
         double x = strtod(q, &end);
-        if (end == q) { q++; continue; }
-        v[count++] = x;
+        if (end == q || (*end && !number_separator(*end))) return -1;
+        int integer = 1;
+        for (const char *c = q; c < end; c++) if (*c == '.' || *c == 'e' || *c == 'E') integer = 0;
+        row->v[row->n] = x;
+        row->integer[row->n] = integer;
+        row->n++;
         q = end;
     }
-    if (count < 6) return 0;
-    int nq = (int)lround(v[count - 1]);
-    if (nq < 1 || nq > 6 || count != 2 * nq + 4) return 0;
+    return row->n > 0;
+}
 
-    int *upper[6] = {&p->Ju, &p->Kau, &p->Kcu, &p->M1u, &p->M2u, &p->M3u};
-    int *lower[6] = {&p->Jl, &p->Kal, &p->Kcl, &p->M1l, &p->M2l, &p->M3l};
-    for (int i = 0; i < nq; i++) *upper[i] = (int)lround(v[i]);
-    for (int i = 0; i < nq; i++) *lower[i] = (int)lround(v[nq + i]);
-    *exp_freq = v[2 * nq];
-    p->freq_mhz = v[2 * nq + 1];
-    *calc_int = v[2 * nq + 2];
-    p->linear_int = *calc_int;
-    p->lgint = *calc_int > 0.0 ? log10(*calc_int) : -INFINITY;
+static int all_integers(const NumberRow *r, int from, int to) {
+    for (int i = from; i < to; i++) if (!r->integer[i]) return 0;
+    return 1;
+}
+
+static void set_row_qn(PredLine *p, const double *upper, const double *lower, int nq) {
+    int *u[6] = {&p->Ju, &p->Kau, &p->Kcu, &p->M1u, &p->M2u, &p->M3u};
+    int *l[6] = {&p->Jl, &p->Kal, &p->Kcl, &p->M1l, &p->M2l, &p->M3l};
+    for (int i = 0; i < nq; i++) { *u[i] = (int)lround(upper[i]); *l[i] = (int)lround(lower[i]); }
+}
+
+/* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity, NQN. */
+static int parse_assignment_row(const NumberRow *r, PredLine *p, double *exp_freq) {
+    if (r->n < 6 || !r->integer[r->n - 1]) return 0;
+    int nq = (int)lround(r->v[r->n - 1]);
+    if (nq < 1 || nq > 6 || r->n != 2 * nq + 4 || !all_integers(r, 0, 2 * nq)) return 0;
+    set_row_qn(p, r->v, r->v + nq, nq);
+    *exp_freq = r->v[2 * nq];
+    p->freq_mhz = r->v[2 * nq + 1];
+    p->linear_int = r->v[2 * nq + 2];
+    p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
     p->n_qn = nq;
     return 1;
 }
 
-void load_existing_assignments(const char *filename, Assignment *list, int *n) {
+/* The layouts written before the header existed: 12 QN, ExpFreq, ExpInt (14
+   fields; ExpFreq also stands for the calculated frequency), or PredFreq, 12
+   QN, ExpFreq, ExpInt and an optional NQN (15 or 16 fields).  Unless the 16th
+   field gives it, their NQN is unknown. */
+static int parse_legacy_row(const NumberRow *r, PredLine *p, double *exp_freq, double *exp_int) {
+    if (r->n == 14 && all_integers(r, 0, 12)) {
+        set_row_qn(p, r->v, r->v + 6, 6);
+        *exp_freq = p->freq_mhz = r->v[12];
+        *exp_int = r->v[13];
+        p->n_qn = 0;
+        return 1;
+    }
+    if ((r->n == 15 || r->n == 16) && !r->integer[0] && all_integers(r, 1, 13)) {
+        p->freq_mhz = r->v[0];
+        set_row_qn(p, r->v + 1, r->v + 7, 6);
+        *exp_freq = r->v[13];
+        *exp_int = r->v[14];
+        int nq = (r->n == 16 && r->integer[15]) ? (int)lround(r->v[15]) : 0;
+        p->n_qn = (nq >= 1 && nq <= 6) ? nq : 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* 0 for a line that is not the header; otherwise its format version (1 for the
+   header written before versions existed). */
+static int header_format(const char *line) {
+    if (line[0] != '#' || !strstr(line, "(SPFIT .lin order)")) return 0;
+    const char *v = strstr(line, "format ");
+    int version = 1;
+    if (v && sscanf(v + 7, "%d", &version) != 1) version = 1;
+    return version;
+}
+
+/* For a three-digit QNFMT, B-01 wrote the tens digit of J as NQN: 1 for J in
+   10..19, 2 for J in 20..29.  Such a row cannot be told from a genuine one for
+   certain, so it is kept and marked for reassignment. */
+static int looks_truncated(const PredLine *p) {
+    return (p->n_qn == 1 && p->Ju >= 10 && p->Ju <= 19) || (p->n_qn == 2 && p->Ju >= 20 && p->Ju <= 29);
+}
+
+static int find_assignment(const Assignment *list, int n, const PredLine *p) {
+    for (int i = 0; i < n; i++) if (same_assignment_transition(&list[i].pred, p)) return i;
+    return -1;
+}
+
+int load_assignments_file(const char *filename, Assignment *list, int *n, AssignmentFileReport *report) {
+    AssignmentFileReport local;
+    AssignmentFileReport *rep = report ? report : &local;
+    memset(rep, 0, sizeof(*rep));
     FILE *fp = fopen(filename, "r");
-    if(!fp) return;
+    if (!fp) return 0;
 
     char line[512];
-    int loaded = 0;
-    while(fgets(line, sizeof(line), fp)) {
-        if(line[0] == '#' || strlen(line) < 10) continue;
-        for(int i=0; line[i]; i++) if(line[i]=='|') line[i]=' ';
-
-        PredLine p; memset(&p, 0, sizeof(p));
-        double ef = 0.0, ei = 0.0;
-
-        if (parse_assignment_lin_order(line, &p, &ef, &ei)) {
-            p.branch = branch_from_qn(p.Ju, p.Jl);
-            p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
-            add_or_update_assignment(list, n, p, ef, ei);
-            loaded++;
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '#') {
+            int version = header_format(line);
+            if (version) rep->format = version;
             continue;
         }
-
-        int n_qn = 0;
-        int res = sscanf(line, "%lf %d %d %d %d %d %d %d %d %d %d %d %d %lf %lf %d",
-               &p.freq_mhz,
-               &p.Ju, &p.Kau, &p.Kcu, &p.M1u, &p.M2u, &p.M3u,
-               &p.Jl, &p.Kal, &p.Kcl, &p.M1l, &p.M2l, &p.M3l,
-               &ef, &ei, &n_qn);
-
-        if(res < 15) {
-            // Legacy 0.9 format: 12 quantum numbers followed by ExpFreq ExpInt.
-            // There was no predicted frequency field, so keep the quantum-number
-            // order and use ExpFreq as a stable key for old assignments.
-            double old_ef = 0.0, old_ei = 0.0;
-            PredLine oldp; memset(&oldp, 0, sizeof(oldp));
-            int old_res = sscanf(line, "%d %d %d %d %d %d %d %d %d %d %d %d %lf %lf",
-                   &oldp.Ju, &oldp.Kau, &oldp.Kcu, &oldp.M1u, &oldp.M2u, &oldp.M3u,
-                   &oldp.Jl, &oldp.Kal, &oldp.Kcl, &oldp.M1l, &oldp.M2l, &oldp.M3l,
-                   &old_ef, &old_ei);
-            if (old_res >= 14) {
-                p = oldp;
-                p.freq_mhz = old_ef;
-                ef = old_ef;
-                ei = old_ei;
-                res = 15;
-            }
-        }
-
-        if(res >= 15) {
-            p.n_qn = (n_qn >= 1 && n_qn <= 6) ? n_qn : 0;
-            p.branch = branch_from_qn(p.Ju, p.Jl);
-            p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
-            p.lgint = 0; 
-            add_or_update_assignment(list, n, p, ef, ei);
-            loaded++;
-        }
+        NumberRow r;
+        int numbers = split_numbers(line, &r);
+        if (numbers == 0) continue;                       /* blank line */
+        PredLine p;
+        memset(&p, 0, sizeof(p));
+        double ef = 0.0, ei = 0.0;                       /* the file has no observed intensity */
+        int ok = numbers > 0 && rep->format <= ASSIGNMENT_FORMAT &&
+                 (rep->format ? parse_assignment_row(&r, &p, &ef) : parse_legacy_row(&r, &p, &ef, &ei));
+        if (!ok) { rep->ignored++; continue; }
+        p.branch = branch_from_qn(p.Ju, p.Jl);
+        p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
+        /* A transition read twice is not merged in silence: the last
+           occurrence is kept, as everywhere else, and the repeat is counted. */
+        int k = find_assignment(list, *n, &p);
+        if (k >= 0) rep->duplicates++;
+        add_or_update_assignment(list, n, p, ef, ei);
+        if (k < 0) k = find_assignment(list, *n, &p);
+        if (k >= 0 && (p.n_qn == 0 || looks_truncated(&p))) list[k].needs_reassign = 1;
+        rep->loaded++;
     }
     fclose(fp);
-    printf("Loaded %d assignments from %s\n", loaded, filename);
+    for (int i = 0; i < *n; i++) if (list[i].needs_reassign) rep->to_reassign++;
+    printf("Loaded %d assignments from %s\n", rep->loaded, filename);
+    return rep->loaded;
+}
+
+void load_existing_assignments(const char *filename, Assignment *list, int *n) {
+    load_assignments_file(filename, list, n, NULL);
+}
+
+void assignment_file_message(const AssignmentFileReport *r, const char *path, char *out, size_t size) {
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    out[0] = '\0';
+    if (r->format > ASSIGNMENT_FORMAT) {
+        snprintf(out, size, "%s was written by a newer SpectraVisual (format %d) and was not read.", name, r->format);
+        return;
+    }
+    if (!r->ignored && !r->duplicates && !r->to_reassign) return;
+    size_t used = (size_t)snprintf(out, size, "%s:", name);
+    if (r->ignored && used < size)
+        used += (size_t)snprintf(out + used, size - used, " %d lines ignored (%s);", r->ignored,
+                                 r->format ? "not an assignment row" : "no header: not a known layout, a .lin?");
+    if (r->duplicates && used < size)
+        used += (size_t)snprintf(out + used, size - used, " %d duplicate row%s (the last occurrence of each transition was kept);",
+                                 r->duplicates, r->duplicates == 1 ? "" : "s");
+    if (r->to_reassign && used < size)
+        snprintf(out + used, size - used, " %d assignment%s to assign again (NQN unknown or truncated by an older version).",
+                 r->to_reassign, r->to_reassign == 1 ? "" : "s");
 }

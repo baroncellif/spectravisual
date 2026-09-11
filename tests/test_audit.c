@@ -891,6 +891,177 @@ static int test_selection_indices_in_bounds(void) {
     DONE();
 }
 
+/* ========================================= #4 integrity of assignments.txt */
+
+/* The header that commit 1f4df65 wrote on the first line of assignments.txt. */
+static const char *ASG_HEADER_1F4DF65 =
+    "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n";
+
+/* T-06, T-07: R-02..R-07 for every QNFMT and for pred_reference.cat: after Save
+   all and a restart the same transitions come back, none merged. */
+static int test_roundtrip_every_qnfmt(void) {
+    static const double f303[6] = {3000.1, 5980.0, 5999.2867, 7000.0, 8000.0, 9000.0};
+    static const double f304[4] = {3100.0, 3100.3, 6100.0, 6100.3};
+    static const double f305[3] = {3200.0, 3200.3, 6200.0};
+    static const double f306[3] = {3300.0, 3300.3, 6300.0};
+    static const double f1404[4] = {2511.3375, 2511.9, 6033.5894, 6034.0};
+    static const double fpred[3] = {221.5761, 392.7959, 5999.2867};
+    struct { const char *name; const char *path; const double *f; int n; } cases[6] = {
+        {"cat3_303", NULL, f303, 6}, {"cat4_304", NULL, f304, 4}, {"cat5_305", NULL, f305, 3},
+        {"cat6_306", NULL, f306, 3}, {"cat4_1404", NULL, f1404, 4}, {"pred_reference", NULL, fpred, 3},
+    };
+    char paths[6][900];
+    for (int c = 0; c < 5; c++) snprintf(paths[c], sizeof(paths[c]), "%s/%s.cat", g_fx, cases[c].name);
+    snprintf(paths[5], sizeof(paths[5]), "%s", fixture("pred_reference.cat"));
+    int failed_before = g_failed;
+    for (int c = 0; c < 6; c++) {
+        unlink(work_path("assignments.txt"));
+        unlink(work_path("assignments.txt.bak"));
+        g_failed = 0;
+        check_roundtrip(paths[c], cases[c].f, cases[c].n);
+        if (g_failed) fprintf(g_tlog, "    (le righe sopra riguardano %s)\n", cases[c].name);
+        failed_before |= g_failed;
+    }
+    g_failed = failed_before;
+    DONE();
+}
+
+/* T-09: the blended pair at 392.7959 MHz of pred.cat, assigned with one click to
+   one peak, comes back as two assignments. */
+static int test_blend_pair_survives_reload(void) {
+    const double pk[1] = {392.7659};
+    write_spectrum(work_path("blend.txt"), pk, NULL, 1);
+    AppState *s = new_state();
+    set_predictions(s, fixture("pred_reference.cat"));
+    add_spectrum(s, work_path("blend.txt"));
+    CHECK_INT("righe selezionate dal clic a 392.7959 MHz", click_select(s, 392.7959), 2);
+    right_drag(s, 392.5659, 392.9659);
+    CHECK_INT("assignment dopo il picco", s->n_assignments, 2);
+    if (s->n_assignments == 2) CHECK_DBL("stessa ObsFreq", s->assignments[1].exp_freq, s->assignments[0].exp_freq, 0.0);
+    click_save_all(s);
+    AppState *r = new_state();
+    set_predictions(r, fixture("pred_reference.cat"));
+    CHECK_INT("assignment dopo il riavvio", r->n_assignments, 2);
+    for (int i = 0; i < s->n_assignments; i++) {
+        int found = 0;
+        for (int k = 0; k < r->n_assignments; k++) if (same_identity(&s->assignments[i].pred, &r->assignments[k].pred)) found = 1;
+        CHECK(found, "dopo il riavvio: attesa la transizione %s", fmt_qn((int[12]){s->assignments[i].pred.Ju, s->assignments[i].pred.Kau,
+              s->assignments[i].pred.Kcu, 0, 0, 0, s->assignments[i].pred.Jl, s->assignments[i].pred.Kal, s->assignments[i].pred.Kcl, 0, 0, 0}));
+    }
+    DONE();
+}
+
+/* B-05: an assignment without a valid NQN is not written with an invented one;
+   the message says how many were left out. */
+static int test_save_skips_invalid_nqn(void) {
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, 3000.08, 1.0);                     /* NQN 3, from the catalogue */
+    Assignment legacy = s->assignments[0];                /* a row of a legacy file: NQN unknown */
+    legacy.pred.Ju = 6; legacy.pred.Jl = 5; legacy.pred.n_qn = 0; legacy.exp_freq = 3100.0;
+    s->assignments[s->n_assignments++] = legacy;
+    s->error_message[0] = '\0';
+    click_save_all(s);
+    Assignment *disk = calloc(MAX_ASSIGNMENTS, sizeof(Assignment));
+    int n = 0;
+    load_existing_assignments(work_path("assignments.txt"), disk, &n);
+    CHECK_INT("righe scritte in assignments.txt", n, 1);
+    if (n >= 1) CHECK_INT("NQN della riga scritta", disk[0].pred.n_qn, 3);
+    CHECK(strstr(s->error_message, "without 1 row") != NULL,
+          "messaggio: atteso il conteggio 'without 1 row', ottenuto '%s'", s->error_message);
+    free(disk);
+    DONE();
+}
+
+/* B-06: two rows of the same transition are not merged in silence. */
+static int test_reload_reports_collisions(void) {
+    static const int u5[3] = {11, 0, 11}, l5[3] = {10, 1, 9};
+    FILE *f = fopen(work_path("assignments.txt"), "w");
+    fputs(ASG_HEADER_1F4DF65, f);
+    write_list_row(f, LEG_U0, LEG_L0, 3, 3000.05, 3000.1, 1.0e-4);
+    write_list_row(f, LEG_U0, LEG_L0, 3, 3000.08, 3000.1, 1.0e-4);   /* same transition, other peak */
+    write_list_row(f, u5, l5, 3, 5999.27, 5999.2867, 1.364897e-4);
+    fclose(f);
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    CHECK_INT("assignment", s->n_assignments, 2);
+    CHECK(find_exp(s, 3000.08) != NULL, "attesa l'ultima occorrenza (3000.08 MHz) della transizione ripetuta");
+    CHECK(strstr(s->error_message, "1 duplicate") != NULL,
+          "messaggio: atteso il conteggio '1 duplicate', ottenuto '%s'", s->error_message);
+    DONE();
+}
+
+/* B-07: the observed intensity is not in the file, so a restored row has
+   exp_int = 0, never CalcIntensity. */
+static int test_reload_exp_int_zero(void) {
+    FILE *f = fopen(work_path("assignments.txt"), "w");
+    fputs(ASG_HEADER_1F4DF65, f);
+    write_list_row(f, LEG_U0, LEG_L0, 3, 3000.08, 3000.1, 1.234e-4);
+    fclose(f);
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    CHECK_INT("assignment", s->n_assignments, 1);
+    if (s->n_assignments == 1) {
+        CHECK_DBL("exp_int", s->assignments[0].exp_int, 0.0, 0.0);
+        CHECK(fabs(s->assignments[0].pred.linear_int - 1.234e-4) < 1e-9, "CalcIntensity: attesa 1.234e-04, ottenuta %.6e",
+              s->assignments[0].pred.linear_int);
+    }
+    DONE();
+}
+
+/* T-20, B-08: a .lin (uncertainty and weight where CalcFreq and CalcIntensity
+   should be, 9xxxx sentinels) is not read as a list of assignments. */
+static int test_reader_rejects_lin_file(void) {
+    copy_path(fixture("lin_with_nqn.txt"), work_path("assignments.txt"));
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    CHECK_INT("assignment letti da un .lin", s->n_assignments, 0);
+    CHECK(strstr(s->error_message, "ignored") != NULL,
+          "messaggio: atteso che le righe ignorate siano segnalate, ottenuto '%s'", s->error_message);
+    DONE();
+}
+
+/* T-20: the layouts written before 1f4df65 (no header): 12 QN + ExpFreq ExpInt
+   (14 fields) and PredFreq + 12 QN + ExpFreq ExpInt [NQN] (15/16 fields). */
+static int test_reader_legacy_14_and_16(void) {
+    static const struct { const char *name, *text; int n_qn; double pred_f, exp_f, exp_i; int qn[12]; } cases[4] = {
+        {"legacy16_nqn3", "  2511.3375    4   1   4   0   0   0   3   1   3   0   0   0      2511.3375   1.0000e-05 3\n",
+         3, 2511.3375, 2511.3375, 1.0e-5, {4, 1, 4, 0, 0, 0, 3, 1, 3, 0, 0, 0}},
+        {"legacy16_nqn6", "  3300.0000    2   1   1   3   4   5   1   1   0   2   3   4      3300.0100   2.0000e-05 6\n",
+         6, 3300.0, 3300.01, 2.0e-5, {2, 1, 1, 3, 4, 5, 1, 1, 0, 2, 3, 4}},
+        {"legacy14_ei1e-5", "  4   1   4   0   0   0   3   1   3   0   0   0      2511.3375   1.0000e-05\n",
+         0, 2511.3375, 2511.3375, 1.0e-5, {4, 1, 4, 0, 0, 0, 3, 1, 3, 0, 0, 0}},
+        {"legacy14_ei5.2", "  4   1   4   0   0   0   3   1   3   0   0   0      2511.3375   5.2000e+00\n",
+         0, 2511.3375, 2511.3375, 5.2, {4, 1, 4, 0, 0, 0, 3, 1, 3, 0, 0, 0}},
+    };
+    for (int c = 0; c < 4; c++) {
+        const char *path = work_path(cases[c].name);
+        FILE *f = fopen(path, "w");
+        fputs(cases[c].text, f);
+        fclose(f);
+        Assignment list[4];
+        int n = 0;
+        memset(list, 0, sizeof(list));
+        load_existing_assignments(path, list, &n);
+        char what[120];
+        snprintf(what, sizeof(what), "%s: assignment letti", cases[c].name);
+        CHECK_INT(what, n, 1);
+        if (n != 1) continue;
+        int q[12];
+        qn_of(&list[0].pred, q);
+        CHECK(memcmp(q, cases[c].qn, sizeof(q)) == 0, "%s: QN attesi %s, ottenuti %s", cases[c].name, fmt_qn(cases[c].qn), fmt_qn(q));
+        snprintf(what, sizeof(what), "%s: n_qn", cases[c].name);
+        CHECK_INT(what, list[0].pred.n_qn, cases[c].n_qn);
+        snprintf(what, sizeof(what), "%s: frequenza calcolata", cases[c].name);
+        CHECK_DBL(what, list[0].pred.freq_mhz, cases[c].pred_f, 1e-9);
+        snprintf(what, sizeof(what), "%s: ObsFreq", cases[c].name);
+        CHECK_DBL(what, list[0].exp_freq, cases[c].exp_f, 1e-9);
+        CHECK(fabs(list[0].exp_int - cases[c].exp_i) <= 1e-9 * fabs(cases[c].exp_i), "%s: ExpInt atteso %.6e, ottenuto %.6e",
+              cases[c].name, cases[c].exp_i, list[0].exp_int);
+    }
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -913,6 +1084,13 @@ static const Test TESTS[] = {
     {"test_autosave_on_assign_update_delete",  test_autosave_on_assign_update_delete},
     {"test_selection_cleared_on_catalog_change", test_selection_cleared_on_catalog_change},
     {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
+    {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
+    {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
+    {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
+    {"test_reload_reports_collisions",         test_reload_reports_collisions},
+    {"test_reload_exp_int_zero",               test_reload_exp_int_zero},
+    {"test_reader_rejects_lin_file",           test_reader_rejects_lin_file},
+    {"test_reader_legacy_14_and_16",           test_reader_legacy_14_and_16},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

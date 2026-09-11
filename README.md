@@ -99,7 +99,7 @@ Prediction handling
 Analysis tools
 	•	f : select a frequency range to visualize
 	•	N : open the list of assigned peaks (exportable)
-	•	The list is written to assignments.txt in the data folder (Settings > Paths; the launch folder when none is set) after every assignment, reassignment and deletion, and by Save all. The previous version is kept as assignments.txt.bak, and a failed write is shown in the title bar. Rows restored from a .fit/model.lin with fewer than 3 quantum numbers per state are kept and shown in amber: assign them again from the catalogue.
+	•	The list is written to assignments.txt in the data folder (Settings > Paths; the launch folder when none is set) after every assignment, reassignment and deletion, and by Save all. The previous version is kept as assignments.txt.bak, and a failed write is shown in the title bar. Rows restored from a .fit/model.lin with fewer than 3 quantum numbers per state are kept and shown in amber: assign them again from the catalogue. assignments.txt starts with a header naming its format: a file without it is read only in the two older layouts, and anything else (a .lin, for instance) is ignored and counted in the title bar. Rows whose NQN is unknown are not written.
 	•	P : open peak-finding tool for the experimental spectrum (exportable)
 	•	T : open rolling-average tool for experimental spectrum smoothing
 

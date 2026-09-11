@@ -62,4 +62,21 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
 void deduplicate_assignments(Assignment *list, int *n);
 void load_existing_assignments(const char *filename, Assignment *list, int *n);
 
+/* Version written in the header line of assignments.txt. */
+#define ASSIGNMENT_FORMAT 1
+
+/* What reading assignments.txt had to decide, for the message shown to the user. */
+typedef struct {
+    int format;       /* header version; 0 = no header (layouts written before 1f4df65) */
+    int loaded;       /* rows read as assignments                                        */
+    int ignored;      /* rows in no known layout, a .lin for instance                    */
+    int duplicates;   /* rows of a transition already read: the last occurrence is kept  */
+    int to_reassign;  /* assignments marked for reassignment: NQN unknown or truncated   */
+} AssignmentFileReport;
+
+/* load_existing_assignments, also filling *report (may be NULL). */
+int  load_assignments_file(const char *filename, Assignment *list, int *n, AssignmentFileReport *report);
+/* One line for the title bar about *report; empty when there is nothing to say. */
+void assignment_file_message(const AssignmentFileReport *report, const char *path, char *out, size_t size);
+
 #endif

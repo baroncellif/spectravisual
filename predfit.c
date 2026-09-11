@@ -908,7 +908,11 @@ static int import_fit_lines(AppState *s) {
     char path[600];
     settings_data_file(s, "assignments.txt", path, sizeof(path));
     s->n_assignments = 0;
-    load_existing_assignments(path, s->assignments, &s->n_assignments);
+    AssignmentFileReport report;
+    char note[512];
+    load_assignments_file(path, s->assignments, &s->n_assignments, &report);
+    assignment_file_message(&report, path, note, sizeof(note));
+    if (note[0]) snprintf(s->error_message, sizeof(s->error_message), "%s", note);
 
     int marked = 0;
     /* Carry the fit flags over. The two files can disagree - lines assigned

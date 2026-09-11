@@ -152,15 +152,25 @@ static void restore_session_view(AppState *state) {
     state->session_has_view = 0;  /* restore once; navigation is live afterwards */
 }
 
+/* Adds a note to the title-bar message without hiding what is already there. */
+static void append_error_message(AppState *state, const char *note) {
+    size_t used = strlen(state->error_message);
+    if (used == 0) snprintf(state->error_message, sizeof(state->error_message), "%s", note);
+    else snprintf(state->error_message + used, sizeof(state->error_message) - used, " %s", note);
+}
+
 static void ensure_aux_loaded(AppState *state) {
     if (state->lin_data) return;
     state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
     if (!state->lin_data) return;
     if (state->n_assignments == 0)
     {
-        char path[600];
+        char path[600], note[512];
+        AssignmentFileReport report;
         settings_data_file(state, "assignments.txt", path, sizeof(path));
-        load_existing_assignments(path, state->assignments, &state->n_assignments);
+        load_assignments_file(path, state->assignments, &state->n_assignments, &report);
+        assignment_file_message(&report, path, note, sizeof(note));
+        if (note[0]) append_error_message(state, note);
     }
     char f[512];
     if (find_assigned_frequency_file(f, sizeof(f)))
@@ -268,7 +278,6 @@ static int add_spectrum(AppState *state, const char *path) {
     state->n_peaks = 0; state->n_selected = 0;
     mirror_active(state);
     state->data_loaded = 1;
-    ensure_aux_loaded(state);
 
     if (first) {
         state->vxmin = xmin; state->vxmax = xmax;
@@ -280,6 +289,7 @@ static int add_spectrum(AppState *state, const char *path) {
     snprintf(state->status_message, sizeof(state->status_message),
              "Loaded spectrum '%s' (%d pts). %d spectra loaded.", sp->name, n, state->n_spectra);
     state->error_message[0] = '\0';
+    ensure_aux_loaded(state);   /* after the messages above: it can add its own */
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
 }
@@ -323,7 +333,6 @@ static int set_predictions(AppState *state, const char *path) {
 
     int first = !state->data_loaded;
     state->data_loaded = 1;
-    ensure_aux_loaded(state);
     if (first) {
         state->xmin = pxmin; state->xmax = pxmax; state->ymin = 0.0; state->ymax = 1.0;
         state->vxmin = pxmin; state->vxmax = pxmax; state->vymin = 0.0; state->vymax = 1.0;
@@ -341,6 +350,7 @@ static int set_predictions(AppState *state, const char *path) {
                  "Loaded %d predicted lines.", n);
         state->error_message[0] = '\0';
     }
+    ensure_aux_loaded(state);   /* after the messages above: it can add its own */
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
 }
