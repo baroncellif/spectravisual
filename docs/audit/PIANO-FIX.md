@@ -91,7 +91,7 @@ Le domande complete sono nel report ([§12](README.md#12-domande-bloccanti)).
 
 | # | Domanda (breve) | Passi | Risposta | Data |
 |---|---|---|---|---|
-| D1 | Le specie sono molecole diverse o stati vibrazionali dello stesso Hamiltoniano? | #5, #14 | — | — |
+| D1 | Le specie sono molecole diverse o stati vibrazionali dello stesso Hamiltoniano? | #5, #14, #14b | Entrambe: una specie può essere uno stato vibrazionale del modello condiviso (un solo `.par`, NVIB ≥ stati: il modello di oggi) oppure una molecola distinta, con il proprio `.par/.var`, il proprio SPCAT/SPFIT, T rot e cut di intensità propri (SPFIT gestisce al massimo 9 stati per modello). La modalità «molecola distinta» è il passo nuovo #14b. Per #5, con NVIB troppo piccolo: Calculate e Fit rifiutati con il valore minimo nel messaggio. | 2026-09-11 |
 | D2 | Assignment con forma dei QN diversa dal modello: rifiutarli o convertirli, e con quale regola? | #6 (la conversione) | — | — |
 | D3 | Dove salvare le esclusioni dal fit (file di Pred&Fit con chiave = identità)? | #8 | — | — |
 | D4 | CalcIntensity in `assignments.txt`: intensità del catalogo o intensità mostrata? | #9 | — | — |
@@ -126,6 +126,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #12 | Spettri in ordine decrescente | B-42 | alto se i file sono decrescenti | — |
 | #13 | Fit delle intensità: ricerca per identità ed export | B-20, B-41, M-03 | medio | — |
 | #14 | Specie | B-43, B-24, B-19 | medio | D1 |
+| #14b | Specie come molecole distinte | richiesta di D1 | medio | conferma del progetto |
 | #15 | Validazione di parametri e dipoli | B-38, B-51, B-33, U-15 | medio | D10 (parziale) |
 | #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | — |
 | #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | — |
@@ -346,7 +347,7 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     NQN 6 e con ExpInt ≈ 5, lette correttamente.
 - **Documentazione**: report §6.2, §7.1, §7.3, schede B-05…B-08; A4 R-02..R-07
   e R-09.
-- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #5 —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `e428db6` —
   test aggiunti: `test_roundtrip_every_qnfmt`, `test_blend_pair_survives_reload`,
   `test_save_skips_invalid_nqn`, `test_reload_reports_collisions`,
   `test_reload_exp_int_zero`, `test_reader_rejects_lin_file`,
@@ -598,6 +599,37 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     nessuna specie ricavata da F.
 - **Bloccato da**: D1.
 - **Documentazione**: report §4 flusso 6, schede B-19/B-24/B-43; A4 R-32.
+- **Stato**: ☐ non fatto — commit: —
+
+### #14b — Specie come molecole distinte (richiesta di D1)
+
+- **Bug/issue**: risposta a D1 (2026-09-11). Oltre agli stati vibrazionali di un
+  Hamiltoniano condiviso servono specie che siano molecole distinte: ciascuna con
+  il proprio `.par/.var` (riga opzioni e parametri propri), il proprio `.int` (T,
+  FQLIM, cut di intensità) e il proprio SPCAT/SPFIT, anche perché SPFIT gestisce al
+  massimo 9 stati per modello. Le due modalità devono poter convivere.
+- **Cosa fare** (proposta, da confermare con l'utente prima di iniziare):
+  `PickettSpecies` con un tipo (stato del modello condiviso oppure molecola
+  distinta); per ogni molecola distinta una cartella `.fit/species_XX/` con i propri
+  `model.par/.var/.int/.lin`; Calculate esegue SPCAT per il modello condiviso e per
+  ogni molecola e unisce i cataloghi in `.fit/model.cat`, distinguendo la
+  provenienza con il TAG del `.int` (colonne 45–51 del record SPCAT, da conservare in
+  `PredLine`); il riscalamento delle intensità ricava la specie dal TAG per le
+  molecole distinte e da v per gli stati; Fit esegue SPFIT per ogni modello con i
+  soli assignment delle sue righe; la sessione salva tipo, parametri e riga opzioni
+  di ogni molecola.
+- **Test che devono passare**:
+  - `test_species_molecules_separate_models`: due molecole con A/B/C diversi → due
+    SPCAT, catalogo unito con TAG distinti;
+  - `test_species_molecule_own_trot_and_cut`: T rot e cut di intensità di una
+    molecola applicati solo alle sue righe;
+  - `test_fit_per_molecule_uses_own_lines`: il `.lin` di ogni molecola contiene solo
+    i suoi assignment;
+  - `test_species_mixed_states_and_molecules`: stati del modello condiviso e
+    molecole distinte nella stessa sessione.
+- **Bloccato da**: conferma del progetto (formato della sessione, uso del TAG,
+  cartelle di lavoro).
+- **Documentazione**: report §4 flussi 5 e 6, §6.4, §6.5, §6.7, §10; A4 scenario nuovo.
 - **Stato**: ☐ non fatto — commit: —
 
 ### #15 — Validazione di parametri e dipoli

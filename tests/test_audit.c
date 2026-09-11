@@ -1062,6 +1062,120 @@ static int test_reader_legacy_14_and_16(void) {
     DONE();
 }
 
+/* =============================================== #5 NVIB is not rewritten */
+
+/* The PAR option line typed in Advanced > Parameters (predfit.c:1625). */
+static void type_option_line(PredFitState *p, const char *line) {
+    p->advanced_edit_param = -4;
+    snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%s", line);
+    advanced_commit_edit(p);
+}
+
+/* Third line of a .par/.var, or "" when there is none. */
+static void option_line_of(const char *path, char *out, size_t n) {
+    out[0] = '\0';
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[512];
+    for (int k = 0; k < 3 && fgets(line, sizeof(line), f); k++)
+        if (k == 2) { line[strcspn(line, "\r\n")] = '\0'; snprintf(out, n, "%s", line); }
+    fclose(f);
+}
+
+static void check_option_line_files(const char *dir, const char *want) {
+    const char *files[2] = {"model.par", "model.var"};
+    for (int k = 0; k < 2; k++) {
+        char path[900], got[512];
+        snprintf(path, sizeof(path), "%s/.fit/%s", dir, files[k]);
+        option_line_of(path, got, sizeof(got));
+        CHECK(strcmp(got, want) == 0, "%s, riga opzioni: attesa '%s', ottenuta '%s'", files[k], want, got);
+    }
+}
+
+/* T-11, R-08: the NVIB the user typed stays, with 1 and with 3 species, through
+   the commit, write_inputs, a session save and a session load. */
+static int test_nvib_typed_value_kept(void) {
+    static const struct { int species; const char *line; } cases[2] = {{1, "s 1 2 0"}, {3, "s 1 5 0"}};
+    for (int c = 0; c < 2; c++) {
+        char dir[700];
+        snprintf(dir, sizeof(dir), "%s/case%d", g_work, c);
+        mkdir(dir, 0700);
+        AppState *s = new_state();
+        snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", dir);
+        PredFitState *p = &s->predfit;
+        mono_model(p);
+        while (p->n_species < cases[c].species) add_species(s);
+        type_option_line(p, cases[c].line);
+        CHECK(strcmp(p->hamiltonian_line, cases[c].line) == 0, "%d specie, digitato '%s': in memoria '%s'",
+              cases[c].species, cases[c].line, p->hamiltonian_line);
+        CHECK_INT("write_inputs", write_inputs(s, 0), 1);
+        CHECK(strcmp(p->hamiltonian_line, cases[c].line) == 0, "dopo write_inputs: attesa '%s', ottenuta '%s'",
+              cases[c].line, p->hamiltonian_line);
+        check_option_line_files(dir, cases[c].line);
+        predfit_save_session(s);
+        AppState *r = new_state();
+        snprintf(r->settings.data_dir, sizeof(r->settings.data_dir), "%s", dir);
+        predfit_load_session(r);
+        CHECK(strcmp(r->predfit.hamiltonian_line, cases[c].line) == 0, "dopo il caricamento della sessione: attesa '%s', ottenuta '%s'",
+              cases[c].line, r->predfit.hamiltonian_line);
+    }
+    /* adding a species does not touch the line either */
+    AppState *a = new_state();
+    mono_model(&a->predfit);
+    type_option_line(&a->predfit, "s 1 4 0");
+    add_species(a);
+    CHECK(strcmp(a->predfit.hamiltonian_line, "s 1 4 0") == 0, "dopo + species: attesa 's 1 4 0', ottenuta '%s'",
+          a->predfit.hamiltonian_line);
+    DONE();
+}
+
+/* D1 answer: NVIB smaller than the states of the included species rejects
+   Calculate and Fit, says the minimum and writes no Pickett file. */
+static int test_nvib_too_small_rejected(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    add_species(s);
+    add_species(s);                                       /* states 0, 1, 2 */
+    type_option_line(p, "s 1 1 0");
+    CHECK(strcmp(p->hamiltonian_line, "s 1 1 0") == 0, "riga opzioni: attesa 's 1 1 0', ottenuta '%s'", p->hamiltonian_line);
+    CHECK_INT("Calculate", predfit_calculate(s), 0);
+    CHECK(strstr(p->status, "at least 3") != NULL, "stato dopo Calculate: atteso il minimo 'at least 3', ottenuto '%s'", p->status);
+    const char *files[4] = {"model.var", "model.par", "model.int", "model.lin"};
+    for (int k = 0; k < 4; k++)
+        CHECK(access(path_in(work_path(".fit"), files[k]), F_OK) != 0, "%s scritto nonostante il rifiuto", files[k]);
+    set_predictions(s, fx("cat4_1404.cat"));
+    assign_index(s, 0, 2511.34, 1.0);
+    p->status[0] = '\0';
+    CHECK_INT("Fit", predfit_fit(s), 0);
+    CHECK(strstr(p->status, "at least 3") != NULL, "stato dopo Fit: atteso il minimo 'at least 3', ottenuto '%s'", p->status);
+    CHECK_INT("storia di Undo dopo il Fit rifiutato", p->history_count, 0);
+    for (int k = 0; k < 4; k++)
+        CHECK(access(path_in(work_path(".fit"), files[k]), F_OK) != 0, "%s scritto dal Fit rifiutato", files[k]);
+    DONE();
+}
+
+/* CHR, SPIND, KNMIN and the comma form stay exactly as typed. */
+static int test_option_line_other_tokens_kept(void) {
+    static const char *lines[3] = {"s 1 3", "s,1,5,0", "a 2 4 0 1 0"};
+    for (int c = 0; c < 3; c++) {
+        char dir[700];
+        snprintf(dir, sizeof(dir), "%s/case%d", g_work, c);
+        mkdir(dir, 0700);
+        AppState *s = new_state();
+        snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", dir);
+        PredFitState *p = &s->predfit;
+        mono_model(p);
+        add_species(s);
+        add_species(s);
+        type_option_line(p, lines[c]);
+        CHECK(strcmp(p->hamiltonian_line, lines[c]) == 0, "digitato '%s': in memoria '%s'", lines[c], p->hamiltonian_line);
+        CHECK_INT("write_inputs", write_inputs(s, 0), 1);
+        check_option_line_files(dir, lines[c]);
+    }
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -1091,6 +1205,9 @@ static const Test TESTS[] = {
     {"test_reload_exp_int_zero",               test_reload_exp_int_zero},
     {"test_reader_rejects_lin_file",           test_reader_rejects_lin_file},
     {"test_reader_legacy_14_and_16",           test_reader_legacy_14_and_16},
+    {"test_nvib_typed_value_kept",             test_nvib_typed_value_kept},
+    {"test_nvib_too_small_rejected",           test_nvib_too_small_rejected},
+    {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

@@ -1,30 +1,23 @@
 
 ==================== NVIB: third .par line forced to the species count ====================
 init                     : 's 1 1 0'  (state_count=1)
-1 species, typed 's 1 2 0': 's 1 1 0'
+1 species, typed 's 1 2 0': 's 1 2 0'
 after + species (2)      : 's 1 2 0'  (state_count=2)
-after + species (3)      : 's 1 3 0'  (state_count=3)
-3 species, typed s 1 1 0      -> 's 1 3 0'
-3 species, typed s 1 5 0      -> 's 1 3 0'
-3 species, typed a 1 1 0      -> 'a 1 3 0'
-3 species, typed s 1 1        -> 's 1 3 0'
-3 species, typed s 0 1 0 0 1  -> 's 0 3 0 0 1'
-3 species, typed s,1,1,0      -> 's,1,3,0'
+after + species (3)      : 's 1 2 0'  (state_count=3)
+3 species, typed s 1 1 0      -> 's 1 1 0'
+3 species, typed s 1 5 0      -> 's 1 5 0'
+3 species, typed a 1 1 0      -> 'a 1 1 0'
+3 species, typed s 1 1        -> 's 1 1'
+3 species, typed s 0 1 0 0 1  -> 's 0 1 0 0 1'
+3 species, typed s,1,1,0      -> 's,1,1,0'
 -- model.par written by write_inputs (first 3 lines):
-  | SpectraVisual Pred&Fit quick model
-  |    9    0   50    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
-  | s,1,3,0
-  | ...
+  (missing /private/tmp/sv-audit-step5/runs/nvib/.fit/model.par)
 -- session edited by hand; hamiltonian line now:
-  | hamiltonian s 1 1 0
 -- model.par edited by hand (first 3 lines):
-  | SpectraVisual Pred&Fit quick model
-  |    9    0   50    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
-  | s 1 1 0
-  | ...
-after predfit_load_session (session says NVIB=1, 3 molecule2 rows): 's 1 3 0'
+  (missing /private/tmp/sv-audit-step5/runs/nvib/.fit/model.par)
+after predfit_load_session (session says NVIB=1, 3 molecule2 rows): 's 1 1 0'
 -- model.par after the next Calculate/Fit (write_inputs):
   | SpectraVisual Pred&Fit quick model
   |    3    0   50    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
-  | s 1 3 0
+  | s 1 1 0
   | ...

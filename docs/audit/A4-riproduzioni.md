@@ -154,13 +154,15 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
 - Oracolo: il valore digitato dall'utente (o scritto a mano nel file) resta.
 - Osservato:
   ```text
-  1 specie, digitato 's 1 2 0'  -> 's 1 1 0'
-  + specie                      -> 's 1 2 0', 's 1 3 0'
-  3 specie, digitato 's 1 1 0'  -> 's 1 3 0'     's 1 5 0' -> 's 1 3 0'
-  sessione a mano 'hamiltonian s 1 1 0' -> predfit_load_session -> 's 1 3 0'
-  model.par a mano 's 1 1 0'   -> al Calculate successivo 's 1 3 0'
+  1 specie, digitato 's 1 2 0'  -> 's 1 2 0'
+  + specie                      -> 's 1 2 0', 's 1 2 0'
+  3 specie, digitato 's 1 1 0'  -> 's 1 1 0'     's 1 5 0' -> 's 1 5 0'
+  sessione a mano 'hamiltonian s 1 1 0' -> predfit_load_session -> 's 1 1 0'
+  NVIB 1 con 3 specie PRED -> Calculate/Fit rifiutati: "at least 3"; nessun file Pickett
   ```
-- Esito: bug B-02 (è il "valore riportato a 3" del report).
+- Esito: risolto al passo #5. `test_nvib_typed_value_kept`,
+  `test_nvib_too_small_rejected` e `test_option_line_other_tokens_kept` coprono
+  rispettivamente persistenza, rifiuto senza file e token/virgole invariati.
 
 ### R-09 — Formati accettati da `load_existing_assignments` ([formats.log](repro/logs/formats.log))
 - Oracolo: ogni formato storico si legge senza scambiare i campi; ciò che non è un
@@ -501,7 +503,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment | `test_baseline_reassign_updates_obsfreq` |
 | T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | `test_blend_pair_survives_reload` |
 | T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | `test_selection_cleared_on_catalog_change`, `test_selection_indices_in_bounds` |
-| T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza | — |
+| T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato; NVIB insufficiente rifiutato prima di ogni file Pickett | `test_nvib_typed_value_kept`, `test_nvib_too_small_rejected`, `test_option_line_other_tokens_kept` |
 | T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
 | T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |
 | T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | `test_restore_reads_data_dir_list` |

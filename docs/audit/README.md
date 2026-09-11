@@ -67,18 +67,14 @@ Appendici: [A1 funzioni e call graph](A1-funzioni.md) ·
    bloccato per J ≥ 70 ([predfit.c:636-644](../../predfit.c#L636-L644)).
    **Risolto al passo #1**: il parser legge ogni campo alle sue colonne e NQN è
    QNFMT % 10 su ogni riga (R-01 e R-17 rieseguiti: nessuna riga con NQN errato).
-2. **"N riportato a 3" — P0.1 — è NVIB forzato.** La terza riga di `.par`/`.var`
-   (`s 1 3 0` = CHR SPIND **NVIB** KNMIN, `calpgm/spinv.c:2244-2400`) viene
-   riscritta con `state_count` = numero di specie/stati
-   ([predfit.c:102-143](../../predfit.c#L102-L143)) da cinque writer: editing in
-   Advanced ([1228-1238](../../predfit.c#L1228-L1238)), `add_species`
-   ([623](../../predfit.c#L623)), rimozione di una specie ([1662](../../predfit.c#L1662)),
-   `write_inputs` ([647](../../predfit.c#L647)) e `predfit_load_session`
-   ([355](../../predfit.c#L355)). Il `.par` su disco non viene mai riletto.
-   Con le tre specie della sessione attuale NVIB torna sempre a 3 [RIPR R-08].
-   NVIB decide il QNFMT di SPCAT (NVIB=1 → `303`, NVIB=3 → `1404`), quindi il
-   numero di specie cambia forma e identità dei QN di `model.cat` rispetto a un
-   CAT esterno.
+2. **"N riportato a 3" — P0.1 — era NVIB forzato.** Dal passo #5 la riga
+   opzioni `.par`/`.var` è proprietà dell'utente: Advanced, specie, sessione e
+   writer la conservano byte per byte. Prima di Calculate o Fit,
+   `write_inputs` legge solo NVIB e rifiuta, senza creare `.fit` o file Pickett,
+   un valore minore del massimo stato incluso. NVIB continua a decidere QNFMT
+   (1 → `303`, 3 → `1404`), ma aggiungere o rimuovere una specie non lo cambia
+   più [RIPR R-08; `test_nvib_typed_value_kept`,
+   `test_nvib_too_small_rejected`, `test_option_line_other_tokens_kept`].
 3. **Pred&Fit reinterpreta gli assignment — P1.** `write_inputs` scrive nel
    `.lin` il NQN di ogni assignment così com'è ([predfit.c:696-706](../../predfit.c#L696-L706)),
    ma SPFIT legge ogni riga con il NQN del proprio `.par` (`calpgm/calfit.c:147-153`,
@@ -270,7 +266,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `predfit.param[]`, `n_param` | modello Pred&Fit | `PredFitState` | init, `add_species`, add/delete, Advanced, `import_fitted_parameters`, `sync_basic_parameters`, `predfit_load_session` (errori), Undo | `write_inputs`, Advanced | valori solo in `model.var`; errori in sessione | due fonti per lo stesso parametro |
 | `predfit.a/b/c` | vista rapida della specie attiva | `PredFitState` | init, pannello, `sync_basic_from_parameters`, Undo | `sync_basic_parameters`, Q rot, render | — | copia dei parametri |
 | `predfit.mu`, `predfit.temp_k` | vista rapida di `species[active]` | `PredFitState` | pannello, `load_active_species`, `predfit_adopt_shared_state`, `import_int_settings`, Undo, init | `store_active_species`, `.int`, `predfit_publish_shared_state` | via righe `molecule2` | 6 writer; restore (B-18) |
-| `predfit.hamiltonian_line` | riga opzioni `.par/.var` | `PredFitState` | init `s 1 1 0`, sessione, Advanced, `update_hamiltonian_nstates`, Undo | `write_inputs`, sessione, render | sessione | **NVIB forzato (B-02)** |
+| `predfit.hamiltonian_line` | riga opzioni `.par/.var` | `PredFitState` | init `s 1 1 0`, sessione, Advanced, Undo | `write_inputs` (sola validazione), sessione, render | sessione | NVIB resta quello digitato; Calculate/Fit rifiutati se < massimo stato incluso (B-02 risolto) |
 | `predfit.species[]`, `n_species`, `active_species` | Pred&Fit (specie = stati vibrazionali) | `PredFitState` | init, `add_species`, rimozione, sessione, Undo, `store_active_species`, Advanced | `write_inputs`, `rescale_by_species`, `state_count`, sessione | sessione | specie trattate come stati v di un unico Hamiltoniano |
 | `predfit.int_settings` | scheda `.int` | `PredFitState` | init, sessione (`int2`), `import_int_settings`, Advanced, Undo | `write_int_header`, Q rot, render | sessione + `model.int` | al restore vince `model.int` (B-18) |
 | `predfit.line_error_mhz` | Pred&Fit | `PredFitState` | init, default di Settings, Advanced, Undo | writer `.lin` | **non salvato** in sessione | soglia della sentinella (B-09) |
@@ -447,10 +443,10 @@ effetti residui:
 pannello Pred&Fit [controller.c:539-549] → campi A B C μa μb μc T Start End → commit [952-960]
   (μ e T: predfit_publish_shared_state; A B C: solo campi rapidi, entrano nei parametri al prossimo write_inputs)
 Advanced > Parameters
-  riga opzioni: advanced_commit_edit [predfit.c:1228-1238] → set_hamiltonian_nstates(candidate, state_count) → NVIB = numero di stati
+  riga opzioni: advanced_commit_edit [predfit.c] → hamiltonian_line = testo valido digitato (CHR, SPIND, NVIB e token successivi invariati)
   tabella: advanced_commit_edit [1272-1293] → param[]; sync_basic_from_parameters
 Advanced > Species
-  + species: add_species [595-627] → nuovo stato v, parametri 10000+11v, 20000+11v, 30000+11v, NVIB forzato, publish
+  + species: add_species [predfit.c] → nuovo stato v, parametri 10000+11v, 20000+11v, 30000+11v; la riga opzioni non cambia, publish
   celle .int: [1203-1227]; campi specie: [1239-1262] → intensity_dirty → publish [1584-1592]
 
 Calculate (pannello [controller.c:544], Advanced [1639]/[1685], Undo [1029])
@@ -458,8 +454,8 @@ Calculate (pannello [controller.c:544], Advanced [1639]/[1685], Undo [1029])
       predfit_publish_shared_state [363-378]: store_active_species; rot_temp_k, dipole_red ← Pred&Fit;
         riscalamento del catalogo MOSTRATO (per specie se generato, altrimenti a specie singola)
       write_inputs(for_fit=0) [629-710]
-        prepare_fit_dir (mkdir data_dir/.fit) [76-86]; store_active_species; sync_basic_parameters [506-513];
-        update_hamiltonian_nstates [647] (NVIB); predfit_save_session [648]
+        legge NVIB dalla riga opzioni e richiede NVIB ≥ massimo stato PRED; se fallisce: stato esplicito, nessuna `.fit`/file Pickett (B-02 risolto)
+        prepare_fit_dir (mkdir data_dir/.fit); store_active_species; sync_basic_parameters; predfit_save_session
         model.var: titolo, "NPAR NLINE=0 NITR=0 ...", riga opzioni, parametri [667-675]
         model.par: stessa cosa con NITR=50
         model.int: write_multi_state_int [393-411] (solo specie PRED; ID 110·v + 1..3; TEMP/FQLIM/MAXV risolti)
@@ -501,9 +497,9 @@ rifiutate da SPFIT → nessun segnale (B-22).
 ```text
 specie incluse/escluse: colonna PRED [predfit.c:1666-1667] → predict_enabled
   → write_multi_state_int scrive solo le specie PRED [397-409]; species_XX.int scritti per tutte
-  → state_count (NVIB) conta anche le escluse [102-107]; MAXV automatico = state_count − 1 [64-66]
+  → included_state_count (solo PRED) stabilisce il minimo NVIB per Calculate/Fit; MAXV automatico = state_count − 1 [predfit.c]
 cambio della specie attiva: USE → select_species [585-593] → store/load_active_species, sync_basic_from_parameters, publish
-rimozione: × [1658-1663] → specie compattate, NVIB ricalcolato, parametri della specie rimossa lasciati nella tabella
+rimozione: × → specie compattate, riga opzioni invariata, parametri della specie rimossa lasciati nella tabella
 riscalamento: rescale_predicted_intensities_by_species [loader.c:390-427]
   stato di ogni riga = M1u se n_qn ≥ 4, altrimenti 0 → specie con quello state_index → Tred e concentrazione
 
@@ -1151,7 +1147,8 @@ flowchart LR
   S_PARAM["S_PARAM param"] -->|"D·CP"| F_PARW["F_PARW writer .par .var"]
   S_QUICK["S_QUICK a, b, c della specie attiva"] -->|"D·OVW sync_basic_parameters"| S_PARAM
   S_HAM["S_HAM riga opzioni"] -->|"D·CP"| F_PARW
-  S_SPECIES["S_SPECIES specie"] -->|"D·OVW NVIB = state_count"| S_HAM
+  S_SPECIES["S_SPECIES specie PRED"] -->|"D·R minimo NVIB"| F_WRITEIN["F_WRITEIN write_inputs"]
+  S_HAM["S_HAM riga opzioni"] -->|"D·R NVIB, testo invariato"| F_WRITEIN
   S_SPECIES -->|"D·TR ID 110·v + asse"| F_INTW["F_INTW writer .int"]
   S_INTS["S_INTS int_settings"] -->|"D"| F_INTW
   F_LINW -->|"P·OVW"| FILE_LIN["model.lin"]
@@ -1180,14 +1177,14 @@ flowchart LR
   UI_TABLE["UI_A_PAR tabella parametri"] -->|"S·UPD"| S_PARAM["S_PARAM param"]
   S_PARAM -->|"D·CP sync_basic_from_parameters"| S_QUICK
   S_QUICK -->|"D·OVW sync_basic_parameters a ogni write_inputs"| S_PARAM
-  UI_HAM["UI_A_PAR riga opzioni"] -->|"S·OVW NVIB forzato"| S_HAM["S_HAM"]
+  UI_HAM["UI_A_PAR riga opzioni"] -->|"S·OVW testo digitato"| S_HAM["S_HAM"]
   S_PARAM -->|"P·OVW"| FILE_PARVAR["model.par, model.var"]
   S_HAM -->|"P·OVW"| FILE_PARVAR
   FILE_PARVAR -->|"D·R parametri, mai la riga opzioni"| F_IMPPAR["F_IMPPAR import_fitted_parameters"]
   F_IMPPAR -->|"D·UPD"| S_PARAM
   S_PARAM -->|"P errori"| FILE_STATE["spectravisual.state"]
   S_HAM -->|"P"| FILE_STATE
-  FILE_STATE -->|"P·R errori, riga opzioni con NVIB forzato"| S_PARAM
+  FILE_STATE -->|"P·R errori e riga opzioni invariata"| S_PARAM
   FILE_PARVAR -->|"D·R"| X_SPCAT["X_SPCAT"]
   X_SPCAT -->|"P·OVW"| FILE_MODELCAT["model.cat"]
 
@@ -1195,9 +1192,11 @@ flowchart LR
   class S_HAM,S_QUICK bad
 ```
 
-Una modifica fatta a mano in `model.par` viene sovrascritta al Calculate/Fit
-successivo e non viene mai letta ([RIPR R-08]): la fonte autorevole della riga
-opzioni è la memoria, corretta da `update_hamiltonian_nstates`.
+Una modifica fatta a mano in `model.par` viene ancora sovrascritta al
+Calculate/Fit successivo e non viene mai letta ([RIPR R-08]): la fonte
+autorevole della riga opzioni è la memoria, ma dal passo #5 coincide esattamente
+con il testo digitato o ripristinato dalla sessione. `write_inputs` ne legge
+NVIB soltanto per rifiutare un valore minore del massimo stato PRED.
 
 #### D9e — fit delle intensità ↔ spettro ↔ assignment ↔ catalogo ↔ dipoli, temperature, concentrazioni
 
@@ -1452,7 +1451,7 @@ in varianti diverse (3 o 4 QN, spaziature diverse) e non sono scritti dall'app.
 |---|---|---|---|
 | 1 | titolo `SpectraVisual Pred&Fit quick model` | titolo | — |
 | 2 | `%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f`: NPAR, NLINE (`n_assignments` per il Fit, 0 per Calculate), NITR (50 in `.par`, 0 in `.var`), NXPAR 0, MARQP 0, ERRTST 1e6, PARFAC 1, FQFAC 1 | NPAR, NLINE (negativo → formato QN esteso), NITR, NXPAR, MARQP, ERRTST (se ~0 → 1e6, `calfit.c:218-219`), PARFAC, FQFAC | — |
-| 3 | `hamiltonian_line` (**NVIB forzato**, B-02) | riga opzioni: CHR SPIND **NVIB** KNMIN … (`calpgm/spinv.c:2244-2400`; NVIB ≤ 0 → 1) | mai letta: la riga viene dalla sessione |
+| 3 | `hamiltonian_line`, invariata (B-02 risolto) | riga opzioni: CHR SPIND **NVIB** KNMIN … (`calpgm/spinv.c:2244-2400`; NVIB ≤ 0 → 1) | mai letta: la riga viene dalla sessione; l'app valida NVIB ≥ massimo stato PRED prima di scrivere |
 | 4… | `%12d % .15E % .8E /label/` | ID BCD, valore, errore a priori | `import_fitted_parameters` [723-741](../../predfit.c#L723-L741): solo righe con `/`, solo **valore** da `model.var` |
 
 ID dei parametri per stato: suffisso `11·v` ([predfit.c:97-100](../../predfit.c#L97-L100),
@@ -1640,6 +1639,13 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-02"></a>
 ### B-02 — Il campo N (NVIB) della riga opzioni è sempre riportato al numero di specie
 
+- **Stato: risolto** nel commit del passo #5 — nuova logica:
+  `hamiltonian_nvib` legge NVIB senza riscrivere `hamiltonian_line`; Advanced,
+  add/remove specie e restore conservano il testo. `write_inputs` controlla
+  prima di `prepare_fit_dir` che NVIB sia almeno il massimo stato con PRED
+  attivo e, se non lo è, rifiuta Calculate/Fit senza file Pickett. Test:
+  `test_nvib_typed_value_kept`, `test_nvib_too_small_rejected`,
+  `test_option_line_other_tokens_kept`; R-08 rieseguito.
 - **Gravità** critica · **P0.1** · [FATTO] + [RIPR R-08]
 - **Dove**: `state_count` [predfit.c:102-107](../../predfit.c#L102-L107),
   `set_hamiltonian_nstates` [112-138](../../predfit.c#L112-L138),
@@ -1699,7 +1705,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-05"></a>
 ### B-05 — Il writer di `assignments.txt` scrive i QN secondo un NQN non affidabile
 
-- **Stato: risolto** in (commit del passo #4) — nuova logica: `save_assignments`
+- **Stato: risolto** in `e428db6` — nuova logica: `save_assignments`
   ([controller.c:94-136](../../controller.c#L94-L136)) non scrive una riga senza NQN
   valido ([112](../../controller.c#L112)) e riporta quante ne ha lasciate fuori
   ("Assignments saved without N rows whose NQN is unknown…", [133](../../controller.c#L133));
@@ -1720,7 +1726,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-06"></a>
 ### B-06 — Transizioni diverse fuse dalla deduplicazione dopo il troncamento
 
-- **Stato: risolto** in (commit del passo #4) — nuova logica: la causa, il troncamento
+- **Stato: risolto** in `e428db6` — nuova logica: la causa, il troncamento
   da B-01, è risolta al passo #1; in lettura una transizione ripetuta è contata e
   segnalata nella barra del titolo e vince l'ultima occorrenza (`load_assignments_file`
   [loader.c:710-748](../../loader.c#L710-L748)); le righe troncate da B-01 ancora nei
@@ -1743,7 +1749,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-07"></a>
 ### B-07 — `exp_int` riceve l'intensità calcolata al riavvio
 
-- **Stato: risolto** in (commit del passo #4) — nuova logica: il file non contiene
+- **Stato: risolto** in `e428db6` — nuova logica: il file non contiene
   l'intensità osservata, quindi `exp_int` di una riga del formato nuovo è 0 (le righe
   legacy tengono il proprio ExpInt); CalcIntensity resta in `pred.linear_int`. Test:
   `test_reload_exp_int_zero`.
@@ -1757,7 +1763,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-08"></a>
 ### B-08 — Formato di `assignments.txt` ambiguo con `.lin` e con i formati precedenti
 
-- **Stato: risolto** in (commit del passo #4) — nuova logica: il writer scrive
+- **Stato: risolto** in `e428db6` — nuova logica: il writer scrive
   l'intestazione `# SpectraVisual assignments, format 1: … (SPFIT .lin order) …`
   ([controller.c:103](../../controller.c#L103)); il lettore riconosce il formato nuovo
   solo da quell'intestazione (anche senza versione, come la scriveva `1f4df65`) e,
@@ -2589,7 +2595,7 @@ regressioni sono possibili.
 | Bug | Codice da toccare | Chiamanti e persistenze che dipendono | Regressioni possibili | Test |
 |---|---|---|---|---|
 | B-01, B-03, B-04 (risolti al passo #1, con B-25) | `parse_cat_record`, `parse_qn2`, controllo di lunghezza | `read_pred_cat(_alloc)` ← `set_predictions` (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di `n_qn`: `same_assignment_transition`, `current_assignment_prediction`, `same_qn`, `rescale_by_species`, `write_inputs` (controllo e writer), *Save all*, `format_pred_qn`, `format_assignment_qn`; file `assignments.txt` esistenti con righe troncate | le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT | T-01..T-07 |
-| B-02 | `update_hamiltonian_nstates` e i suoi 5 chiamanti | `write_multi_state_int` (ID per v ≥ NVIB), `int_maxv_at`, `rescale_by_species` (stato da `M1u`), QNFMT di `model.cat`, identità degli assignment su `model.cat`, sessione (`hamiltonian`) | un NVIB minore del numero di specie produce parametri e dipoli per stati inesistenti; cambia NQN delle righe generate | T-11, T-13 |
+| B-02 (risolto al passo #5) | `hamiltonian_nvib`, `included_state_count`, `write_inputs` | `write_multi_state_int` (ID per v ≥ NVIB), QNFMT di `model.cat`, identità delle righe, sessione (`hamiltonian`) | un NVIB minore del massimo stato PRED rifiuta Calculate/Fit prima di creare `.fit`; la riga digitata non è mai normalizzata | T-11, R-08 |
 | B-05, B-06, B-08 (risolti al passo #4, con B-07) | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
 | B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |
 | B-10 (risolto al passo #3) | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
@@ -2700,7 +2706,7 @@ fittato) e vanno applicate subito dopo la 1.1:
 | 1.1 | lettura di QNFMT a colonne fisse; QN come `readqn`; righe corte accettate | `loader.c:11-15`, `54-65`, `239`, `291` | T-01..T-05: istogramma di R-01 corretto; R-02..R-07 identici dopo il riavvio |
 | 1.2 | niente fallback 3: assignment con NQN non valido rifiutati con messaggio | `controller.c:303-304` | T-07 |
 | 1.3 | selezione azzerata a ogni cambio di catalogo; controllo del limite nel render | `main.c:288-329`, `view.c:1815` | T-10, R-10 |
-| 1.4 | NVIB non più riscritto: validazione e messaggio | `predfit.c:112-143` e 5 chiamanti | T-11, R-08 (il valore digitato resta) |
+| 1.4 | NVIB non più riscritto: validazione e messaggio | `hamiltonian_nvib`, `included_state_count`, `write_inputs` | T-11, R-08 (il valore digitato resta; valore insufficiente rifiutato senza file) |
 | 1.5 | controllo NQN assignment ↔ modello prima del Fit; conteggio di Bad Line / rifiutate / divergenza nello stato | `predfit.c:629-710`, `743-764` | T-16, R-11 (rifiuto esplicito, nessuna riga silenziosa) |
 | 1.6 | righe escluse fuori dal `.lin`, esclusioni salvate per identità | `predfit.c:688-707`, `814-944` | T-12, T-15, R-15 |
 | 1.7 | `import_fit_lines` legge `assignments.txt` da `data_dir` | `predfit.c:893` | T-14 |

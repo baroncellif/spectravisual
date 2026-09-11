@@ -106,12 +106,13 @@ static int state_count(const PredFitState *p) {
     return count;
 }
 
-/* Third Pickett option-line field after CHR and SPIND is NVIB.  Replace only
-   that integer, retaining everything after it (KNMIN, spin weights, DIAG,
-   commas, etc.) exactly as the user wrote it. */
-static int set_hamiltonian_nstates(char *line, size_t line_size, int nstates) {
-    if (!line || !line[0] || nstates < 1) return 0;
-    char *q = line;
+/* The third Pickett option-line field after CHR and SPIND is NVIB.  It is a
+   user-owned setting, not a mirror of the rows in species[].  Parse just
+   enough of the line to validate it, accepting both blank and comma fields
+   without changing its spelling or any trailing Pickett options. */
+static int hamiltonian_nvib(const char *line, int *out) {
+    if (!line || !line[0] || !out) return 0;
+    const char *q = line;
     while (*q == ' ' || *q == '\t') q++;
     if (!*q) return 0;
     q++; /* CHR */
@@ -121,25 +122,19 @@ static int set_hamiltonian_nstates(char *line, size_t line_size, int nstates) {
     if (end == q) return 0;
     q = end;
     while (*q == ' ' || *q == '\t' || *q == ',') q++;
-    char *nvib = q;
-    strtol(q, &end, 10);
-    if (end == q) return 0;
-    char updated[256];
-    int prefix = (int)(nvib - line);
-    if (prefix < 0 || prefix >= (int)sizeof(updated)) return 0;
-    /* Keep the minimal standard form complete: CHR SPIND NVIB KNMIN. */
-    const char *tail = end;
-    while (*tail == ' ' || *tail == '\t') tail++;
-    if (!*tail) snprintf(updated, sizeof(updated), "%.*s%d 0", prefix, line, nstates);
-    else        snprintf(updated, sizeof(updated), "%.*s%d%s", prefix, line, nstates, end);
-    if (strlen(updated) >= line_size) return 0;
-    snprintf(line, line_size, "%s", updated);
+    errno = 0;
+    long nvib = strtol(q, &end, 10);
+    if (end == q || errno == ERANGE || nvib < 1 || nvib > INT_MAX) return 0;
+    *out = (int)nvib;
     return 1;
 }
 
-static void update_hamiltonian_nstates(PredFitState *p) {
-    if (!set_hamiltonian_nstates(p->hamiltonian_line, sizeof(p->hamiltonian_line), state_count(p)))
-        snprintf(p->hamiltonian_line, sizeof(p->hamiltonian_line), "s 1 %d 0", state_count(p));
+static int included_state_count(const PredFitState *p) {
+    int count = 1;
+    for (int i = 0; i < p->n_species; i++)
+        if (p->species[i].predict_enabled && p->species[i].state_index + 1 > count)
+            count = p->species[i].state_index + 1;
+    return count;
 }
 
 /* The quick controls remain a view of the selected species.  The global
@@ -352,7 +347,6 @@ void predfit_load_session(AppState *s) {
         p->n_species = 1;
     }
     if (p->active_species < 0 || p->active_species >= p->n_species) p->active_species = 0;
-    update_hamiltonian_nstates(p);
     load_active_species(p);
 }
 
@@ -620,7 +614,6 @@ static void add_species(AppState *s) {
         parameter_label(x);
     }
     p->active_species = p->n_species++;
-    update_hamiltonian_nstates(p);
     load_active_species(p);
     sync_basic_from_parameters(p);
     predfit_publish_shared_state(s);
@@ -628,7 +621,19 @@ static void add_species(AppState *s) {
 
 static int write_inputs(AppState *s, int for_fit) {
     PredFitState *p = &s->predfit;
-    if (!prepare_fit_dir(s)) return 0;
+    int nvib = 0;
+    int required_nvib = included_state_count(p);
+    if (!hamiltonian_nvib(p->hamiltonian_line, &nvib)) {
+        snprintf(p->status, sizeof(p->status),
+                 "Hamiltonian option line has no valid NVIB (third field). ");
+        return 0;
+    }
+    if (nvib < required_nvib) {
+        snprintf(p->status, sizeof(p->status),
+                 "Hamiltonian NVIB %d is too small: at least %d is required for the included species.",
+                 nvib, required_nvib);
+        return 0;
+    }
     store_active_species(p);
     /* A .lin must contain one observation per quantum-number transition.
        This also repairs any duplicate rows produced by older app versions. */
@@ -643,8 +648,8 @@ static int write_inputs(AppState *s, int for_fit) {
             }
         }
     }
+    if (!prepare_fit_dir(s)) return 0;
     sync_basic_parameters(p);
-    update_hamiltonian_nstates(p);
     predfit_save_session(s);
     char var_path[600], int_path[600], par_path[600], lin_path[600];
     work_file(p,"model.var",var_path,sizeof(var_path)); work_file(p,"model.int",int_path,sizeof(int_path));
@@ -1264,7 +1269,8 @@ static void advanced_commit_edit(PredFitState *p) {
     if (p->advanced_edit_param == -4) {
         char candidate[sizeof(p->hamiltonian_line)];
         snprintf(candidate, sizeof(candidate), "%s", p->advanced_edit_buf);
-        if (set_hamiltonian_nstates(candidate, sizeof(candidate), state_count(p)))
+        int nvib = 0;
+        if (hamiltonian_nvib(candidate, &nvib))
             snprintf(p->hamiltonian_line, sizeof(p->hamiltonian_line), "%s", candidate);
         p->advanced_edit_param = -1;
         p->advanced_edit_replace = 0;
@@ -1695,7 +1701,6 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                     for (int i = row; i < p->n_species - 1; i++) p->species[i] = p->species[i + 1];
                     p->n_species--;
                     if (p->active_species >= p->n_species) p->active_species = p->n_species - 1;
-                    update_hamiltonian_nstates(p);
                     load_active_species(p); sync_basic_from_parameters(p); predfit_publish_shared_state(s);
                 } else if (x < adv_col(u.table, 0.10)) {
                     select_species(s, row);
