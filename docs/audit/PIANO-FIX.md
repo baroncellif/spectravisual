@@ -129,7 +129,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #14b | Specie come molecole distinte | richiesta di D1 | medio | conferma del progetto |
 | #15 | Validazione di parametri e dipoli | B-38, B-51, B-33, U-15 | medio | D10 (parziale) |
 | #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | fatto `656a1ab` |
-| #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | — |
+| #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | parziale `ccc80ba` |
 | #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | — |
 | #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | — |
 | #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | — |
@@ -733,7 +733,10 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_calculate_and_drop_same_frame`: nessuna richiesta persa, ordine
     rispettato.
 - **Documentazione**: report §5.2, schede B-14/B-29/B-34; A3 U-17; A4 R-19 e R-24.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ◐ fix parziale il 2026-09-12 — commit codice: `ccc80ba` — test
+  aggiunto: `test_remove_spectrum_keeps_active` (suite 49/49 PASS). La rimozione
+  precedente alla traccia attiva ne conserva l’identità; la coda FIFO per drop e
+  Calculate resta da implementare.
 
 ### #18 — Impostazioni e persistenza di Pred&Fit
 
