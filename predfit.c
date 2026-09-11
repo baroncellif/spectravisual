@@ -777,6 +777,31 @@ static int have_parameter_id(const PredFitState *p, int id) {
     return 0;
 }
 
+static int validate_model_parameters(PredFitState *p) {
+    for (int i = 0; i < p->n_param; i++) {
+        if (p->param[i].id <= 0) {
+            snprintf(p->status, sizeof(p->status), "Parameter row %d has no valid positive ID.", i + 1);
+            return 0;
+        }
+        for (int j = 0; j < i; j++) if (p->param[j].id == p->param[i].id) {
+            snprintf(p->status, sizeof(p->status), "Parameter ID %d is duplicated (rows %d and %d).",
+                     p->param[i].id, j + 1, i + 1);
+            return 0;
+        }
+    }
+    const int base[3] = {10000, 20000, 30000};
+    const char *name[3] = {"A", "B", "C"};
+    for (int i = 0; i < p->n_species; i++) {
+        if (!p->species[i].predict_enabled) continue;
+        int suffix = 11 * p->species[i].state_index;
+        for (int k = 0; k < 3; k++) if (!have_parameter_id(p, base[k] + suffix)) {
+            snprintf(p->status, sizeof(p->status), "Calculate/Fit refused: species %d is missing %s.", i + 1, name[k]);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void select_species(AppState *s, int index) {
     PredFitState *p = &s->predfit;
     if (index < 0 || index >= p->n_species || index == p->active_species) return;
@@ -837,6 +862,7 @@ static int write_inputs(AppState *s, int for_fit) {
                  nvib, required_nvib);
         return 0;
     }
+    if (!validate_model_parameters(p)) return 0;
     store_active_species(p);
     /* A .lin must contain one observation per quantum-number transition.
        This also repairs any duplicate rows produced by older app versions. */
@@ -1570,7 +1596,8 @@ static void advanced_commit_edit(PredFitState *p) {
         long id = strtol(p->advanced_edit_buf, &end, 10);
         while (end && (*end == ' ' || *end == '\t')) end++;
         if (end != p->advanced_edit_buf && end && *end == '\0' && errno != ERANGE &&
-            id > 0 && id <= INT_MAX) x->id = (int)id;
+            id > 0 && id <= INT_MAX && ((int)id == x->id || !have_parameter_id(p, (int)id))) x->id = (int)id;
+        else snprintf(p->status, sizeof(p->status), "Parameter ID must be positive and unique.");
     } else {
         char *end = NULL; double v = strtod(p->advanced_edit_buf, &end);
         if (end != p->advanced_edit_buf && isfinite(v) &&

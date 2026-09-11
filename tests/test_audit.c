@@ -1276,6 +1276,30 @@ static int test_option_line_other_tokens_kept(void) {
     DONE();
 }
 
+static int test_param_id_zero_or_duplicate_rejected(void) {
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    add_parameter(&s->predfit);
+    CHECK_INT("ID zero rifiutato prima dei file", write_inputs(s, 0), 0);
+    CHECK(strstr(s->predfit.status, "positive ID") != NULL, "stato ID zero: '%s'", s->predfit.status);
+    s->predfit.advanced_edit_param = s->predfit.n_param - 1;
+    s->predfit.advanced_edit_col = 0;
+    snprintf(s->predfit.advanced_edit_buf, sizeof(s->predfit.advanced_edit_buf), "10000");
+    advanced_commit_edit(&s->predfit);
+    CHECK_INT("ID duplicato non inserito", s->predfit.param[s->predfit.n_param - 1].id, 0);
+    CHECK(strstr(s->predfit.status, "unique") != NULL, "stato ID duplicato: '%s'", s->predfit.status);
+    DONE();
+}
+
+static int test_calculate_requires_abc(void) {
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    delete_parameter(&s->predfit, 0);                    /* A / 10000 */
+    CHECK_INT("Calculate bloccato senza A", write_inputs(s, 0), 0);
+    CHECK(strstr(s->predfit.status, "missing A") != NULL, "stato senza A: '%s'", s->predfit.status);
+    DONE();
+}
+
 /* ========================================================= #6 Fit and NQN */
 
 /* T-16, R-11: the current model catalogue is the authority for the SPFIT
@@ -1600,6 +1624,8 @@ static const Test TESTS[] = {
     {"test_nvib_typed_value_kept",             test_nvib_typed_value_kept},
     {"test_nvib_too_small_rejected",           test_nvib_too_small_rejected},
     {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
+    {"test_param_id_zero_or_duplicate_rejected", test_param_id_zero_or_duplicate_rejected},
+    {"test_calculate_requires_abc",            test_calculate_requires_abc},
     {"test_fit_rejects_nqn_mismatch",          test_fit_rejects_nqn_mismatch},
     {"test_fit_status_counts_spfit_diagnostics", test_fit_status_counts_spfit_diagnostics},
     {"test_fitting_tab_row_states",            test_fitting_tab_row_states},
