@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "settings.h"
 #include <limits.h>
@@ -1030,10 +1031,35 @@ static int write_inputs(AppState *s, int for_fit) {
    must be explicitly invalidated after every successful run. */
 static void report_invalidate(void);
 
-static int run(const char *cmd, PredFitState *p, const char *what) {
-    int rc = system(cmd);
-    if (rc != 0) { snprintf(p->status, sizeof(p->status), "%s failed (exit %d).", what, rc); return 0; }
-    return 1;
+/* Run Pickett directly: command strings route paths through a shell, which
+   breaks a perfectly valid work directory containing spaces or apostrophes. */
+static int run_program(const char *program, const char *work_dir,
+                       PredFitState *p, const char *what) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        snprintf(p->status, sizeof(p->status), "%s could not start: %s.", what, strerror(errno));
+        return 0;
+    }
+    if (pid == 0) {
+        if (chdir(work_dir) != 0) _exit(127);
+        char *const argv[] = {(char *)program, "model", NULL};
+        execv(program, argv);
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        snprintf(p->status, sizeof(p->status), "%s could not be waited for: %s.", what, strerror(errno));
+        return 0;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 1;
+    if (WIFEXITED(status))
+        snprintf(p->status, sizeof(p->status), "%s failed (exit %d).", what, WEXITSTATUS(status));
+    else if (WIFSIGNALED(status))
+        snprintf(p->status, sizeof(p->status), "%s failed (signal %d).", what, WTERMSIG(status));
+    else
+        snprintf(p->status, sizeof(p->status), "%s failed.", what);
+    return 0;
 }
 
 static void import_fitted_parameters(PredFitState *p) {
@@ -1349,10 +1375,9 @@ int predfit_calculate_all_species(AppState *s) {
         return 0;
     }
 
-    char model_cat[600], cmd[700];
+    char model_cat[600];
     work_file(p, "model.cat", model_cat, sizeof(model_cat));
-    snprintf(cmd, sizeof(cmd), "cd %s && \"%s\" model", p->work_dir, s->settings.spcat_path);
-    if (!run(cmd, p, "SPCAT")) return 0;
+    if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT")) return 0;
     app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, model_cat, 1);
     p->generated_catalog_pending = 1;
     snprintf(p->status, sizeof(p->status), "SPCAT complete: multi-state model written to model.cat.");
@@ -1365,18 +1390,16 @@ int predfit_fit(AppState *s) {
     predfit_publish_shared_state(s);
     if (!push_fit_snapshot(s)) return 0;
     if (!write_inputs(s, 1)) { p->history_count--; return 0; }
-    char cmd[700], cat_path[600];
+    char cat_path[600];
     if (!have_program(s->settings.spfit_path) || !have_program(s->settings.spcat_path)) {
         snprintf(p->status, sizeof(p->status), "Set the SPFIT and SPCAT programs in Settings > Paths.");
         p->history_count--;
         return 0;
     }
-    snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spfit_path);
-    if (!run(cmd, p, "SPFIT")) { p->history_count--; return 0; }
+    if (!run_program(s->settings.spfit_path, p->work_dir, p, "SPFIT")) { p->history_count--; return 0; }
     report_invalidate();
     import_fitted_parameters(p);
-    snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spcat_path);
-    if (!run(cmd, p, "SPCAT after fit")) return 0;
+    if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT after fit")) return 0;
     work_file(p,"model.cat",cat_path,sizeof(cat_path));
     app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     p->generated_catalog_pending = 1;

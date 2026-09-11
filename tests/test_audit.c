@@ -1444,6 +1444,52 @@ static int test_exports_go_to_data_dir(void) {
     DONE();
 }
 
+static int make_mock_program(const char *path, int exit_code) {
+    FILE *fp = fopen(path, "w");
+    if (!fp) return 0;
+    fprintf(fp, "#!/bin/sh\nexit %d\n", exit_code);
+    return fclose(fp) == 0 && chmod(path, 0700) == 0;
+}
+
+/* T-21, R-18: no shell is involved, so both the work directory and executable
+   path may contain shell-sensitive characters. */
+static int test_spaces_and_quotes_in_data_dir(void) {
+    char data_dir[700];
+    snprintf(data_dir, sizeof(data_dir), "%s/data dir with ' quote", g_work);
+    CHECK_INT("crea data_dir", mkdir(data_dir, 0700), 0);
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", data_dir);
+    char spcat[700], spfit[700];
+    snprintf(spcat, sizeof(spcat), "%s/mock SPCAT", g_work);
+    snprintf(spfit, sizeof(spfit), "%s/mock SPFIT", g_work);
+    CHECK(make_mock_program(spcat, 0), "mock SPCAT non creato");
+    CHECK(make_mock_program(spfit, 0), "mock SPFIT non creato");
+    snprintf(s->settings.spcat_path, sizeof(s->settings.spcat_path), "%s", spcat);
+    snprintf(s->settings.spfit_path, sizeof(s->settings.spfit_path), "%s", spfit);
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, 3000.01, 1.0);
+    CHECK_INT("Calculate con percorso quotato", predfit_calculate(s), 1);
+    char model_cat[800];
+    snprintf(model_cat, sizeof(model_cat), "%s/.fit/model.cat", data_dir);
+    CHECK(copy_path(fx("cat3_303.cat"), model_cat), "CAT corrente non copiato per Fit");
+    CHECK_INT("Fit con percorso quotato", predfit_fit(s), 1);
+    DONE();
+}
+
+/* M-01: report the program's real exit value, rather than system()'s encoded
+   wait status (for example 256 for exit 1). */
+static int test_process_exit_status_decoded(void) {
+    char program[700];
+    snprintf(program, sizeof(program), "%s/exit one", g_work);
+    CHECK(make_mock_program(program, 1), "mock exit 1 non creato");
+    PredFitState p = {0};
+    CHECK_INT("processo fallisce", run_program(program, g_work, &p, "Mock program"), 0);
+    CHECK(strstr(p.status, "exit 1") != NULL, "stato: %s", p.status);
+    CHECK(strstr(p.status, "256") == NULL, "stato codificato: %s", p.status);
+    DONE();
+}
+
 static void queue_secondary_text(Uint32 window_id, const char *text) {
     SDL_Event e; memset(&e, 0, sizeof(e));
     e.type = SDL_TEXTINPUT; e.text.windowID = window_id;
@@ -1823,6 +1869,8 @@ static const Test TESTS[] = {
     {"test_line_error_persists",               test_line_error_persists},
     {"test_calculate_after_fit_keeps_fitted_var", test_calculate_after_fit_keeps_fitted_var},
     {"test_exports_go_to_data_dir",            test_exports_go_to_data_dir},
+    {"test_spaces_and_quotes_in_data_dir",     test_spaces_and_quotes_in_data_dir},
+    {"test_process_exit_status_decoded",       test_process_exit_status_decoded},
     {"test_text_from_secondary_window_ignored", test_text_from_secondary_window_ignored},
     {"test_keys_from_secondary_window_ignored", test_keys_from_secondary_window_ignored},
     {"test_cmd_modified_keys_not_plain_actions", test_cmd_modified_keys_not_plain_actions},
