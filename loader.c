@@ -731,11 +731,6 @@ static int looks_truncated(const PredLine *p) {
     return (p->n_qn == 1 && p->Ju >= 10 && p->Ju <= 19) || (p->n_qn == 2 && p->Ju >= 20 && p->Ju <= 29);
 }
 
-static int find_assignment(const Assignment *list, int n, const PredLine *p) {
-    for (int i = 0; i < n; i++) if (same_assignment_transition(&list[i].pred, p)) return i;
-    return -1;
-}
-
 int load_assignments_file(const char *filename, Assignment *list, int *n, AssignmentFileReport *report) {
     AssignmentFileReport local;
     AssignmentFileReport *rep = report ? report : &local;
@@ -761,16 +756,24 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         if (!ok) { rep->ignored++; continue; }
         p.branch = branch_from_qn(p.Ju, p.Jl);
         p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
-        /* A transition read twice is not merged in silence: the last
-           occurrence is kept, as everywhere else, and the repeat is counted. */
-        int k = find_assignment(list, *n, &p);
-        if (k >= 0) rep->duplicates++;
-        add_or_update_assignment(list, n, p, ef, ei);
-        if (k < 0) k = find_assignment(list, *n, &p);
-        if (k >= 0 && (p.n_qn == 0 || looks_truncated(&p))) list[k].needs_reassign = 1;
+        /* Loading 5000 lines used to call add_or_update_assignment for every
+           record; that deduplicates the whole accumulated list each time.
+           Append raw rows, then perform the same last-row-wins consolidation
+           once below. */
+        if (*n >= MAX_ASSIGNMENTS) { rep->ignored++; continue; }
+        Assignment *a = &list[(*n)++];
+        memset(a, 0, sizeof(*a));
+        a->pred = p;
+        a->exp_freq = ef;
+        a->exp_int = ei;
+        a->fit_enabled = 1;
+        a->needs_reassign = p.n_qn == 0 || looks_truncated(&p);
         rep->loaded++;
     }
     fclose(fp);
+    int before_dedup = *n;
+    deduplicate_assignments(list, n);
+    rep->duplicates = before_dedup - *n;
     for (int i = 0; i < *n; i++) if (list[i].needs_reassign) rep->to_reassign++;
     printf("Loaded %d assignments from %s\n", rep->loaded, filename);
     return rep->loaded;
