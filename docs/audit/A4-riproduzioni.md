@@ -197,23 +197,20 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
   usa più. Test: `test_selection_cleared_on_catalog_change`,
   `test_selection_indices_in_bounds`.
 
-### R-11 — Pred&Fit consuma assignment di un CAT esterno con NVIB=3 ([pfmix.log](repro/logs/pfmix.log))
-- Precondizioni: 3 specie (NVIB forzato 3), Calculate con SPCAT reale (11167 righe, tutte `n_qn=4`);
-  4 assignment da `model.cat`, 4 da `pred.cat` (2 con J<10 `n_qn=3`, 2 con J≥10 `n_qn=1`); Fit con SPFIT reale.
-- Oracolo: ogni assignment inviato a SPFIT è letto con i suoi QN, oppure l'app lo rifiuta
-  con un messaggio; lo stato finale riporta righe rifiutate.
+### R-11 — Pred&Fit rifiuta assignment di un CAT esterno incompatibile ([pfmix.log](repro/logs/pfmix.log))
+- Precondizioni: 3 specie e riga opzioni `s 1 3 0`, Calculate con SPCAT reale
+  (11167 righe, tutte `n_qn=4`); 4 assignment da `model.cat`, 4 da `pred.cat`
+  con `n_qn=3`.
+- Oracolo: Fit rifiutato prima di scrivere `model.lin`, con NQN del modello e
+  numeri delle righe incompatibili; nessuna conversione finché D2 è aperta.
 - Osservato:
   ```text
-  model.lin   4  1  4  0  3  1  3  0   2511.333800 ...      (8 campi)
-              8  2  7  7  2  6         5034.507700 ...      (6 campi)
-             11 10                     6905.790500 ...      (2 campi)
-  model.fit  Bad Line(  5):   8  2  7  7  2  6  0  0   5034.50770
-             Bad Line(  6):   9  1  9  8  1  8  0  0   5650.30790
-                 7:  11 10  0  0  0  0  0  0   6905.79050  142775.91517 -999.99999
-             2 bad lines · 2 Lines rejected from fit
-  stato app  "SPFIT stopped after 2/50 iterations; MICROWAVE RMS = 0.000274 MHz"
+  model.cat n_qn: 4->11167 3->0 other->0
+  Fit -> 0, status: Fit refused: model.cat uses NQN 4;
+                    assignment rows 5, 6, 7, 8 use a different NQN.
+  model.lin: missing
   ```
-- Esito: 4 assignment su 8 ignorati in silenzio. Bug B-12 (+ B-01, B-02).
+- Esito: B-12 risolto al passo #6. Test: `test_fit_rejects_nqn_mismatch`.
 
 ### R-12 — Effetti collaterali del fit delle intensità ([intfit.log](repro/logs/intfit.log))
 - Precondizioni: catalogo generato con 2 specie, concentrazione della specie 1 = 0,1;
@@ -508,7 +505,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |
 | T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | `test_restore_reads_data_dir_list` |
 | T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit | — |
-| T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito (o conversione documentata); = nessuna riga "Bad Line" silenziosa | — |
+| T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito; = `model.lin` non scritto | `test_fit_rejects_nqn_mismatch` |
 | T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
 | T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T | — |
 | T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici | — |

@@ -1,5 +1,5 @@
 
-==================== PRED&FIT consumes assignments from an external 3-QN CAT with NVIB forced to 3 ====================
+==================== PRED&FIT rejects external 3-QN assignments against a 4-QN model ====================
 spcat=/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spcat
 spfit=/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spfit
 hamiltonian line: 's 1 3 0', species=3, active=0
@@ -9,7 +9,7 @@ model.out
 model.cat
 model.str
 model.egy
-SpectraVisual multi-state prediction                    Fri Sep 11 01:34:11 2026
+SpectraVisual multi-state prediction                    Fri Sep 11 16:51:07 2026
 INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
  NUMBER OF LINES =  11167
 TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
@@ -53,83 +53,10 @@ Assigned 1 selected predicted line to 7533.5021 MHz
   [3] exp=3766.9603 exp_int=1.000e+00 fit=1 pred: f=3766.9583 n_qn=4 U=(6 1 6 0 0 0) L=(5 1 5 0 0 0) lin=2.4615e-05
   [4] exp=5034.5077 exp_int=1.000e+00 fit=1 pred: f=5034.5057 n_qn=3 U=(8 2 7 0 0 0) L=(7 2 6 0 0 0) lin=1.3640e-04
   [5] exp=5650.3079 exp_int=1.000e+00 fit=1 pred: f=5650.3059 n_qn=3 U=(9 1 9 0 0 0) L=(8 1 8 0 0 0) lin=1.7832e-04
-  [6] exp=6905.7905 exp_int=1.000e+00 fit=1 pred: f=6905.7885 n_qn=1 U=(11 1 11 0 0 0) L=(10 1 10 0 0 0) lin=1.7923e-04
-  [7] exp=7533.5021 exp_int=1.000e+00 fit=1 pred: f=7533.5001 n_qn=1 U=(12 1 12 0 0 0) L=(11 1 11 0 0 0) lin=1.6489e-04
-model.par
-model.lin
-model.fit
-model.bak
-model.var
-SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:34:11 2026
-
-LINES REQUESTED=    8 NUMBER OF PARAMETERS=  9 NUMBER OF ITERATIONS= 50
-  MARQUARDT PARAMETER = 0.0000E+00 max (OBS-CALC)/ERROR =1.0000E+06
-Bad Line(  5):   8  2  7  7  2  6  0  0                 5034.50770  0.01000
-Bad Line(  6):   9  1  9  8  1  8  0  0                 5650.30790  0.01000
-Converting Line 8
-2 bad lines
-Finished Quantum  12
-    2 Lines rejected from fit
-MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
- MICROWAVE AVG =        0.002000 MHz, IR AVG =        0.00000
- MICROWAVE RMS =        0.002000 MHz, IR RMS =        0.00000
- END OF ITERATION  1 OLD, NEW RMS ERROR=        0.20002         0.02738
-Finished Quantum  12
-    2 Lines rejected from fit
-MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
- MICROWAVE AVG =        0.000038 MHz, IR AVG =        0.00000
- MICROWAVE RMS =        0.000274 MHz, IR RMS =        0.00000
- END OF ITERATION  2 OLD, NEW RMS ERROR=        0.02738         0.02738
-SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:34:11 2026
-FIT COMPLETE
-model.int
-model.var
-model.out
-model.cat
-model.str
-model.egy
-SpectraVisual multi-state prediction                    Fri Sep 11 01:34:11 2026
-INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
- NUMBER OF LINES =  11167
-TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
-    300.000    252904.6317    5.4030
-    225.000    245915.4144    5.3908
-    150.000    232737.4027    5.3669
-     75.000    198748.3324    5.2983
-     37.500    149239.8882    5.1739
-     18.750     92181.4245    4.9646
-      9.375     44613.5039    4.6495
-      2.000      4904.9323    3.6906
-sorted    11167 lines
-Fit -> 1, status: SPFIT stopped after 2/50 iterations; MICROWAVE RMS =        0.000274 MHz
+  [6] exp=6905.7905 exp_int=1.000e+00 fit=1 pred: f=6905.7885 n_qn=3 U=(11 1 11 0 0 0) L=(10 1 10 0 0 0) lin=1.7923e-04
+  [7] exp=7533.5021 exp_int=1.000e+00 fit=1 pred: f=7533.5001 n_qn=3 U=(12 1 12 0 0 0) L=(11 1 11 0 0 0) lin=1.6489e-04
+Fit -> 0, status: Fit refused: model.cat uses NQN 4; assignment rows 5, 6, 7, 8 use a different NQN.
 -- model.lin written by write_inputs:
-  |   4  1  4  0  3  1  3  0                2511.333800   0.010000 1.0
-  |   4  0  4  0  3  0  3  0                2517.224000   0.010000 1.0
-  |   5  1  5  0  4  1  4  0                3139.151900   0.010000 1.0
-  |   6  1  6  0  5  1  5  0                3766.960300   0.010000 1.0
-  |   8  2  7  7  2  6                      5034.507700   0.010000 1.0
-  |   9  1  9  8  1  8                      5650.307900   0.010000 1.0
-  |  11 10                                  6905.790500   0.010000 1.0
-  |  12 11                                  7533.502100   0.010000 1.0
+  (missing $RUNS/pfmix/.fit/model.lin)
 -- model.fit observation echo (how SPFIT read each row):
-  !   MARQUARDT PARAMETER = 0.0000E+00 max (OBS-CALC)/ERROR =1.0000E+06
-  !                               PARAMETERS - A.PRIORI ERROR 
-  ! Bad Line(  5):   8  2  7  7  2  6  0  0                 5034.50770  0.01000
-  ! Bad Line(  6):   9  1  9  8  1  8  0  0                 5650.30790  0.01000
-  |     1:   4  1  4  0  3  1  3  0                2511.33380    2511.33180    0.00200    0.01000   0.00000
-  |     2:   4  0  4  0  3  0  3  0                2517.22400    2517.22197    0.00203    0.01000   0.00000
-  |     3:   5  1  5  0  4  1  4  0                3139.15190    3139.14994    0.00196    0.01000   0.00000
-  |     4:   6  1  6  0  5  1  5  0                3766.96030    3766.95829    0.00201    0.01000   0.00000
-  |     7:  11 10  0  0  0  0  0  0                6905.79050  142775.91517 -999.99999    0.01000   0.00000
-  |     8:  12 11  0  0  0  0  0  0                7533.50210  169571.86875 -999.99999    0.01000   0.00000
-  !                                 NEW PARAMETER (EST. ERROR) -- CHANGE THIS ITERATION
-  !  END OF ITERATION  1 OLD, NEW RMS ERROR=        0.20002         0.02738
-  |     1:   4  1  4  0  3  1  3  0                2511.33380    2511.33335    0.00045    0.01000   0.00453
-  |     2:   4  0  4  0  3  0  3  0                2517.22400    2517.22400   -0.00000    0.01000   0.01000
-  |     3:   5  1  5  0  4  1  4  0                3139.15190    3139.15188    0.00002    0.01000   0.00569
-  |     4:   6  1  6  0  5  1  5  0                3766.96030    3766.96061   -0.00031    0.01000   0.00686
-  |     7:  11 10  0  0  0  0  0  0                6905.79050  142775.90035 -999.99999    0.01000 120.99939
-  |     8:  12 11  0  0  0  0  0  0                7533.50210  169571.85083 -999.99999    0.01000 143.99929
-  !                                 NEW PARAMETER (EST. ERROR) -- CHANGE THIS ITERATION
-  !  END OF ITERATION  2 OLD, NEW RMS ERROR=        0.02738         0.02738
-after Fit: pred_path=$RUNS/pfmix/.fit/model.cat n_pred=11167
+after Fit: pred_path=$REPO/pred.cat n_pred=2312

@@ -137,6 +137,36 @@ static int included_state_count(const PredFitState *p) {
     return count;
 }
 
+/* SPFIT applies one QN layout to the whole .lin, selected by the .par that
+   generated its model.cat.  The catalogue itself is the authoritative source
+   for that layout: NVIB alone is not enough for every Pickett option line.
+   The saved .par must still contain the current line, otherwise the catalogue
+   predates an edit and Calculate has to make a new one first. */
+static int current_model_nqn(const AppState *s, int *out) {
+    const PredFitState *p = &s->predfit;
+    char root[600], par_path[700], cat_path[700], line[512];
+    fit_root(s, root, sizeof(root));
+    snprintf(par_path, sizeof(par_path), "%s/model.par", root);
+    snprintf(cat_path, sizeof(cat_path), "%s/model.cat", root);
+    FILE *fp = fopen(par_path, "r");
+    if (!fp) return 0;
+    for (int i = 0; i < 3; i++)
+        if (!fgets(line, sizeof(line), fp)) { fclose(fp); return 0; }
+    fclose(fp);
+    line[strcspn(line, "\r\n")] = '\0';
+    if (strcmp(line, p->hamiltonian_line) != 0) return 0;
+
+    PredLine *rows = NULL;
+    double xmin, xmax, max_int;
+    int n = read_pred_cat_alloc(cat_path, &rows, &xmin, &xmax, &max_int);
+    if (n < 1) { free(rows); return 0; }
+    int nqn = rows[0].n_qn;
+    free(rows);
+    if (nqn < 1 || nqn > 6) return 0;
+    *out = nqn;
+    return 1;
+}
+
 /* The quick controls remain a view of the selected species.  The global
    parameter list is deliberately retained because SPFIT needs one .par/.var
    for all states. */
@@ -647,6 +677,30 @@ static int write_inputs(AppState *s, int for_fit) {
                 return 0;
             }
         }
+        int model_nqn = 0;
+        if (!current_model_nqn(s, &model_nqn)) {
+            snprintf(p->status, sizeof(p->status),
+                     "Calculate the current model before Fit: model.cat is missing or predates the option line.");
+            return 0;
+        }
+        char rows[128] = "";
+        int mismatch_count = 0;
+        for (int i = 0; i < s->n_assignments; i++) {
+            const Assignment *a = &s->assignments[i];
+            if (!a->fit_enabled || a->pred.n_qn == model_nqn) continue;
+            mismatch_count++;
+            if (mismatch_count <= 6) {
+                size_t used = strlen(rows);
+                snprintf(rows + used, sizeof(rows) - used, "%s%d", used ? ", " : "", i + 1);
+            }
+        }
+        if (mismatch_count) {
+            snprintf(p->status, sizeof(p->status),
+                     "Fit refused: model.cat uses NQN %d; assignment row%s %s use%s a different NQN.",
+                     model_nqn, mismatch_count == 1 ? "" : "s", rows,
+                     mismatch_count == 1 ? "s" : "");
+            return 0;
+        }
     }
     if (!prepare_fit_dir(s)) return 0;
     sync_basic_parameters(p);
@@ -752,6 +806,7 @@ static void fit_summary(PredFitState *p, char *out, size_t outsz) {
     FILE *fp = fopen(path, "r");
     if (!fp) return;
     char line[256], last_rms[128]="";
+    int bad_lines = 0, rejected = 0, not_used = 0, diverging = 0;
     p->last_fit_iterations=0;
     while (fgets(line, sizeof(line), fp)) {
         int iteration=0;
@@ -762,10 +817,18 @@ static void fit_summary(PredFitState *p, char *out, size_t outsz) {
             if (end) *end = '\0';
             snprintf(last_rms,sizeof(last_rms),"%s",rms);
         }
+        if (strstr(line, "Bad Line(")) bad_lines++;
+        int count = 0;
+        if (sscanf(line, " %d Lines rejected from fit", &count) == 1) rejected = count;
+        if (strstr(line, "NEXT LINE NOT USED IN FIT")) not_used++;
+        if (strstr(line, "Fit Diverging")) diverging++;
     }
     fclose(fp);
-    if (last_rms[0])
-        snprintf(out, outsz, "SPFIT stopped after %d/50 iterations; %s", p->last_fit_iterations, last_rms);
+    if (last_rms[0]) {
+        snprintf(out, outsz,
+                 "SPFIT stopped after %d/50 iterations; %s; diagnostics: %d bad lines, %d rejected, %d not used, %d diverging.",
+                 p->last_fit_iterations, last_rms, bad_lines, rejected, not_used, diverging);
+    }
 }
 
 /* `used` is 0 for a line SPFIT read but left out of the fit: it writes the
@@ -1418,15 +1481,29 @@ typedef struct {
     char   param_line[MAX_REPORT_PARAM_LINES][100];  /* verbatim SPFIT block   */
     int    n_param_lines;
     FitObservation obs[MAX_ASSIGNMENTS];             /* indexed by line number */
+    unsigned char bad_line[MAX_ASSIGNMENTS];          /* SPFIT "Bad Line(n)" */
     int    n_obs;
+    int    loaded;
 } FitReport;
+
+typedef enum {
+    FIT_ROW_EXCLUDED,
+    FIT_ROW_REJECTED,
+    FIT_ROW_USED,
+    FIT_ROW_NOT_USED,
+    FIT_ROW_STALE,
+    FIT_ROW_NOT_READ,
+    FIT_ROW_NOT_FITTED
+} FitRowState;
 
 static FitReport g_report;
 
 static void report_reset(FitReport *rep) {
     rep->n_param_lines = 0;
     rep->n_obs = 0;
+    rep->loaded = 0;
     memset(rep->obs, 0, sizeof(rep->obs));
+    memset(rep->bad_line, 0, sizeof(rep->bad_line));
 }
 
 static void report_invalidate(void) {
@@ -1473,12 +1550,17 @@ static void report_refresh(const PredFitState *p) {
     g_report.mtime = st.st_mtime;
     snprintf(g_report.path, sizeof(g_report.path), "%s", path);
     report_reset(&g_report);
+    g_report.loaded = 1;
 
     FILE *fp = fopen(path, "r");
     if (!fp) return;
 
     char line[512];
     while (fgets(line, sizeof(line), fp)) {
+        int bad_number = 0;
+        if (sscanf(line, "Bad Line( %d):", &bad_number) == 1 &&
+            bad_number >= 1 && bad_number <= MAX_ASSIGNMENTS)
+            g_report.bad_line[bad_number - 1] = 1;
         /* SPFIT prints the parameter block once per iteration; the last one
            wins, and it is already formatted the way it should be read. */
         if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
@@ -1509,6 +1591,17 @@ static void report_refresh(const PredFitState *p) {
 static FitObservation report_observation(int line_number) {
     if (line_number < 1 || line_number > MAX_ASSIGNMENTS) return (FitObservation){0, 0, 0, 0, 0, 0};
     return g_report.obs[line_number - 1];
+}
+
+static int observation_is_current(const Assignment *a, FitObservation o);
+
+static FitRowState fitting_row_state(const Assignment *a, int row) {
+    if (!a->fit_enabled) return FIT_ROW_EXCLUDED;
+    if (row >= 0 && row < MAX_ASSIGNMENTS && g_report.bad_line[row]) return FIT_ROW_REJECTED;
+    FitObservation o = row >= 0 && row < MAX_ASSIGNMENTS ? g_report.obs[row] : (FitObservation){0};
+    if (observation_is_current(a, o)) return o.used ? FIT_ROW_USED : FIT_ROW_NOT_USED;
+    if (o.found) return FIT_ROW_STALE;
+    return g_report.loaded ? FIT_ROW_NOT_READ : FIT_ROW_NOT_FITTED;
 }
 
 /* The assignment editor is the owner of the measured frequency.  A .fit file
@@ -1993,7 +2086,7 @@ void predfit_render_advanced(AppState *s) {
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
             FitObservation o = report_observation(actual + 1);
-            int current = observation_is_current(a, o);
+            FitRowState state = fitting_row_state(a, actual);
             SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
             if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
             else if (i % 2)                       ui_fill(r, row, UI_PANEL);
@@ -2001,10 +2094,14 @@ void predfit_render_advanced(AppState *s) {
             /* The colour is the whole readout: how many sigma this line sits at. */
             SDL_Color c = UI_FAINT;
             double z = 0.0;
-            if (current && o.used && a->fit_enabled) {
+            if (state == FIT_ROW_USED) {
                 z = o.diff / o.unc;
                 c = residual_color(z);
                 ui_fill(r, (SDL_Rect){u.rows.x, y, 3, u.row_h - 2}, c);
+            } else if (state == FIT_ROW_REJECTED) {
+                c = UI_DANGER_TEXT;
+            } else if (state == FIT_ROW_NOT_READ) {
+                c = UI_DIM;
             } else if (a->fit_enabled) {
                 c = UI_TEXT;
             }
@@ -2019,10 +2116,10 @@ void predfit_render_advanced(AppState *s) {
                exact same data, rather than a live list next to a .fit copy. */
             snprintf(b, sizeof(b), "%.5f", a->exp_freq);
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.30), ty, c);
-            if (current) {
+            if (state == FIT_ROW_USED || state == FIT_ROW_NOT_USED) {
                 snprintf(b, sizeof(b), "%.5f", o.calc);
                 ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.47), ty, c);
-                if (o.used) {
+                if (state == FIT_ROW_USED) {
                     snprintf(b, sizeof(b), "%+.5f", o.diff);
                     ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.64), ty, c);
                     snprintf(b, sizeof(b), "%+.2f", z);
@@ -2030,8 +2127,14 @@ void predfit_render_advanced(AppState *s) {
                 } else {
                     ui_text(r, UI_FONT_MONO_SM, "not used in the fit", adv_col(u.table, 0.64), ty, UI_FAINT);
                 }
-            } else if (o.found) {
+            } else if (state == FIT_ROW_EXCLUDED) {
+                ui_text(r, UI_FONT_MONO_SM, "excluded", adv_col(u.table, 0.47), ty, UI_FAINT);
+            } else if (state == FIT_ROW_REJECTED) {
+                ui_text(r, UI_FONT_MONO_SM, "rejected by SPFIT", adv_col(u.table, 0.47), ty, UI_DANGER_TEXT);
+            } else if (state == FIT_ROW_STALE) {
                 ui_text(r, UI_FONT_MONO_SM, "reassigned — run Fit", adv_col(u.table, 0.47), ty, UI_ACCENT_TEXT);
+            } else if (state == FIT_ROW_NOT_READ) {
+                ui_text(r, UI_FONT_MONO_SM, "not read by SPFIT", adv_col(u.table, 0.47), ty, UI_DIM);
             } else {
                 ui_text(r, UI_FONT_MONO_SM, "not fitted yet", adv_col(u.table, 0.47), ty, UI_FAINT);
             }

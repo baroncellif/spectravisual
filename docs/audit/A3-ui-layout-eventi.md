@@ -458,7 +458,7 @@ file `model.fit` durante il render.
 | U-05 | Campo *Start* di Pred&Fit senza effetto | [FATTO] A3.6 |
 | U-06 | *Save all*, *Export list* ed errori di scrittura non danno esito in UI. **Passo #2**: gli errori vanno in `error_message` e il file precedente resta intatto (`test_save_all_reports_write_error`); l'esito positivo va solo in `status_message`, che con dati caricati non si vede | [FATTO] [controller.c:292-317](../../controller.c#L292-L317), [340-347](../../controller.c#L340-L347); [RIPR] cartella dati inesistente → nessun file, nessun messaggio |
 | U-07 | I marcatori verdi "assigned" provengono da `assigned.lin` nella CWD, non dagli assignment correnti | [FATTO] A3.12 |
-| U-08 | Righe escluse mostrate come "reassigned — run Fit"; righe "Bad Line" come "not fitted yet" | [FATTO]+[RIPR] A3.10 |
+| U-08 | **Risolto al passo #6**: tabella Fitting distingue "excluded", "rejected by SPFIT", "not read by SPFIT" e la riga usata | `fitting_row_state`; `test_fitting_tab_row_states` |
 | U-09 | Il risultato di *Measure* non resta a schermo | [FATTO] [controller.c:646-648](../../controller.c#L646-L648) |
 | U-10 | Help: tasto `D` descritto come "Dipole moments", il pannello si chiama *Intensity analysis* | [FATTO] [view.c:1649](../../view.c#L1649), [ui_icons.c:130](../../ui_icons.c#L130) |
 | U-11 | Il README descrive `N` come lista "exportable" e `C` come "finestra": comportamento attuale diverso | [FATTO] [README.md:86-92](../../README.md#L86-L92) |

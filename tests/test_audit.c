@@ -654,8 +654,8 @@ static int test_restore_reads_data_dir_list(void) {
         if (i >= 0) assign_index(s, i, want[k] - 0.02, 1.0);
     }
     click_save_all(s);
-    write_inputs(s, 1);                                   /* model.lin, as a Fit writes it */
     copy_path(fx("cat3_303.cat"), path_in(data, ".fit/model.cat"));
+    write_inputs(s, 1);                                   /* model.lin, as a Fit writes it */
 
     AppState *a = new_state();                            /* no .cat, CWD != data_dir */
     snprintf(a->settings.data_dir, sizeof(a->settings.data_dir), "%s", data);
@@ -1176,6 +1176,71 @@ static int test_option_line_other_tokens_kept(void) {
     DONE();
 }
 
+/* ========================================================= #6 Fit and NQN */
+
+/* T-16, R-11: the current model catalogue is the authority for the SPFIT
+   record shape.  A three-state model yields QNFMT 1404, while these external
+   assignments have three QN per state; reject before opening model.lin. */
+static int test_fit_rejects_nqn_mismatch(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    add_species(s); add_species(s);
+    type_option_line(p, "s 1 3 0");
+    CHECK_INT("write model inputs", write_inputs(s, 0), 1);
+    copy_path(fx("cat4_1404.cat"), work_path(".fit/model.cat"));
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, 3000.01, 1.0);
+    assign_index(s, 1, 3000.11, 1.0);
+    CHECK_INT("NQN assignment 1", s->assignments[0].pred.n_qn, 3);
+    CHECK_INT("NQN assignment 2", s->assignments[1].pred.n_qn, 3);
+    unlink(work_path(".fit/model.lin"));
+    CHECK_INT("Fit", predfit_fit(s), 0);
+    CHECK(strstr(p->status, "NQN 4") != NULL, "stato: atteso NQN del modello, ottenuto '%s'", p->status);
+    CHECK(strstr(p->status, "1") != NULL && strstr(p->status, "2") != NULL,
+          "stato: attese le righe 1 e 2, ottenuto '%s'", p->status);
+    CHECK(access(work_path(".fit/model.lin"), F_OK) != 0, "model.lin scritto nonostante il mismatch");
+    CHECK_INT("storia di Undo dopo il Fit rifiutato", p->history_count, 0);
+    DONE();
+}
+
+/* B-22: all four diagnostics that make a numerical result unsafe remain
+   visible in the status, instead of being hidden by the final RMS line. */
+static int test_fit_status_counts_spfit_diagnostics(void) {
+    AppState *s = new_state();
+    char fitdir[800], path[900];
+    snprintf(fitdir, sizeof(fitdir), "%s/.fit", g_work);
+    mkdir(fitdir, 0700);
+    snprintf(s->predfit.work_dir, sizeof(s->predfit.work_dir), "%s", fitdir);
+    snprintf(path, sizeof(path), "%s/model.fit", fitdir);
+    copy_path(fixture("spfit_diagnostics.fit"), path);
+    fit_summary(&s->predfit, s->predfit.status, sizeof(s->predfit.status));
+    CHECK(strstr(s->predfit.status, "2 bad lines") != NULL, "stato: '%s'", s->predfit.status);
+    CHECK(strstr(s->predfit.status, "3 rejected") != NULL, "stato: '%s'", s->predfit.status);
+    CHECK(strstr(s->predfit.status, "1 not used") != NULL, "stato: '%s'", s->predfit.status);
+    CHECK(strstr(s->predfit.status, "1 diverging") != NULL, "stato: '%s'", s->predfit.status);
+    DONE();
+}
+
+/* U-08: Fitting distinguishes an excluded assignment, a SPFIT rejection and
+   a line actually used.  The helper is the same one consumed by the renderer. */
+static int test_fitting_tab_row_states(void) {
+    AppState *s = new_state();
+    report_invalidate();
+    g_report.loaded = 1;
+    s->n_assignments = 3;
+    s->assignments[0].fit_enabled = 0;
+    s->assignments[1].fit_enabled = 1;
+    s->assignments[2].fit_enabled = 1;
+    s->assignments[2].exp_freq = 3000.0;
+    g_report.bad_line[1] = 1;
+    g_report.obs[2] = (FitObservation){1, 1, 3000.0, 3000.0, 0.0, 0.01};
+    CHECK_INT("riga esclusa", fitting_row_state(&s->assignments[0], 0), FIT_ROW_EXCLUDED);
+    CHECK_INT("riga rifiutata", fitting_row_state(&s->assignments[1], 1), FIT_ROW_REJECTED);
+    CHECK_INT("riga usata", fitting_row_state(&s->assignments[2], 2), FIT_ROW_USED);
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -1208,6 +1273,9 @@ static const Test TESTS[] = {
     {"test_nvib_typed_value_kept",             test_nvib_typed_value_kept},
     {"test_nvib_too_small_rejected",           test_nvib_too_small_rejected},
     {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
+    {"test_fit_rejects_nqn_mismatch",          test_fit_rejects_nqn_mismatch},
+    {"test_fit_status_counts_spfit_diagnostics", test_fit_status_counts_spfit_diagnostics},
+    {"test_fitting_tab_row_states",            test_fitting_tab_row_states},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

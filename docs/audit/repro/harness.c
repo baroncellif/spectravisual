@@ -401,7 +401,7 @@ static int sc_restore_int(const char *work, const char *catfile) {
 }
 
 static int sc_predfit_mixed(const char *work, const char *extcat, const char *ext_hint) {
-    banner("PRED&FIT consumes assignments from an external 3-QN CAT with NVIB forced to 3");
+    banner("PRED&FIT rejects external 3-QN assignments against a 4-QN model");
     (void)ext_hint;
     enter(work);
     AppState *s = new_state(work);
@@ -417,6 +417,9 @@ static int sc_predfit_mixed(const char *work, const char *extcat, const char *ex
     add_species(s);
     set_param(p, 10022, 1100.0, 0.0); set_param(p, 20022, 300.0, 0.0); set_param(p, 30022, 280.0, 0.0);
     select_species(s, 0);
+    p->advanced_edit_param = -4;
+    snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "s 1 3 0");
+    advanced_commit_edit(p);
     p->species[1].concentration = 0.1; p->species[2].concentration = 0.01;
     printf("hamiltonian line: '%s', species=%d, active=%d\n", p->hamiltonian_line, p->n_species, p->active_species);
     int ok = predfit_calculate(s);

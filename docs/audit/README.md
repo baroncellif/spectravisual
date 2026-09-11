@@ -75,13 +75,16 @@ Appendici: [A1 funzioni e call graph](A1-funzioni.md) ·
    (1 → `303`, 3 → `1404`), ma aggiungere o rimuovere una specie non lo cambia
    più [RIPR R-08; `test_nvib_typed_value_kept`,
    `test_nvib_too_small_rejected`, `test_option_line_other_tokens_kept`].
-3. **Pred&Fit reinterpreta gli assignment — P1.** `write_inputs` scrive nel
-   `.lin` il NQN di ogni assignment così com'è ([predfit.c:696-706](../../predfit.c#L696-L706)),
-   ma SPFIT legge ogni riga con il NQN del proprio `.par` (`calpgm/calfit.c:147-153`,
-   `calpgm/ulib.c:772-846`). Con assignment presi da un CAT esterno e NVIB=3,
-   SPFIT scarta le righe come "Bad Line" o le calcola a 142 775 MHz e le rifiuta,
-   mentre l'app mostra "SPFIT stopped after 2/50 iterations; RMS 0.000274 MHz":
-   4 assignment su 8 esclusi in silenzio [RIPR R-11].
+3. **Pred&Fit reinterpreta gli assignment — P1.** Dal passo #6 `write_inputs`
+   legge NQN dal `model.cat` prodotto con la riga opzioni corrente. Un Fit con
+   assignment inclusi di forma diversa viene rifiutato prima di scrivere
+   `model.lin`, con le righe coinvolte nell'errore; il Fit richiede Calculate se
+   `model.cat` manca o è precedente alla riga opzioni. Nessuna conversione è
+   stata scelta in attesa di D2. `fit_summary` mostra inoltre i conteggi di Bad
+   Line, righe rifiutate, righe non usate e divergenze; la tabella Fitting
+   distingue esclusa, rifiutata, usata e non letta [RIPR R-11;
+   `test_fit_rejects_nqn_mismatch`, `test_fit_status_counts_spfit_diagnostics`,
+   `test_fitting_tab_row_states`].
 4. **Due fonti di verità per la lista assignment — P1.** `assignments.txt`
    (in `data_dir`) e `.fit/model.lin` ricostruiscono la lista in modi diversi a
    seconda che l'app parta con o senza un `.cat` sulla riga di comando
@@ -273,7 +276,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `predfit.generated_catalog_pending/active` | provenienza del catalogo | `PredFitState` | Calculate, Fit, restore, `adopt`, `set_predictions` | `adopt`, `publish` | memoria | ignorati da `commit_text_input` (B-11) |
 | `predfit.history`, `history_count` | Undo | heap | `push_fit_snapshot`, Undo, dispose | Undo | solo RAM | flag per indice (B-17) |
 | `predfit.work_dir` | cartella di lavoro | `PredFitState` | `predfit_init`, `prepare_fit_dir`, restore | `work_file`, `system()` | memoria | può differire da `data_dir` dopo un cambio in Settings |
-| `predfit.status` | messaggi | `PredFitState` | molti | render | memoria | il successo nasconde le righe rifiutate (B-22) |
+| `predfit.status` | messaggi | `PredFitState` | molti | render | memoria | dal passo #6 include NQN incompatibili e quattro diagnostiche SPFIT (B-12/B-22 risolti) |
 | `g_report` (static) | cache di `model.fit` | predfit.c | `report_refresh`/`report_invalidate` | Advanced | per `mtime` | associazione per indice |
 | `g_lin_rows` (static) | righe di `model.lin` | predfit.c | `read_lin_rows` | `import_fit_lines` | transitorio | — |
 | `intfit_*`, `intfit_lines[]` | fit intensità | `AppState` | `intensity_fit_run`, `fit_relative_dipoles`, init, campi | pannello, export | memoria | indicizzati per posizione dell'assignment |
@@ -473,8 +476,9 @@ Fit (pannello [controller.c:545], Advanced Fitting [1696], Cmd/Ctrl+F [997])
   → predfit_fit [994-1019]
       n_assignments > 0 [996] (conta anche le righe escluse)
       predfit_publish_shared_state; push_fit_snapshot [433-461] (modello + fit_enabled per indice)
-      write_inputs(for_fit=1): deduplicate_assignments sulla lista in memoria [635];
-        verifica n_qn ∈ 1..6 per tutti, altrimenti blocca l'intero fit [636-645]
+      write_inputs(for_fit=1): deduplicate_assignments sulla lista in memoria;
+        legge NQN dal `model.cat` associato alla riga opzioni corrente: se manca o è vecchio richiede Calculate;
+        ogni assignment PRED incluso con NQN diverso blocca il Fit, elencando le righe, prima di `model.lin` (B-12 risolto; conversione rinviata a D2)
         model.lin: per assignment nq = n_qn QN superiori e inferiori, riempimento a 36 colonne,
           frequenza (o 90000 + |f| se escluso), incertezza line_error_mhz, peso 1.0 [688-707]
         NLINE = n_assignments (anche le escluse) [666]
@@ -488,8 +492,10 @@ Fit (pannello [controller.c:545], Advanced Fitting [1696], Cmd/Ctrl+F [997])
 Rami ed errori: SPCAT/SPFIT mancanti → messaggio in `status` e storia
 ripristinata ([1001-1005](../../predfit.c#L1001-L1005)); SPFIT fallito →
 `history_count--`; SPCAT dopo il fit fallito → parametri già aggiornati ma
-catalogo non ricaricato ([1011](../../predfit.c#L1011)); righe "Bad Line" o
-rifiutate da SPFIT → nessun segnale (B-22).
+catalogo non ricaricato ([1011](../../predfit.c#L1011)); Bad Line, righe
+rifiutate, righe non usate e Fit Diverging vengono contati nello stato; la
+tabella Fitting mostra separatamente esclusa, rifiutata da SPFIT, usata e non
+letta (B-22 risolto).
 
 <a id="flusso-6"></a>
 ### Flusso 6 — Più specie/stati, specie incluse/escluse, Undo e restore `.fit`
@@ -1061,7 +1067,7 @@ flowchart TB
   E_ASGP -->|"no"| E_ASGOLD["solo legacy a 14 o 15-16 campi,<br/>il resto ignorato e contato, per esempio un .lin"]
   E_PROG{"E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005"} -->|"no"| E_PROGN["status: Set the SPCAT/SPFIT program"]
   E_RC{"E_RC exit code ≠ 0?<br/>predfit.c:717-721"} -->|"sì"| E_RCN["status ... failed; history_count--"]
-  E_SPFITBAD{"E_SPFITBAD righe Bad Line o rifiutate?"} -->|"sì"| E_SILENT["nessun segnale: status mostra solo RMS (B-22)"]
+  E_SPFITBAD{"E_SPFITBAD Bad Line, rifiutate, non usate o divergenza?"} -->|"sì"| E_SILENT["conteggi nello status; Bad Line marcate nella tabella Fitting (B-22 risolto)"]
   E_SENT{"E_SENT riga esclusa: 90000+f"} -->|"err · 1e6 ≥ 90000 MHz"| E_SENTBAD["riga usata nel fit, divergenza (B-09)"]
   E_SENT -->|"err · 1e6 < 90000 MHz"| E_SENTOK["NEXT LINE NOT USED IN FIT"]
   E_FOPEN{"E_FOPEN fopen fallita"} -->|"assignments.txt, linelist.csv"| E_FOPENS["errore in error_message, file precedente intatto, dal passo 2"]
@@ -1440,8 +1446,10 @@ blend (`calpgm/calfit.c:941-951`); una riga è usata solo se
 l'ordine della lista assignment: due transizioni assegnate allo stesso picco in
 momenti diversi non sono consecutive e non vengono trattate come blend [INF].
 `NLINE` nel `.par` conta anche le righe escluse ([predfit.c:666](../../predfit.c#L666)).
-Divergenze: NQN per riga contro NQN del modello (**B-12**); sentinella che
-dipende da ERRTST × ERR (**B-09**); NQN dedotto dagli slot al restore (B-16).
+Divergenze residue: sentinella che dipende da ERRTST × ERR (**B-09**) e NQN
+dedotto dagli slot al restore (B-16). Dal passo #6 un NQN dell'assignment
+diverso da quello del modello corrente blocca il Fit prima di `.lin` (B-12
+risolto).
 `pred.lin`, `assigned.lin`, `assignment.txt` nella radice sono `.lin` dell'utente
 in varianti diverse (3 o 4 QN, spaziature diverse) e non sono scritti dall'app.
 
@@ -1451,7 +1459,7 @@ in varianti diverse (3 o 4 QN, spaziature diverse) e non sono scritti dall'app.
 |---|---|---|---|
 | 1 | titolo `SpectraVisual Pred&Fit quick model` | titolo | — |
 | 2 | `%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f`: NPAR, NLINE (`n_assignments` per il Fit, 0 per Calculate), NITR (50 in `.par`, 0 in `.var`), NXPAR 0, MARQP 0, ERRTST 1e6, PARFAC 1, FQFAC 1 | NPAR, NLINE (negativo → formato QN esteso), NITR, NXPAR, MARQP, ERRTST (se ~0 → 1e6, `calfit.c:218-219`), PARFAC, FQFAC | — |
-| 3 | `hamiltonian_line`, invariata (B-02 risolto) | riga opzioni: CHR SPIND **NVIB** KNMIN … (`calpgm/spinv.c:2244-2400`; NVIB ≤ 0 → 1) | mai letta: la riga viene dalla sessione; l'app valida NVIB ≥ massimo stato PRED prima di scrivere |
+| 3 | `hamiltonian_line`, invariata (B-02 risolto) | riga opzioni: CHR SPIND **NVIB** KNMIN … (`calpgm/spinv.c:2244-2400`; NVIB ≤ 0 → 1) | per Fit `current_model_nqn` confronta questa riga con `hamiltonian_line` prima di fidarsi di `model.cat`; l'app valida NVIB ≥ massimo stato PRED prima di scrivere |
 | 4… | `%12d % .15E % .8E /label/` | ID BCD, valore, errore a priori | `import_fitted_parameters` [723-741](../../predfit.c#L723-L741): solo righe con `/`, solo **valore** da `model.var` |
 
 ID dei parametri per stato: suffisso `11·v` ([predfit.c:97-100](../../predfit.c#L97-L100),
@@ -1484,12 +1492,12 @@ parte.
 
 ### 6.6 `.fit`, `.out`, `.bak`, `.str`, `.egy`
 
-- `model.fit` (SPFIT): l'app legge il blocco `NEW PARAMETER (EST. ERROR)` e le
-  righe osservazione `  N:` saltando 36 colonne di QN dopo i due punti
-  (`report_refresh`/`parse_observation` [predfit.c:1401-1465](../../predfit.c#L1401-L1465));
-  `fit_summary` ([743-764](../../predfit.c#L743-L764)) legge `END OF ITERATION` e
-  `MICROWAVE RMS`. **Non** legge `Bad Line`, `Lines rejected`,
-  `NEXT LINE NOT USED IN FIT`, `Fit Diverging` (B-22).
+- `model.fit` (SPFIT): l'app legge il blocco `NEW PARAMETER (EST. ERROR)`, le
+  righe osservazione `  N:` e `Bad Line(n)` nella cache
+  (`report_refresh`/`parse_observation` [predfit.c:1539-1589](../../predfit.c#L1539-L1589)).
+  `fit_summary` ([predfit.c:802-832](../../predfit.c#L802-L832)) legge anche
+  `END OF ITERATION`, `MICROWAVE RMS`, `Bad Line`, `Lines rejected`,
+  `NEXT LINE NOT USED IN FIT` e `Fit Diverging` (B-22 risolto).
 - `model.out`, `model.str`, `model.egy` (SPCAT) e `model.bak` (SPFIT): non letti.
 - `species_XX.cat/.out/.var` presenti in `.fit/`: residui del codice che eseguiva
   SPCAT per specie, rimosso in `1f4df65` (diff di `predfit.c`, blocco
@@ -1547,7 +1555,7 @@ analysis, allargamento, filtri.
 | righe del `.fit` ↔ righe mostrate | posizione (osservazione i+1 = assignment i) + |obs − exp| < 1e-5 | [predfit.c:1467-1477](../../predfit.c#L1467-L1477), [1954](../../predfit.c#L1954) | no | no | sì | dopo delete, dedup o restore la posizione cambia; blend con la stessa ObsFreq possono mostrare il residuo dell'altro |
 | fit intensità | ricerca binaria sulla frequenza della copia, ±3 posizioni con NQN + 12 QN, poi Δf < 1e-5 | [intensity_fit.c:56-76](../../intensity_fit.c#L56-L76) | sì | sì | sì | dopo un fit o un restore la frequenza della copia è vecchia → riga persa (B-20) |
 | riga → specie | stato = `M1u` se NQN ≥ 4, altrimenti 0 | [loader.c:403](../../loader.c#L403) | sì | sì | no | con QN di spin (QNFMT 304) `M1u` è F (B-19) |
-| SPFIT | QN letti con il NQN del `.par` | `calpgm/ulib.c:793-846` | NQN del modello | sì | no | righe con NQN diverso lette male (B-12) |
+| SPFIT | QN letti con il NQN del `.par` | `calpgm/ulib.c:793-846` | NQN del modello | sì | no | l'app blocca prima del Fit gli assignment inclusi con NQN diverso (B-12 risolto) |
 | marcatori "assegnati" | frequenza letta da `assigned.lin` | [loader.c:154-218](../../loader.c#L154-L218) | — | — | sì | non legati alla lista |
 
 ### 7.2 NQN: definizione e uso
@@ -1566,17 +1574,18 @@ analysis, allargamento, filtri.
 - **Dal passo #1** il parser CAT (`parse_cat_record`) legge NQN correttamente
   (colonne 52–55, QNFMT % 10) e scarta, contandole, le righe con NQN 0 o > 6 (D6);
   le altre tre sorgenti di `n_qn` sono trattate ai passi #4 e #8.
-- **Non** è dedotto dal modello Pred&Fit: nessun writer di `n_qn` legge
-  `hamiltonian_line`, `state_count` o `.par` [FATTO, indice [A2](A2-campi.md)].
-  L'ipotesi iniziale del report ("uso improprio di NQN dall'Hamiltoniano") non
-  è confermata come meccanismo diretto; il legame reale è: NVIB (forzato) →
-  QNFMT di `model.cat` → NQN diverso da quello dei CAT esterni → identità diverse.
+- Il campo `PredLine.n_qn` degli assignment non è riscritto dal modello
+  Pred&Fit. Dal passo #6 `current_model_nqn` legge invece il NQN del
+  `model.cat` corrente e `write_inputs(1)` lo confronta prima di scrivere
+  `.lin` [FATTO, indice [A2](A2-campi.md)]. Il legame reale è: NVIB → QNFMT di
+  `model.cat` → eventuale NQN diverso dai CAT esterni → rifiuto esplicito
+  finché D2 non definisce una conversione.
 
 ### 7.3 Collisioni e duplicati possibili
 
 1. Stessa transizione assegnata su `pred.cat` (NQN 3) e su `model.cat` con NVIB=3
-   (NQN 4, v=0): due assignment, entrambi nel `.lin`; quello a 3 QN è letto male
-   da SPFIT [FATTO + RIPR R-11].
+   (NQN 4, v=0): due assignment; se entrambi sono inclusi, il Fit è rifiutato
+   prima di `.lin` [RIPR R-11; B-12 risolto].
 2. Due transizioni con lo stesso J ≥ 10 e Ka/Kc diversi in un CAT con QNFMT a tre
    cifre: dopo save/reopen diventano una sola [RIPR R-02]. La causa (B-01) è
    risolta al passo #1; il round-trip è verificato al passo #4.
@@ -1838,22 +1847,27 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-12"></a>
 ### B-12 — Pred&Fit invia a SPFIT righe con un NQN diverso da quello del modello
 
+- **Stato: risolto** nel commit del passo #6 — nuova logica:
+  `current_model_nqn` legge il QNFMT di `.fit/model.cat` solo se la terza riga
+  di `model.par` coincide con `hamiltonian_line`. `write_inputs(1)` rifiuta
+  prima di aprire `model.lin` gli assignment inclusi con NQN diverso ed elenca
+  le righe; se il modello è assente o vecchio richiede Calculate. Test:
+  `test_fit_rejects_nqn_mismatch`; R-11 rieseguito.
 - **Gravità** critica · **P1** · [FATTO] + [RIPR R-11]
-- **Dove**: `write_inputs` [predfit.c:688-707](../../predfit.c#L688-L707); controllo
-  solo di `1 ≤ n_qn ≤ 6` [636-645](../../predfit.c#L636-L645).
-- **Causa**: il commento [698-699](../../predfit.c#L698-L699) ("NQN comes from QNFMT…
+- **Dove (prima della correzione)**: `write_inputs` accettava solo
+  `1 ≤ n_qn ≤ 6` senza confrontarlo al modello.
+- **Causa (prima della correzione)**: il commento ("NQN comes from QNFMT…
   Do not infer it from Hamiltonian settings") è corretto per un catalogo, ma
   SPFIT legge il `.lin` con il NQN del **proprio** `.par` (`calpgm/ulib.c:793-846`,
   `calpgm/calfit.c:147-153`). Nessuna conversione né validazione tra forma dei QN
   dell'assignment e forma dei QN del modello.
-- **Prova**: 3 specie (NVIB 3, NQN 4); due assignment da `pred.cat` con NQN 3 →
+- **Prova pre-fix**: 3 specie (NVIB 3, NQN 4); due assignment da `pred.cat` con NQN 3 →
   `Bad Line(5): 8 2 7 7 2 6 0 0`; due con NQN 1 (B-01) → letti come
   `11 10 0 0 / 0 0 0 0`, calcolati a 142 775 MHz e rifiutati. Stato mostrato:
   "SPFIT stopped after 2/50 iterations; MICROWAVE RMS = 0.000274 MHz".
-- **Correzione minima**: prima di scrivere il `.lin`, confrontare NQN di ogni
-  assignment con il NQN del modello (dedotto da NVIB/spin o da un QNFMT di
-  riferimento); rifiutare o convertire secondo una regola esplicita
-  ([§12](#12-domande-bloccanti), D2) e mostrare l'elenco.
+- **Correzione applicata**: prima di scrivere il `.lin`, confrontare ogni
+  assignment incluso con il NQN del `model.cat` corrente e rifiutare con elenco;
+  la conversione resta una scelta esplicita di D2.
 
 <a id="b-13"></a>
 ### B-13 — Intensity analysis e fit delle intensità modificano la specie attiva di Pred&Fit
@@ -1981,14 +1995,20 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-22"></a>
 ### B-22 — Diagnostica di SPFIT non mostrata
 
+- **Stato: risolto** nel commit del passo #6 — nuova logica: `fit_summary`
+  riporta i conteggi di Bad Line, Lines rejected, NEXT LINE NOT USED IN FIT e
+  Fit Diverging insieme all'RMS; `report_refresh` conserva le righe Bad Line e
+  `fitting_row_state` rende le righe Fitting come esclusa, rifiutata, usata o
+  non letta. Test: `test_fit_status_counts_spfit_diagnostics`,
+  `test_fitting_tab_row_states`.
 - **Gravità** alta (UX) · **P1** · [FATTO] + [RIPR R-11, R-15]
-- **Dove**: `fit_summary` [predfit.c:743-764](../../predfit.c#L743-L764),
-  `parse_observation` [1401-1418](../../predfit.c#L1401-L1418), tabella *Fitting*
-  [1950-1997](../../predfit.c#L1950-L1997).
-- **Causa**: si leggono solo iterazioni e RMS; "Bad Line", "Lines rejected",
+- **Dove (prima della correzione)**: `fit_summary`, `parse_observation` e tabella
+  *Fitting* ignoravano le diagnostiche.
+- **Causa (prima della correzione)**: si leggevano solo iterazioni e RMS; "Bad Line", "Lines rejected",
   "NEXT LINE NOT USED IN FIT", "Fit Diverging" sono ignorati; le righe rifiutate
   risultano "not fitted yet", le escluse "reassigned — run Fit".
-- **Correzione minima**: contare queste righe nel `.fit` e riportarle nello stato.
+- **Correzione applicata**: contare queste righe nel `.fit`, riportarle nello
+  stato e conservare `Bad Line(n)` per lo stato della riga.
 
 <a id="b-23"></a>
 ### B-23 — Nessun salvataggio automatico della lista; errori di scrittura silenziosi
@@ -2600,7 +2620,7 @@ regressioni sono possibili.
 | B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |
 | B-10 (risolto al passo #3) | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
 | B-11, B-13, B-21, B-27 | `commit_text_input`, *Run fit*, `predfit_adopt_shared_state`, `intensity_fit_run` | intensità mostrate, filtro di intensità (righe selezionabili), Shift+Tab, CalcIntensity salvata, `.int` del Calculate successivo | intensità mostrate diverse da prima per chi usava i campi della command bar su cataloghi generati | T-17, T-18 |
-| B-12, B-22 | `write_inputs`, `fit_summary`, report | ogni Fit; liste miste esistenti | un Fit che prima "riusciva" in silenzio ora rifiuta righe: comportamento voluto, va comunicato | T-16 |
+| B-12, B-22 (risolti al passo #6) | `current_model_nqn`, `write_inputs`, `fit_summary`, report | ogni Fit; liste miste esistenti | Fit rifiutato prima di `.lin` se il modello non è corrente o NQN non coincide; le diagnostiche SPFIT restano visibili | T-16, R-11 |
 | B-15, B-23 (risolti al passo #2), B-26 | `import_fit_lines`, `main` (restore), salvataggio automatico | avvio con e senza `.cat`; `data_dir`; sessione | l'avvio senza `.cat` smetterebbe di mostrare `model.cat` automaticamente se il restore diventa esplicito | T-14 |
 | B-17 | `push_fit_snapshot`/`restore_fit_snapshot` | `PredFitSnapshot` (dimensione, [types.h:112-127](../../types.h#L112-L127)) | memoria dello snapshot | T-12 |
 | B-18 | `import_int_settings`, `predfit_restore_latest` | sessione (`int2`, `molecule2`), `model.int` | sessioni vecchie senza `int2` devono ancora ripristinare il `.int` | T-19 |
@@ -2707,7 +2727,7 @@ fittato) e vanno applicate subito dopo la 1.1:
 | 1.2 | niente fallback 3: assignment con NQN non valido rifiutati con messaggio | `controller.c:303-304` | T-07 |
 | 1.3 | selezione azzerata a ogni cambio di catalogo; controllo del limite nel render | `main.c:288-329`, `view.c:1815` | T-10, R-10 |
 | 1.4 | NVIB non più riscritto: validazione e messaggio | `hamiltonian_nvib`, `included_state_count`, `write_inputs` | T-11, R-08 (il valore digitato resta; valore insufficiente rifiutato senza file) |
-| 1.5 | controllo NQN assignment ↔ modello prima del Fit; conteggio di Bad Line / rifiutate / divergenza nello stato | `predfit.c:629-710`, `743-764` | T-16, R-11 (rifiuto esplicito, nessuna riga silenziosa) |
+| 1.5 | controllo NQN assignment ↔ `model.cat` corrente prima del Fit; conteggio di Bad Line / rifiutate / non usate / divergenza nello stato | `current_model_nqn`, `write_inputs`, `fit_summary`, `fitting_row_state` | T-16, R-11 (rifiuto esplicito, nessuna riga silenziosa) |
 | 1.6 | righe escluse fuori dal `.lin`, esclusioni salvate per identità | `predfit.c:688-707`, `814-944` | T-12, T-15, R-15 |
 | 1.7 | `import_fit_lines` legge `assignments.txt` da `data_dir` | `predfit.c:893` | T-14 |
 | 1.8 | una sola funzione di ricalcolo delle intensità; nessuna propagazione automatica verso Pred&Fit | `controller.c:913-947`, `438-446`, `predfit.c:413-418`, `intensity_fit.c:311` | T-17, T-18, R-12 (rapporto 0,1 costante) |
