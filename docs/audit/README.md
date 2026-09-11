@@ -2232,7 +2232,7 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-35"></a>
 ### B-35 — `work_dir` calcolata prima di leggere le impostazioni
 
-- **Stato: risolto** nel commit del passo #7 — `main` richiama
+- **Stato: risolto** in `4c47c47` — `main` richiama
   `predfit_refresh_work_dir` dopo `settings_init`; prima di Calculate/Fit la
   cache coincide già con `data_dir/.fit`. Test: `test_workdir_after_settings`;
   R-25 rieseguito (B-36 resta aperto).
@@ -2312,7 +2312,7 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-39"></a>
 ### B-39 — Avvio con un `.cat`: il modello Pred&Fit non viene ripristinato e può essere sovrascritto
 
-- **Stato: risolto** nel commit del passo #7 — la sessione scrive righe
+- **Stato: risolto** in `4c47c47` — la sessione scrive righe
   `param <id> <valore> <incertezza>` e le rilegge aggiungendo i parametri
   mancanti; il vecchio formato `ID incertezza` resta compatibile. L'avvio con
   file da riga di comando non riscrive più la sessione senza una modifica.

@@ -455,7 +455,13 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     subito dopo l'avvio.
 - **Documentazione**: report §4 flussi 5 e 8, §5.7, §6.7, schede B-35/B-39;
   A4 R-25 e R-28.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `4c47c47` —
+  test aggiunti: `test_launch_with_cat_keeps_model`,
+  `test_session_load_adds_missing_param_rows`,
+  `test_startup_does_not_rewrite_session`, `test_workdir_after_settings`
+  (suite 35/35 PASS). Le righe `param` v3 conservano valore e incertezza e
+  restano compatibili con le vecchie righe `ID incertezza`; R-25 e R-28
+  rieseguiti. B-36 non è incluso in questo passo.
 
 ### #8 — Esclusioni dal fit: fuori dal `.lin` e salvate per identità
 

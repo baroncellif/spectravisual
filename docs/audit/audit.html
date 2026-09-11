@@ -770,7 +770,13 @@ subito dopo l&#39;avvio.</li>
 </li>
 <li><strong>Documentazione</strong>: report §4 flussi 5 e 8, §5.7, §6.7, schede B-35/B-39;
 A4 R-25 e R-28.</li>
-<li><strong>Stato</strong>: ☐ non fatto — commit: —</li>
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: <code>4c47c47</code> —
+test aggiunti: <code>test_launch_with_cat_keeps_model</code>,
+<code>test_session_load_adds_missing_param_rows</code>,
+<code>test_startup_does_not_rewrite_session</code>, <code>test_workdir_after_settings</code>
+(suite 35/35 PASS). Le righe <code>param</code> v3 conservano valore e incertezza e
+restano compatibili con le vecchie righe <code>ID incertezza</code>; R-25 e R-28
+rieseguiti. B-36 non è incluso in questo passo.</li>
 </ul>
 <h3 id="piano-8--esclusioni-dal-fit-fuori-dal-lin-e-salvate-per-identità"><a class="hlink" href="#piano-8--esclusioni-dal-fit-fuori-dal-lin-e-salvate-per-identità">#</a>#8 — Esclusioni dal fit: fuori dal <code>.lin</code> e salvate per identità</h3>
 <ul>
@@ -4077,7 +4083,7 @@ consumi (estensione di B-14).</li>
 <p><a id="readme-b-35"></a></p>
 <h3 id="readme-b-35--work_dir-calcolata-prima-di-leggere-le-impostazioni"><a class="hlink" href="#readme-b-35--work_dir-calcolata-prima-di-leggere-le-impostazioni">#</a>B-35 — <code>work_dir</code> calcolata prima di leggere le impostazioni</h3>
 <ul>
-<li><strong>Stato: risolto</strong> nel commit del passo #7 — <code>main</code> richiama
+<li><strong>Stato: risolto</strong> in <code>4c47c47</code> — <code>main</code> richiama
 <code>predfit_refresh_work_dir</code> dopo <code>settings_init</code>; prima di Calculate/Fit la
 cache coincide già con <code>data_dir/.fit</code>. Test: <code>test_workdir_after_settings</code>;
 R-25 rieseguito (B-36 resta aperto).</li>
@@ -4155,7 +4161,7 @@ valido; ID duplicati rifiutati con messaggio.</li>
 <p><a id="readme-b-39"></a></p>
 <h3 id="readme-b-39--avvio-con-un-cat-il-modello-predfit-non-viene-ripristinato-e-può-essere-sovrascritto"><a class="hlink" href="#readme-b-39--avvio-con-un-cat-il-modello-predfit-non-viene-ripristinato-e-può-essere-sovrascritto">#</a>B-39 — Avvio con un <code>.cat</code>: il modello Pred&amp;Fit non viene ripristinato e può essere sovrascritto</h3>
 <ul>
-<li><strong>Stato: risolto</strong> nel commit del passo #7 — la sessione scrive righe
+<li><strong>Stato: risolto</strong> in <code>4c47c47</code> — la sessione scrive righe
 <code>param &lt;id&gt; &lt;valore&gt; &lt;incertezza&gt;</code> e le rilegge aggiungendo i parametri
 mancanti; il vecchio formato <code>ID incertezza</code> resta compatibile. L&#39;avvio con
 file da riga di comando non riscrive più la sessione senza una modifica.
