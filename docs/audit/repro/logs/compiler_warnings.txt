@@ -1,0 +1,58 @@
+main.c:62:86: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   62 |     state->win_pf   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 300}, 0, "Peak finder"};
+      |                                                                                      ^
+main.c:63:85: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   63 |     state->win_br   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 300}, 0, "Broadening"};
+      |                                                                                     ^
+main.c:64:86: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   64 |     state->win_as   = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 400}, 0, "Assignments"};
+      |                                                                                      ^
+main.c:65:90: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   65 |     state->win_avg  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 190}, 0, "Rolling average"};
+      |                                                                                          ^
+main.c:66:90: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   66 |     state->win_cut  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 152}, 0, "Intensity range"};
+      |                                                                                          ^
+main.c:67:89: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   67 |     state->win_jump = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 132}, 0, "Frequency jump"};
+      |                                                                                         ^
+main.c:68:92: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   68 |     state->win_filt = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 402}, 0, "Transition filter"};
+      |                                                                                            ^
+main.c:69:93: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   69 |     state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 620}, 0, "Intensity analysis"};
+      |                                                                                             ^
+main.c:70:82: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   70 |     state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
+      |                                                                                  ^
+main.c:71:86: warning: missing field 'anim' initializer [-Wmissing-field-initializers]
+   71 |     state->win_predfit = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 430}, 0, "Pred&Fit"};
+      |                                                                                      ^
+10 warnings generated.
+controller.c:540:31: warning: declaration shadows a local variable [-Wshadow]
+  540 |                 PredFitState *p=&s->predfit;
+      |                               ^
+controller.c:253:30: note: previous declaration is here
+  253 |             DraggableWindow *p = panels[t];
+      |                              ^
+1 warning generated.
+view.c:103:28: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  103 |     if (g_kk_built && beta == g_kk_beta && gg == g_kk_gg) return;
+      |                       ~~~~ ^  ~~~~~~~~~
+view.c:103:47: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  103 |     if (g_kk_built && beta == g_kk_beta && gg == g_kk_gg) return;
+      |                                            ~~ ^  ~~~~~~~
+view.c:1177:50: warning: format string is not a string literal [-Wformat-nonliteral]
+ 1177 |     else                        snprintf(out, n, fmt, v);
+      |                                                  ^~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/secure/_stdio.h:119:67: note: expanded from macro 'snprintf'
+  119 | #define snprintf(str, len, ...) __snprintf_chk_func (str, len, 0, __VA_ARGS__)
+      |                                                                   ^~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/secure/_stdio.h:76:64: note: expanded from macro '__snprintf_chk_func'
+   76 |         __builtin___snprintf_chk (str, len, flag, __darwin_obsz(str), __VA_ARGS__)
+      |                                                                       ^~~~~~~~~~~
+3 warnings generated.
+algorithms.c:74:39: warning: unused parameter 'noise_pts' [-Wunused-parameter]
+   74 |                      int sig_pts, int noise_pts, double threshold, 
+      |                                       ^
+1 warning generated.

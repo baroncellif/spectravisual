@@ -1,0 +1,48 @@
+
+==================== INTENSITY FIT EXPORT after the assignment list changed ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+Added assignment for 2090.8831 MHz
+Assigned 1 selected predicted line to 2090.8851 MHz
+Added assignment for 2099.8138 MHz
+Assigned 1 selected predicted line to 2099.8158 MHz
+Added assignment for 2108.8107 MHz
+Assigned 1 selected predicted line to 2108.8127 MHz
+Added assignment for 2108.8229 MHz
+Assigned 1 selected predicted line to 2108.8249 MHz
+Added assignment for 2112.7386 MHz
+Assigned 1 selected predicted line to 2112.7406 MHz
+Added assignment for 2112.7508 MHz
+Assigned 1 selected predicted line to 2112.7528 MHz
+Deleted assignment for 2090.8831 MHz
+-- export right after the fit (last rows):
+  |  no    b   2090.88310   2090.88510 2.101687e-03 4.300145e-02   0.04887   -3.018493  2 1 2 0 0 0; 1 0 1 0 0 0
+  |  no    c   2099.81380   2099.81580 2.119242e-03 4.315296e-02   0.04911   -3.013693  2 1 1 0 0 0; 1 0 1 0 0 0
+  | yes    b   2108.81070   2108.81270 1.722216e-03 1.722118e-03   1.00006    0.000057  10 2 9 0 0 0; 9 3 6 0 0 0
+  | yes    c   2108.82290   2108.82490 1.722216e-03 1.722315e-03   0.99994   -0.000058  10 2 9 0 0 0; 9 3 7 0 0 0
+  | yes    c   2112.73860   2112.74060 1.729354e-03 1.729255e-03   1.00006    0.000058  10 2 8 0 0 0; 9 3 6 0 0 0
+  | yes    b   2112.75080   2112.75280 1.729354e-03 1.729453e-03   0.99994   -0.000057  10 2 8 0 0 0; 9 3 7 0 0 0
+-- export after deleting assignment 0, without refitting:
+  | use comp PredFreq_MHz ExpFreq_MHz ExpArea CalcArea Exp/Calc logResidual QN(up;lower)
+  |  no    b   2099.81380   2099.81580 2.101687e-03 4.300145e-02   0.04887   -3.018493  2 1 1 0 0 0; 1 0 1 0 0 0
+  |  no    c   2108.81070   2108.81270 2.119242e-03 4.315296e-02   0.04911   -3.013693  10 2 9 0 0 0; 9 3 6 0 0 0
+  | yes    b   2108.82290   2108.82490 1.722216e-03 1.722118e-03   1.00006    0.000057  10 2 9 0 0 0; 9 3 7 0 0 0
+  | yes    c   2112.73860   2112.74060 1.722216e-03 1.722315e-03   0.99994   -0.000058  10 2 8 0 0 0; 9 3 6 0 0 0
+  | yes    c   2112.75080   2112.75280 1.729354e-03 1.729255e-03   1.00006    0.000058  10 2 8 0 0 0; 9 3 7 0 0 0

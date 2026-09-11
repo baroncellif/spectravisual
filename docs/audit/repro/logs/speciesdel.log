@@ -1,0 +1,6 @@
+
+==================== ADVANCED > SPECIES: delete a row above the active one; re-add after deleting the last ====================
+before: n=3 active=1 (Donor) quick A=907.5172
+after deleting row 0 (Mono): n=2 active=1 (Accep) quick A=1100.0000, option line 's 1 3 0'
+after deleting the last row: n=1 active=0 (Donor) quick A=907.5172
+'+ species' -> 'Species 3' v=2, quick A B C = 1100.0000 300.0000 280.0000 (the seed is the active species' values)

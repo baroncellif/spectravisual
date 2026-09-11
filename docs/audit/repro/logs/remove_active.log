@@ -1,0 +1,4 @@
+
+==================== REMOVE SPECTRUM: which trace is active after removing an earlier one ====================
+before: n=3 active=1 (B.txt) offset=0.50
+after removing A: n=2 active=1 (C.txt), mirrored exp_path=$RUNS/n2/remact/C.txt, offset=0.00

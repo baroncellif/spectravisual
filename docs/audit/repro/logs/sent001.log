@@ -1,0 +1,97 @@
+
+==================== SENTINEL: excluded row with .lin uncertainty 0.010 MHz ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 01:39:30 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+Added assignment for 2511.3318 MHz
+Assigned 1 selected predicted line to 2511.3338 MHz
+Added assignment for 2517.2220 MHz
+Assigned 1 selected predicted line to 2517.2240 MHz
+Added assignment for 3139.1499 MHz
+Assigned 1 selected predicted line to 3139.1519 MHz
+Added assignment for 3766.9583 MHz
+Assigned 1 selected predicted line to 3766.9603 MHz
+Added assignment for 4394.7550 MHz
+Assigned 1 selected predicted line to 4394.7570 MHz
+Added assignment for 3146.4679 MHz
+Assigned 1 selected predicted line to 3146.4699 MHz
+model.par
+model.lin
+model.fit
+model.bak
+model.var
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:39:30 2026
+
+LINES REQUESTED=    6 NUMBER OF PARAMETERS=  3 NUMBER OF ITERATIONS= 50
+  MARQUARDT PARAMETER = 0.0000E+00 max (OBS-CALC)/ERROR =1.0000E+06
+Converting Line 6
+Finished Quantum   7
+    1 Lines rejected from fit
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =        0.002019 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =        0.002019 MHz, IR RMS =        0.00000
+ END OF ITERATION  1 OLD, NEW RMS ERROR=        0.20190         0.03536
+Finished Quantum   7
+    1 Lines rejected from fit
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =        0.000063 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =        0.000354 MHz, IR RMS =        0.00000
+ END OF ITERATION  2 OLD, NEW RMS ERROR=        0.03536         0.03536
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:39:30 2026
+FIT COMPLETE
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 01:39:30 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8835    4.9224
+    225.000     81130.2798    4.9092
+    150.000     76411.6882    4.8832
+     75.000     64385.6479    4.8088
+     37.500     47281.5030    4.6747
+     18.750     28290.1681    4.4516
+      9.375     13218.8020    4.1212
+      2.000      1415.5658    3.1509
+sorted     3350 lines
+Fit -> 1  status: SPFIT stopped after 2/50 iterations; MICROWAVE RMS =        0.000354 MHz
+-- model.lin:
+  |   4  1  4  3  1  3                      2511.333800   0.010000 1.0
+  |   4  0  4  3  0  3                      2517.224000   0.010000 1.0
+  |   5  1  5  4  1  4                     93139.151900   0.010000 1.0
+  |   6  1  6  5  1  5                      3766.960300   0.010000 1.0
+  |   7  1  7  6  1  6                      4394.757000   0.010000 1.0
+  |   5  0  5  4  0  4                      3146.469900   0.010000 1.0
+  |      3      3         30000   3.1317423680000E+02    1.000000E+00 C/
+  | 3 parameters read, 3 independent parameters
+  !  ***** NEXT LINE NOT USED IN FIT
+  |     3:   5  1  5  4  1  4                     93139.15190    3139.14994  999.99999    0.01000   0.00000
+  |    3         30000         C/        313.17435(127)          0.00012    
+  !  MICROWAVE RMS =        0.002019 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  1 OLD, NEW RMS ERROR=        0.20190         0.03536
+  !  ***** NEXT LINE NOT USED IN FIT
+  |     3:   5  1  5  4  1  4                     93139.15190    3139.15165  999.99999    0.01000   0.00494
+  |    3         30000         C/        313.17435(127)         -0.00000    
+  !  MICROWAVE RMS =        0.000354 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  2 OLD, NEW RMS ERROR=        0.03536         0.03536
+A after fit: 1151.359946  (start 1151.360417)

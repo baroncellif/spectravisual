@@ -1,0 +1,50 @@
+GuardMalloc[timeout-85964]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[timeout-85964]:  - Some buffer overruns may not be noticed.
+GuardMalloc[timeout-85964]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[timeout-85964]: version 064575.39.1
+GuardMalloc[harness3-85965]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[harness3-85965]:  - Some buffer overruns may not be noticed.
+GuardMalloc[harness3-85965]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[harness3-85965]: version 064575.39.1
+
+==================== INTENSITY FIT side effects on a generated multi-species catalogue ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:44 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   7708
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000    168818.6491    5.2274
+    225.000    164219.5502    5.2154
+    150.000    155540.1603    5.1918
+     75.000    133103.4093    5.1242
+     37.500    100276.4975    5.0012
+     18.750     62196.3024    4.7938
+      9.375     30220.3850    4.4803
+      2.000      3332.9216    3.5228
+sorted     7708 lines
+generated catalogue: n_pred=7708 generated_active=1 cat_temp_k=2.000 rot_temp_k=2.000
+watch species-1 line f=0.0004: lin=3.9701e-21 (cat_lgint=-19.4012, conc=0.10)
+Added assignment for 2099.8138 MHz
+Assigned 1 selected predicted line to 2099.8158 MHz
+Added assignment for 2108.8229 MHz
+Assigned 1 selected predicted line to 2108.8249 MHz
+Added assignment for 2112.7386 MHz
+Assigned 1 selected predicted line to 2112.7406 MHz
+Added assignment for 2141.9465 MHz
+Assigned 1 selected predicted line to 2141.9485 MHz
+Added assignment for 2173.2128 MHz
+Assigned 1 selected predicted line to 2173.2148 MHz
+Added assignment for 2203.2053 MHz
+Assigned 1 selected predicted line to 2203.2073 MHz
+assignments: 6
+BEFORE Run fit: dipole_cat=(0.750 0.210 1.140) dipole_red=(0.750 0.210 1.140) rot=2.000  species0 mu=(0.750 0.210 1.140) T=2.000
+intfit message: 6/6 lines used; log RMS 0.00864
+AFTER  Run fit: dipole_red=(0.750 0.210 1.140) rot=2.023  species0 mu=(0.750 0.210 1.140) T=2.023  p->temp_k=2.023
+watch species-1 line after Run fit: lin=3.8967e-20  (concentration 0.10 still applied? ratio to cat base=9.8151e-01)
+after typing T rot=2.0 in the top bar: species-1 line lin=3.9701e-20 ratio=1.0000e+00
+after typing T rot=2.0 in Pred&Fit panel : species-1 line lin=3.9701e-21 ratio=1.0000e-01

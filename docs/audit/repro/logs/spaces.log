@@ -1,0 +1,6 @@
+
+==================== PATH WITH SPACES: data_dir containing a space ====================
+sh: line 0: cd: $RUNS/with: No such file or directory
+data_dir='$RUNS/with space'
+Calculate -> 0, status: SPCAT failed (exit 256).
+model.var written: yes; model.cat produced by SPCAT: no

@@ -1,0 +1,6 @@
+
+==================== SPECTRUM FILE in descending frequency order ====================
+loaded 1501 points, first x = 3001.500, last x = 2998.500
+binary_search_lower(2999.8) = 0, binary_search_upper(3000.2) = 1501
+Peak found: 3000.0000 (Copied to clipboard)
+right-drag over the 3000 MHz line -> n_peaks = 1

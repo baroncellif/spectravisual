@@ -1,0 +1,14 @@
+
+==================== SPECTRUM IN DESCENDING ORDER: right-drag and intensity areas ====================
+Peak found: 3000.0000 (Copied to clipboard)
+Added assignment for 3000.0000 MHz
+Assigned 1 selected predicted line to 3000.0000 MHz
+Added assignment for 3001.0000 MHz
+Assigned 1 selected predicted line to 3001.0000 MHz
+ascending  file: right-drag over 2999.8-3000.2 MHz (weak line at 3000.0) -> measured 3000.0000 MHz; intensity fit: 2/2 lines used; log RMS 0.00145
+Peak found: 3001.0000 (Copied to clipboard)
+Added assignment for 3000.0000 MHz
+Assigned 1 selected predicted line to 3000.0000 MHz
+Added assignment for 3001.0000 MHz
+Assigned 1 selected predicted line to 3001.0000 MHz
+descending file: right-drag over 2999.8-3000.2 MHz (weak line at 3000.0) -> measured 3001.0000 MHz; intensity fit: No 2 positive assigned areas in the active trace.

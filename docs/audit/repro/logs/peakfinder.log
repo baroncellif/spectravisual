@@ -1,0 +1,14 @@
+
+==================== PEAK FINDER: noise window unused, threshold on the raw signal, negative search width ====================
+RMS: 1.17e+00 | Threshold: 3.51e+00 | SigPts: 5
+Found 21 peaks.
+RMS: 1.17e+00 | Threshold: 3.51e+00 | SigPts: 5
+Found 21 peaks.
+baseline 1, lines +5: noise window 10 -> 21 peaks, noise window 1000 -> 21 peaks
+RMS: 1.01e+01 | Threshold: 3.02e+01 | SigPts: 5
+Found 0 peaks.
+same lines on a baseline of 10 (still noise-free) -> 0 peaks
+search width -5 (the panel accepts it, controller.c:890):
+RMS: 1.01e+01 | Threshold: 3.02e+01 | SigPts: -5
+Found 0 peaks.
+returned 0 peaks

@@ -1,0 +1,549 @@
+
+==================== SENTINEL: excluded row with .lin uncertainty 0.500 MHz ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 01:39:30 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+Added assignment for 2511.3318 MHz
+Assigned 1 selected predicted line to 2511.3338 MHz
+Added assignment for 2517.2220 MHz
+Assigned 1 selected predicted line to 2517.2240 MHz
+Added assignment for 3139.1499 MHz
+Assigned 1 selected predicted line to 3139.1519 MHz
+Added assignment for 3766.9583 MHz
+Assigned 1 selected predicted line to 3766.9603 MHz
+Added assignment for 4394.7550 MHz
+Assigned 1 selected predicted line to 4394.7570 MHz
+Added assignment for 3146.4679 MHz
+Assigned 1 selected predicted line to 3146.4699 MHz
+model.par
+model.lin
+model.fit
+model.bak
+model.var
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:39:30 2026
+
+LINES REQUESTED=    6 NUMBER OF PARAMETERS=  3 NUMBER OF ITERATIONS= 50
+  MARQUARDT PARAMETER = 0.0000E+00 max (OBS-CALC)/ERROR =1.0000E+06
+Converting Line 6
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =    15000.002009 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    36742.346940 MHz, IR RMS =        0.00000
+ END OF ITERATION  1 OLD, NEW RMS ERROR=    73484.69388     65905.68438
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =    38199.754505 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    50293.572017 MHz, IR RMS =        0.00000
+ END OF ITERATION  2 OLD, NEW RMS ERROR=   100607.63600     65905.68438
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =    17529.369992 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    37483.063114 MHz, IR RMS =        0.00000
+ END OF ITERATION  3 OLD, NEW RMS ERROR=    75002.22666     65905.68438
+Finished Quantum   7
+MARQUARDT PARAMETER = 4.12083, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =    15449.707143 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    36692.745525 MHz, IR RMS =        0.00000
+ END OF ITERATION  4 OLD, NEW RMS ERROR=    73426.09255     61620.63440
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.0953089, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     9157.519538 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    34009.497939 MHz, IR RMS =        0.00000
+ END OF ITERATION  5 OLD, NEW RMS ERROR=    68086.36420     60427.68263
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.0953089, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     3648.046844 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    31756.711118 MHz, IR RMS =        0.00000
+ END OF ITERATION  6 OLD, NEW RMS ERROR=    64107.21830     58898.21616
+ roll-over at K = 7
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0.0953089, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =    21362.912581 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    56342.397341 MHz, IR RMS =        0.00000
+ END OF ITERATION  7 OLD, NEW RMS ERROR=   112800.37018     58898.21616
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.363686, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     3749.837619 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    31351.780429 MHz, IR RMS =        0.00000
+ END OF ITERATION  8 OLD, NEW RMS ERROR=    62962.48469     60276.87839
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.508368, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     2832.595667 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    31000.117929 MHz, IR RMS =        0.00000
+ END OF ITERATION  9 OLD, NEW RMS ERROR=    62381.95119     54170.37539
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0.508368, TRUST EXPANSION = 0.41
+ MICROWAVE AVG =     3585.272714 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    31327.740619 MHz, IR RMS =        0.00000
+ END OF ITERATION 10 OLD, NEW RMS ERROR=    62881.91983     54170.37539
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.769414, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     2557.911130 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30844.389480 MHz, IR RMS =        0.00000
+ END OF ITERATION 11 OLD, NEW RMS ERROR=    61903.18942     59112.02529
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.454386, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     1186.381918 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30680.560486 MHz, IR RMS =        0.00000
+ END OF ITERATION 12 OLD, NEW RMS ERROR=    61569.92871     60997.59608
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.467206, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      827.628896 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30570.453517 MHz, IR RMS =        0.00000
+ END OF ITERATION 13 OLD, NEW RMS ERROR=    61384.28037     60306.75740
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.351321, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      894.664194 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30532.820082 MHz, IR RMS =        0.00000
+ END OF ITERATION 14 OLD, NEW RMS ERROR=    61317.33753     60907.56763
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.425129, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     1031.273999 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30490.841072 MHz, IR RMS =        0.00000
+ END OF ITERATION 15 OLD, NEW RMS ERROR=    61255.22721     60303.95455
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.425129, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     1158.838603 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30484.078815 MHz, IR RMS =        0.00000
+ END OF ITERATION 16 OLD, NEW RMS ERROR=    61251.50213     60789.75728
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.302758, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     1181.188462 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30442.326726 MHz, IR RMS =        0.00000
+ END OF ITERATION 17 OLD, NEW RMS ERROR=    61175.05956     60691.23759
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0.302758, TRUST EXPANSION = 0.44
+ MICROWAVE AVG =     1185.189561 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30450.786173 MHz, IR RMS =        0.00000
+ END OF ITERATION 18 OLD, NEW RMS ERROR=    61211.12209     60691.23759
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.330268, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =     1132.079031 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30421.476059 MHz, IR RMS =        0.00000
+ END OF ITERATION 19 OLD, NEW RMS ERROR=    61158.86563     61037.31748
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.330268, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      925.900025 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30404.329201 MHz, IR RMS =        0.00000
+ END OF ITERATION 20 OLD, NEW RMS ERROR=    61149.05482     61076.42429
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.405486, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      941.871268 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30403.277496 MHz, IR RMS =        0.00000
+ END OF ITERATION 21 OLD, NEW RMS ERROR=    61144.86987     61009.02387
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.290899, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      955.885979 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30393.322856 MHz, IR RMS =        0.00000
+ END OF ITERATION 22 OLD, NEW RMS ERROR=    61140.99208     61070.13928
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.43864, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      976.889283 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30398.705381 MHz, IR RMS =        0.00000
+ END OF ITERATION 23 OLD, NEW RMS ERROR=    61144.12664     60998.85038
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.271257, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      981.741101 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30388.512378 MHz, IR RMS =        0.00000
+ END OF ITERATION 24 OLD, NEW RMS ERROR=    61137.81042     61070.36829
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.446571, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      990.375542 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30396.617957 MHz, IR RMS =        0.00000
+ END OF ITERATION 25 OLD, NEW RMS ERROR=    61143.92258     60998.00440
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.266354, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      993.117413 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30386.385815 MHz, IR RMS =        0.00000
+ END OF ITERATION 26 OLD, NEW RMS ERROR=    61136.76489     61069.78806
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0.266354, TRUST EXPANSION = 0.45
+ MICROWAVE AVG =      996.811114 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30395.481524 MHz, IR RMS =        0.00000
+ END OF ITERATION 27 OLD, NEW RMS ERROR=    61143.59512     61069.78806
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      982.816803 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30383.187591 MHz, IR RMS =        0.00000
+ END OF ITERATION 28 OLD, NEW RMS ERROR=    61117.27612     61101.08645
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      960.502183 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30415.699423 MHz, IR RMS =        0.00000
+ END OF ITERATION 29 OLD, NEW RMS ERROR=    61170.90564     61101.08645
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      968.055012 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30382.682174 MHz, IR RMS =        0.00000
+ END OF ITERATION 30 OLD, NEW RMS ERROR=    61104.02217     61100.34680
+Finished Quantum   7
+MARQUARDT PARAMETER = 0.0126912, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      955.606792 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30372.087905 MHz, IR RMS =        0.00000
+ END OF ITERATION 31 OLD, NEW RMS ERROR=    61101.35946     61096.28481
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0.0126912, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      935.508135 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30386.294083 MHz, IR RMS =        0.00000
+ END OF ITERATION 32 OLD, NEW RMS ERROR=    61117.72072     61096.28481
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      949.044536 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30372.627753 MHz, IR RMS =        0.00000
+ END OF ITERATION 33 OLD, NEW RMS ERROR=    61089.00829     61088.89582
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      947.447815 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30371.015824 MHz, IR RMS =        0.00000
+ END OF ITERATION 34 OLD, NEW RMS ERROR=    61088.98836     61088.52466
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =      933.453201 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.789196 MHz, IR RMS =        0.00000
+ END OF ITERATION 35 OLD, NEW RMS ERROR=    61090.86603     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =     1105.541523 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30388.052254 MHz, IR RMS =        0.00000
+ END OF ITERATION 36 OLD, NEW RMS ERROR=    61140.09569     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      947.544364 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30371.510945 MHz, IR RMS =        0.00000
+ END OF ITERATION 37 OLD, NEW RMS ERROR=    61110.86455     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      938.395798 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30372.734976 MHz, IR RMS =        0.00000
+ END OF ITERATION 38 OLD, NEW RMS ERROR=    61114.73467     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      935.277124 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.359506 MHz, IR RMS =        0.00000
+ END OF ITERATION 39 OLD, NEW RMS ERROR=    61116.53100     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      934.140584 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.621110 MHz, IR RMS =        0.00000
+ END OF ITERATION 40 OLD, NEW RMS ERROR=    61117.26384     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.714417 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.724411 MHz, IR RMS =        0.00000
+ END OF ITERATION 41 OLD, NEW RMS ERROR=    61117.55061     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.552786 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.764364 MHz, IR RMS =        0.00000
+ END OF ITERATION 42 OLD, NEW RMS ERROR=    61117.66116     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.491214 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.779698 MHz, IR RMS =        0.00000
+ END OF ITERATION 43 OLD, NEW RMS ERROR=    61117.70353     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.467718 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.785566 MHz, IR RMS =        0.00000
+ END OF ITERATION 44 OLD, NEW RMS ERROR=    61117.71974     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.458746 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.787809 MHz, IR RMS =        0.00000
+ END OF ITERATION 45 OLD, NEW RMS ERROR=    61117.72593     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.455319 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.788666 MHz, IR RMS =        0.00000
+ END OF ITERATION 46 OLD, NEW RMS ERROR=    61117.72830     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.454010 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.788994 MHz, IR RMS =        0.00000
+ END OF ITERATION 47 OLD, NEW RMS ERROR=    61117.72920     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.453510 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.789119 MHz, IR RMS =        0.00000
+ END OF ITERATION 48 OLD, NEW RMS ERROR=    61117.72955     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.453319 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.789167 MHz, IR RMS =        0.00000
+ END OF ITERATION 49 OLD, NEW RMS ERROR=    61117.72968     61078.63608
+Finished Quantum   7
+Fit Diverging: restore parameters
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 0.38
+ MICROWAVE AVG =      933.453246 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =    30373.789185 MHz, IR RMS =        0.00000
+ END OF ITERATION 50 OLD, NEW RMS ERROR=    61117.72973     61078.63608
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 01:39:30 2026
+FIT COMPLETE
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 01:39:30 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=       -96.5142
+ NUMBER OF LINES =    126
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     22558.9327    4.3533
+    225.000     16597.6107    4.2200
+    150.000     10065.1911    4.0028
+     75.000      3636.4020    3.5607
+     37.500      1222.3591    3.0872
+     18.750       516.4322    2.7130
+      9.375       293.2861    2.4673
+      2.000       165.8230    2.2196
+sorted      126 lines
+Fit -> 1  status: SPFIT stopped after 50/50 iterations; MICROWAVE RMS =    30373.789185 MHz
+-- model.lin:
+  |   4  1  4  3  1  3                      2511.333800   0.500000 1.0
+  |   4  0  4  3  0  3                      2517.224000   0.500000 1.0
+  |   5  1  5  4  1  4                     93139.151900   0.500000 1.0
+  |   6  1  6  5  1  5                      3766.960300   0.500000 1.0
+  |   7  1  7  6  1  6                      4394.757000   0.500000 1.0
+  |   5  0  5  4  0  4                      3146.469900   0.500000 1.0
+  |      3      3         30000   3.1317423680000E+02    1.000000E+00 C/
+  | 3 parameters read, 3 independent parameters
+  |     3:   5  1  5  4  1  4                     93139.15190    3139.14994  999.99999    0.50000   0.00000
+  |    3         30000         C/         3816.021( 59)         3502.847    
+  !  MICROWAVE RMS =    36742.346940 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  1 OLD, NEW RMS ERROR=    73484.69388     65905.68438
+  |     3:   5  1  5  4  1  4                     93139.15190  -16255.29444  999.99999    0.50000   3.03872
+  |    3         30000         C/          824.324( 59)          511.149    
+  !  MICROWAVE RMS =    50293.572017 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  2 OLD, NEW RMS ERROR=   100607.63600     65905.68438
+  |     3:   5  1  5  4  1  4                     93139.15190    1568.51317  999.99999    0.50000   1.75848
+  |    3         30000         C/          511.021( 59)          197.847    
+  !  MICROWAVE RMS =    37483.063114 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  3 OLD, NEW RMS ERROR=    75002.22666     65905.68438
+  |     3:   5  1  5  4  1  4                     93139.15190    3279.35005  999.99999    0.50000   1.23625
+  |    3         30000         C/         1852.282( 42)         1341.261    
+  !  MICROWAVE RMS =    36692.745525 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  4 OLD, NEW RMS ERROR=    73426.09255     61620.63440
+  |     3:   5  1  5  4  1  4                     93139.15190   10913.55248  999.99999    0.50000   0.14676
+  |    3         30000         C/         3724.767(163)         1872.484    
+  !  MICROWAVE RMS =    34009.497939 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  5 OLD, NEW RMS ERROR=    68086.36420     60427.68263
+  |     3:   5  1  5  4  1  4                     93139.15190   20925.65181  999.99999    0.50000   0.75800
+  |    3         30000         C/         7286.873( 72)         3562.107    
+  !  MICROWAVE RMS =    31756.711118 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  6 OLD, NEW RMS ERROR=    64107.21830     58898.21616
+  |     3:   5  1  5  4  1  4                     93139.15190  -41575.13440  999.99999    0.50000   9.59128
+  |    3         30000         C/         4244.564( 72)          519.797    
+  !  MICROWAVE RMS =    56342.397341 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  7 OLD, NEW RMS ERROR=   112800.37018     58898.21616
+  |     3:   5  1  5  4  1  4                     93139.15190   21969.69111  999.99999    0.50000   0.24871
+  |    3         30000         C/         6554.439( 73)         2309.875    
+  !  MICROWAVE RMS =    31351.780429 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  8 OLD, NEW RMS ERROR=    62962.48469     60276.87839
+  |     3:   5  1  5  4  1  4                     93139.15190   24755.65831  999.99999    0.50000   0.37547
+  |    3         30000         C/         4332.462(126)        -2221.977    
+  !  MICROWAVE RMS =    31000.117929 MHz, IR RMS =        0.00000
+  !  END OF ITERATION  9 OLD, NEW RMS ERROR=    62381.95119     54170.37539
+  |     3:   5  1  5  4  1  4                     93139.15190   22610.61298  999.99999    0.50000   0.52184
+  |    3         30000         C/         6173.313(126)         -381.126    
+  !  MICROWAVE RMS =    31327.740619 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 10 OLD, NEW RMS ERROR=    62881.91983     54170.37539
+  |     3:   5  1  5  4  1  4                     93139.15190   25313.71700  999.99999    0.50000   0.22371
+  |    3         30000         C/         5751.751( 93)         -421.563    
+  !  MICROWAVE RMS =    30844.389480 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 11 OLD, NEW RMS ERROR=    61903.18942     59112.02529
+  |     3:   5  1  5  4  1  4                     93139.15190   27071.68909  999.99999    0.50000   0.25419
+  |    3         30000         C/         6785.315( 84)         1033.565    
+  !  MICROWAVE RMS =    30680.560486 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 12 OLD, NEW RMS ERROR=    61569.92871     60997.59608
+  |     3:   5  1  5  4  1  4                     93139.15190   28544.11336  999.99999    0.50000   0.23279
+  |    3         30000         C/         6202.786(102)         -582.529    
+  !  MICROWAVE RMS =    30570.453517 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 13 OLD, NEW RMS ERROR=    61384.28037     60306.75740
+  |     3:   5  1  5  4  1  4                     93139.15190   28594.24660  999.99999    0.50000   0.27202
+  |    3         30000         C/         7206.821( 87)         1004.036    
+  !  MICROWAVE RMS =    30532.820082 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 14 OLD, NEW RMS ERROR=    61317.33753     60907.56763
+  |     3:   5  1  5  4  1  4                     93139.15190   29356.25111  999.99999    0.50000   0.24457
+  |    3         30000         C/         6361.826(105)         -844.995    
+  !  MICROWAVE RMS =    30490.841072 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 15 OLD, NEW RMS ERROR=    61255.22721     60303.95455
+  |     3:   5  1  5  4  1  4                     93139.15190   28978.33001  999.99999    0.50000   0.28830
+  |    3         30000         C/         7267.460( 81)          905.633    
+  !  MICROWAVE RMS =    30484.078815 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 16 OLD, NEW RMS ERROR=    61251.50213     60789.75728
+  |     3:   5  1  5  4  1  4                     93139.15190   29710.92367  999.99999    0.50000   0.23426
+  |    3         30000         C/         6534.159(111)         -733.301    
+  !  MICROWAVE RMS =    30442.326726 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 17 OLD, NEW RMS ERROR=    61175.05956     60691.23759
+  |     3:   5  1  5  4  1  4                     93139.15190   29452.66774  999.99999    0.50000   0.29627
+  |    3         30000         C/         7125.569(111)         -141.891    
+  !  MICROWAVE RMS =    30450.786173 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 18 OLD, NEW RMS ERROR=    61211.12209     60691.23759
+  |     3:   5  1  5  4  1  4                     93139.15190   29778.93482  999.99999    0.50000   0.23749
+  |    3         30000         C/         6911.430(103)         -214.139    
+  !  MICROWAVE RMS =    30421.476059 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 19 OLD, NEW RMS ERROR=    61158.86563     61037.31748
+  |     3:   5  1  5  4  1  4                     93139.15190   30066.64606  999.99999    0.50000   0.24853
+  |    3         30000         C/         7350.578( 94)          439.148    
+  !  MICROWAVE RMS =    30404.329201 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 20 OLD, NEW RMS ERROR=    61149.05482     61076.42429
+  |     3:   5  1  5  4  1  4                     93139.15190   30401.91223  999.99999    0.50000   0.23010
+  |    3         30000         C/         6989.755( 98)         -360.823    
+  !  MICROWAVE RMS =    30403.277496 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 21 OLD, NEW RMS ERROR=    61144.86987     61009.02387
+  |     3:   5  1  5  4  1  4                     93139.15190   30263.25130  999.99999    0.50000   0.24441
+  |    3         30000         C/         7424.253( 96)          434.498    
+  !  MICROWAVE RMS =    30393.322856 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 22 OLD, NEW RMS ERROR=    61140.99208     61070.13928
+  |     3:   5  1  5  4  1  4                     93139.15190   30533.40696  999.99999    0.50000   0.23316
+  |    3         30000         C/         7030.490( 96)         -393.763    
+  !  MICROWAVE RMS =    30398.705381 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 23 OLD, NEW RMS ERROR=    61144.12664     60998.85038
+  |     3:   5  1  5  4  1  4                     93139.15190   30347.58839  999.99999    0.50000   0.24229
+  |    3         30000         C/         7454.519( 98)          424.028    
+  !  MICROWAVE RMS =    30388.512378 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 24 OLD, NEW RMS ERROR=    61137.81042     61070.36829
+  |     3:   5  1  5  4  1  4                     93139.15190   30594.56685  999.99999    0.50000   0.23471
+  |    3         30000         C/         7049.241( 96)         -405.278    
+  !  MICROWAVE RMS =    30396.617957 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 25 OLD, NEW RMS ERROR=    61143.92258     60998.00440
+  |     3:   5  1  5  4  1  4                     93139.15190   30388.83830  999.99999    0.50000   0.24181
+  |    3         30000         C/         7466.572( 98)          417.331    
+  !  MICROWAVE RMS =    30386.385815 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 26 OLD, NEW RMS ERROR=    61136.76489     61069.78806
+  |     3:   5  1  5  4  1  4                     93139.15190   30622.73365  999.99999    0.50000   0.23509
+  |    3         30000         C/         7132.431( 98)           83.190    
+  !  MICROWAVE RMS =    30395.481524 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 27 OLD, NEW RMS ERROR=    61143.59512     61069.78806
+  |     3:   5  1  5  4  1  4                     93139.15190   30461.50122  999.99999    0.50000   0.23734
+  |    3         30000         C/         7603.709(139)          471.278    
+  !  MICROWAVE RMS =    30383.187591 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 28 OLD, NEW RMS ERROR=    61117.27612     61101.08645
+  |     3:   5  1  5  4  1  4                     93139.15190   30639.65848  999.99999    0.50000   0.29658
+  |    3         30000         C/         7201.202(139)           68.771    
+  !  MICROWAVE RMS =    30415.699423 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 29 OLD, NEW RMS ERROR=    61170.90564     61101.08645
+  |     3:   5  1  5  4  1  4                     93139.15190   30515.25388  999.99999    0.50000   0.27303
+  |    3         30000         C/         7280.593(143)           79.391    
+  !  MICROWAVE RMS =    30382.682174 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 30 OLD, NEW RMS ERROR=    61104.02217     61100.34680
+  |     3:   5  1  5  4  1  4                     93139.15190   30831.42375  999.99999    0.50000   0.27610
+  |    3         30000         C/         7488.969(136)          208.376    
+  !  MICROWAVE RMS =    30372.087905 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 31 OLD, NEW RMS ERROR=    61101.35946     61096.28481
+  |     3:   5  1  5  4  1  4                     93139.15190   30830.37385  999.99999    0.50000   0.27239
+  |    3         30000         C/         7311.000(136)           30.407    
+  !  MICROWAVE RMS =    30386.294083 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 32 OLD, NEW RMS ERROR=    61117.72072     61096.28481
+  |     3:   5  1  5  4  1  4                     93139.15190   30839.90087  999.99999    0.50000   0.27012
+  |    3         30000         C/         7317.866(142)            6.865    
+  !  MICROWAVE RMS =    30372.627753 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 33 OLD, NEW RMS ERROR=    61089.00829     61088.89582
+  |     3:   5  1  5  4  1  4                     93139.15190   30891.47743  999.99999    0.50000   0.27472
+  |    3         30000         C/         7385.899(141)           68.033    
+  !  MICROWAVE RMS =    30371.015824 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 34 OLD, NEW RMS ERROR=    61088.98836     61088.52466
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81783  999.99999    0.50000   0.27288
+  |    3         30000         C/         7022.383(145)         -363.516    
+  !  MICROWAVE RMS =    30373.789196 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 35 OLD, NEW RMS ERROR=    61090.86603     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30644.61544  999.99999    0.50000   0.31408
+  |    3         30000         C/         7332.853(145)          -53.046    
+  !  MICROWAVE RMS =    30388.052254 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 36 OLD, NEW RMS ERROR=    61140.09569     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30888.57504  999.99999    0.50000   0.27575
+  |    3         30000         C/         7365.635(145)          -20.263    
+  !  MICROWAVE RMS =    30371.510945 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 37 OLD, NEW RMS ERROR=    61110.86455     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30897.18269  999.99999    0.50000   0.27423
+  |    3         30000         C/         7378.158(145)           -7.741    
+  !  MICROWAVE RMS =    30372.734976 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 38 OLD, NEW RMS ERROR=    61114.73467     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30899.58167  999.99999    0.50000   0.27380
+  |    3         30000         C/         7382.942(145)           -2.957    
+  !  MICROWAVE RMS =    30373.359506 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 39 OLD, NEW RMS ERROR=    61116.53100     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.36789  999.99999    0.50000   0.27366
+  |    3         30000         C/         7384.769(145)           -1.130    
+  !  MICROWAVE RMS =    30373.621110 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 40 OLD, NEW RMS ERROR=    61117.26384     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.64921  999.99999    0.50000   0.27361
+  |    3         30000         C/         7385.467(145)           -0.431    
+  !  MICROWAVE RMS =    30373.724411 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 41 OLD, NEW RMS ERROR=    61117.55061     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.75389  999.99999    0.50000   0.27359
+  |    3         30000         C/         7385.734(145)           -0.165    
+  !  MICROWAVE RMS =    30373.764364 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 42 OLD, NEW RMS ERROR=    61117.66116     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.79348  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.836(145)           -0.063    
+  !  MICROWAVE RMS =    30373.779698 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 43 OLD, NEW RMS ERROR=    61117.70353     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.80854  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.875(145)           -0.024    
+  !  MICROWAVE RMS =    30373.785566 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 44 OLD, NEW RMS ERROR=    61117.71974     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81429  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.890(145)           -0.009    
+  !  MICROWAVE RMS =    30373.787809 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 45 OLD, NEW RMS ERROR=    61117.72593     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81648  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.895(145)           -0.004    
+  !  MICROWAVE RMS =    30373.788666 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 46 OLD, NEW RMS ERROR=    61117.72830     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81732  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.898(145)           -0.001    
+  !  MICROWAVE RMS =    30373.788994 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 47 OLD, NEW RMS ERROR=    61117.72920     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81764  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.898(145)           -0.001    
+  !  MICROWAVE RMS =    30373.789119 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 48 OLD, NEW RMS ERROR=    61117.72955     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81776  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.899(145)           -0.000    
+  !  MICROWAVE RMS =    30373.789167 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 49 OLD, NEW RMS ERROR=    61117.72968     61078.63608
+  |     3:   5  1  5  4  1  4                     93139.15190   30900.81781  999.99999    0.50000   0.27358
+  |    3         30000         C/         7385.899(145)           -0.000    
+  !  MICROWAVE RMS =    30373.789185 MHz, IR RMS =        0.00000
+  !  END OF ITERATION 50 OLD, NEW RMS ERROR=    61117.72973     61078.63608
+A after fit: 24198.650009  (start 1151.360417)

@@ -1,0 +1,7 @@
+# UBSan, third pass (harness5_ubsan, -fsanitize=undefined,float-divide-by-zero,float-cast-overflow)
+descending2  runtime errors: 0   last line: descending file: right-drag over 2999.8-3000.2 MHz (weak line at 3000.0) -> measured 3001.
+textleak     runtime errors: 0   last line: '12' + Enter typed while the Advanced window has the keyboard (no cell in edit) -> main Of
+keyleak      runtime errors: 0   last line: Settings window has the keyboard, keys Backspace D R: n_peaks 2 -> 1; Intensity panel visi
+yrange       runtime errors: 0   last line: spectrum then CAT (drop)       : spectrum y range 1e-06..3.1e-05, shown Y range vymin=1e-0
+noA          runtime errors: 0   last line:   | ...
+noA2         runtime errors: 0   last line:   |        30000  3.131742368000000E+02  1.00000000E+00 /C/

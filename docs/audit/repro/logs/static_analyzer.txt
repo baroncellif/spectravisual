@@ -1,0 +1,210 @@
+loader.c:450:12: warning: Value of 'errno' was not checked and may be overwritten by function 'fgets' [unix.Errno]
+  450 |     while (fgets(line, sizeof(line), f) && n < maxpts) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+loader.c:433:10: note: 'f' is non-null
+  433 |     if (!f) return 0;
+      |          ^
+loader.c:433:5: note: Taking false branch
+  433 |     if (!f) return 0;
+      |     ^
+loader.c:439:5: note: Loop condition is true.  Entering loop body
+  439 |     while (fgets(line, sizeof(line), f)) {
+      |     ^
+loader.c:441:13: note: Assuming the condition is false
+  441 |         if (sscanf(line, "%lf", &a) != 1) continue;
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+loader.c:441:9: note: Taking false branch
+  441 |         if (sscanf(line, "%lf", &a) != 1) continue;
+      |         ^
+loader.c:442:9: note: Taking true branch
+  442 |         if (parse_line(line, &a, &b, SEP_COMMA)) {sep = SEP_COMMA; detected = 1; break;}
+      |         ^
+loader.c:442:82: note:  Execution continues on line 446
+  442 |         if (parse_line(line, &a, &b, SEP_COMMA)) {sep = SEP_COMMA; detected = 1; break;}
+      |                                                                                  ^
+loader.c:446:10: note: 'detected' is 1
+  446 |     if (!detected) {fclose(f); return 0;}
+      |          ^~~~~~~~
+loader.c:446:5: note: Taking false branch
+  446 |     if (!detected) {fclose(f); return 0;}
+      |     ^
+loader.c:447:5: note: After calling 'rewind' reading 'errno' is required to find out if the call has failed
+  447 |     rewind(f);
+      |     ^~~~~~~~~
+loader.c:450:12: note: Value of 'errno' was not checked and may be overwritten by function 'fgets'
+  450 |     while (fgets(line, sizeof(line), f) && n < maxpts) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+loader.c:487:18: warning: Value of 'errno' was not checked and may be overwritten by function 'malloc' [unix.Errno]
+  487 |     Point *arr = malloc(sizeof(Point) * cap);
+      |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+loader.c:466:10: note: 'f' is non-null
+  466 |     if (!f) return 0;
+      |          ^
+loader.c:466:5: note: Taking false branch
+  466 |     if (!f) return 0;
+      |     ^
+loader.c:471:5: note: Loop condition is true.  Entering loop body
+  471 |     while (fgets(line, sizeof(line), f)) {
+      |     ^
+loader.c:473:13: note: Assuming the condition is false
+  473 |         if (sscanf(line, "%lf", &a) != 1) continue;
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+loader.c:473:9: note: Taking false branch
+  473 |         if (sscanf(line, "%lf", &a) != 1) continue;
+      |         ^
+loader.c:474:9: note: Taking true branch
+  474 |         if (parse_line(line, &a, &b, SEP_COMMA)) {sep = SEP_COMMA; detected = 1; break;}
+      |         ^
+loader.c:474:82: note:  Execution continues on line 478
+  474 |         if (parse_line(line, &a, &b, SEP_COMMA)) {sep = SEP_COMMA; detected = 1; break;}
+      |                                                                                  ^
+loader.c:478:10: note: 'detected' is 1
+  478 |     if (!detected) {
+      |          ^~~~~~~~
+loader.c:478:5: note: Taking false branch
+  478 |     if (!detected) {
+      |     ^
+loader.c:483:5: note: After calling 'rewind' reading 'errno' is required to find out if the call has failed
+  483 |     rewind(f);
+      |     ^~~~~~~~~
+loader.c:487:18: note: Value of 'errno' was not checked and may be overwritten by function 'malloc'
+  487 |     Point *arr = malloc(sizeof(Point) * cap);
+      |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.
+predfit.c:1439:12: warning: File position of the stream might be 'indeterminate' after a failed operation. Can cause undefined behavior [unix.Stream]
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |            ^
+predfit.c:1704:9: note: Assuming field 'advanced_open' is not equal to 0
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |         ^~~~~~~~~~~~~~~~~
+predfit.c:1704:9: note: Left side of '||' is false
+predfit.c:1704:30: note: Assuming field 'advanced_renderer' is non-null
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |                              ^~~~~~~~~~~~~~~~~~~~~
+predfit.c:1704:5: note: Taking false branch
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |     ^
+predfit.c:1713:13: note: Assuming 'ww' is <= 0
+ 1713 |         if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
+      |             ^~~~~~
+predfit.c:1713:20: note: Left side of '&&' is false
+ 1713 |         if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
+      |                    ^
+predfit.c:1716:5: note: Calling 'report_refresh'
+ 1716 |     report_refresh(p);
+      |     ^~~~~~~~~~~~~~~~~
+predfit.c:1425:9: note: Assuming the condition is false
+ 1425 |     if (stat(path, &st) != 0) {
+      |         ^~~~~~~~~~~~~~~~~~~~
+predfit.c:1425:5: note: Taking false branch
+ 1425 |     if (stat(path, &st) != 0) {
+      |     ^
+predfit.c:1429:9: note: Assuming field 'tv_sec' is not equal to field 'mtime'
+ 1429 |     if (st.st_mtime == g_report.mtime && strcmp(path, g_report.path) == 0) return;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1429:39: note: Left side of '&&' is false
+ 1429 |     if (st.st_mtime == g_report.mtime && strcmp(path, g_report.path) == 0) return;
+      |                                       ^
+predfit.c:1436:10: note: 'fp' is non-null
+ 1436 |     if (!fp) return;
+      |          ^~
+predfit.c:1436:5: note: Taking false branch
+ 1436 |     if (!fp) return;
+      |     ^
+predfit.c:1439:5: note: Loop condition is true.  Entering loop body
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |     ^
+predfit.c:1442:13: note: Assuming the condition is true
+ 1442 |         if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1442:9: note: Taking true branch
+ 1442 |         if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
+      |         ^
+predfit.c:1444:20: note: Assuming this stream operation fails
+ 1444 |             while (fgets(line, sizeof(line), fp)) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1444:13: note: Loop condition is false. Execution continues on line 1455
+ 1444 |             while (fgets(line, sizeof(line), fp)) {
+      |             ^
+predfit.c:1455:13: note:  Execution continues on line 1439
+ 1455 |             continue;
+      |             ^
+predfit.c:1439:12: note: File position of the stream might be 'indeterminate' after a failed operation. Can cause undefined behavior
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1439:12: warning: Read function called when stream is in EOF state. Function has no effect [unix.Stream]
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |            ^
+predfit.c:1704:9: note: Assuming field 'advanced_open' is not equal to 0
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |         ^~~~~~~~~~~~~~~~~
+predfit.c:1704:9: note: Left side of '||' is false
+predfit.c:1704:30: note: Assuming field 'advanced_renderer' is non-null
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |                              ^~~~~~~~~~~~~~~~~~~~~
+predfit.c:1704:5: note: Taking false branch
+ 1704 |     if (!p->advanced_open || !p->advanced_renderer) return;
+      |     ^
+predfit.c:1713:13: note: Assuming 'ww' is <= 0
+ 1713 |         if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
+      |             ^~~~~~
+predfit.c:1713:20: note: Left side of '&&' is false
+ 1713 |         if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
+      |                    ^
+predfit.c:1716:5: note: Calling 'report_refresh'
+ 1716 |     report_refresh(p);
+      |     ^~~~~~~~~~~~~~~~~
+predfit.c:1425:9: note: Assuming the condition is false
+ 1425 |     if (stat(path, &st) != 0) {
+      |         ^~~~~~~~~~~~~~~~~~~~
+predfit.c:1425:5: note: Taking false branch
+ 1425 |     if (stat(path, &st) != 0) {
+      |     ^
+predfit.c:1429:9: note: Assuming field 'tv_sec' is not equal to field 'mtime'
+ 1429 |     if (st.st_mtime == g_report.mtime && strcmp(path, g_report.path) == 0) return;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1429:39: note: Left side of '&&' is false
+ 1429 |     if (st.st_mtime == g_report.mtime && strcmp(path, g_report.path) == 0) return;
+      |                                       ^
+predfit.c:1436:10: note: 'fp' is non-null
+ 1436 |     if (!fp) return;
+      |          ^~
+predfit.c:1436:5: note: Taking false branch
+ 1436 |     if (!fp) return;
+      |     ^
+predfit.c:1439:5: note: Loop condition is true.  Entering loop body
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |     ^
+predfit.c:1442:13: note: Assuming the condition is true
+ 1442 |         if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1442:9: note: Taking true branch
+ 1442 |         if (strstr(line, "NEW PARAMETER (EST. ERROR)")) {
+      |         ^
+predfit.c:1444:20: note: Assuming stream reaches end-of-file here
+ 1444 |             while (fgets(line, sizeof(line), fp)) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+predfit.c:1444:13: note: Loop condition is false. Execution continues on line 1455
+ 1444 |             while (fgets(line, sizeof(line), fp)) {
+      |             ^
+predfit.c:1455:13: note:  Execution continues on line 1439
+ 1455 |             continue;
+      |             ^
+predfit.c:1439:12: note: Read function called when stream is in EOF state. Function has no effect
+ 1439 |     while (fgets(line, sizeof(line), fp)) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.
+view.c:1051:13: warning: Value stored to 'rx' is never read [deadcode.DeadStores]
+ 1051 |             rx -= draw_chip(ren, rx, cy, buf, UI_OK, 1, UI_FONT_MONO_SM) + 6;
+      |             ^     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+view.c:1051:13: note: Value stored to 'rx' is never read
+ 1051 |             rx -= draw_chip(ren, rx, cy, buf, UI_OK, 1, UI_FONT_MONO_SM) + 6;
+      |             ^     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
+settings.c:1014:9: warning: Value stored to 'n' during its initialization is never read [deadcode.DeadStores]
+ 1014 |     int n = build_controls(s, ctl, 96, w, h);
+      |         ^   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+settings.c:1014:9: note: Value stored to 'n' during its initialization is never read
+ 1014 |     int n = build_controls(s, ctl, 96, w, h);
+      |         ^   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.

@@ -1,0 +1,3 @@
+
+==================== TYPING in the Advanced window while a main-window field has the focus ====================
+'12' + Enter typed while the Advanced window has the keyboard (no cell in edit) -> main Offset = 12.0000 MHz

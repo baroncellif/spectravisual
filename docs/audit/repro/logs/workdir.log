@@ -1,0 +1,5 @@
+
+==================== WORK DIR and Restore defaults ====================
+predfit.work_dir = '.fit'   fit_root(data_dir) = '$RUNS/n2/workdir/.fit'
+before Restore defaults: spcat='/Users/filippobaroncelli/Desktop/Programmi_SP/calpgm/spcat'
+after  Restore defaults: spcat='' spfit='' data_dir=''

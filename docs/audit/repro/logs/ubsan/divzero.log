@@ -1,0 +1,12 @@
+
+==================== PREDICTION-ONLY LAYOUT: W divides by exp_h = 0 ====================
+exp_h=0 pred_h=746 vymin=0 vymax=1
+$REPO/controller.c:1062:51: runtime error: division by zero
+    #0 0x0001006a3a90 in handle_keydown controller.c:1062
+    #1 0x0001006c4da4 in sc_divzero harness.c:684
+    #2 0x0001006bbaac in main harness.c:1129
+    #3 0x000189923dfc in start+0x1b4c (dyld:arm64e+0xbdfc)
+
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior $REPO/controller.c:1062:51 
+after W: vymin=0 vymax=-inf
+after loading a spectrum: vymin=0 vymax=-inf

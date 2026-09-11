@@ -1,0 +1,44 @@
+GuardMalloc[timeout-85954]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[timeout-85954]:  - Some buffer overruns may not be noticed.
+GuardMalloc[timeout-85954]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[timeout-85954]: version 064575.39.1
+GuardMalloc[harness3-85955]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[harness3-85955]:  - Some buffer overruns may not be noticed.
+GuardMalloc[harness3-85955]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[harness3-85955]: version 064575.39.1
+
+==================== $REPO/pred.cat ====================
+read_pred_cat_alloc -> 2312 lines
+  Ju bucket |  n_qn=0   1    2    3    4    5    6
+   0.. 9    |     0    0    0  542    0    0    0
+  10..19    |     0 1174    0    0    0    0    0
+  20..29    |     0    0  594    0    0    0    0
+  30..39    |     0    0    0    2    0    0    0
+  5999.2867: f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
+
+==================== $FIXTURES/cat3_303.cat ====================
+read_pred_cat_alloc -> 6 lines
+  Ju bucket |  n_qn=0   1    2    3    4    5    6
+   0.. 9    |     0    0    0    1    0    0    0
+  10..19    |     0    2    0    0    0    0    0
+  20..29    |     0    0    1    0    0    0    0
+  40..49    |     0    0    0    0    1    0    0
+  70..79    |     1    0    0    0    0    0    0
+  line f=3000.1000 n_qn=3 U=(5 1 5 0 0 0) L=(4 1 4 0 0 0) lin=1.0000e-04
+  line f=5980.0000 n_qn=1 U=(11 1 11 0 0 0) L=(10 1 10 0 0 0) lin=7.9433e-05
+  line f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
+  line f=7000.0000 n_qn=2 U=(25 3 22 0 0 0) L=(24 3 21 0 0 0) lin=6.3096e-05
+  line f=8000.0000 n_qn=4 U=(45 2 43 0 0 0) L=(44 2 42 0 0 0) lin=5.0119e-05
+  line f=9000.0000 n_qn=0 U=(72 1 71 0 0 0) L=(71 1 70 0 0 0) lin=3.9811e-05
+  5999.2867: f=5999.2867 n_qn=1 U=(11 0 11 0 0 0) L=(10 1 9 0 0 0) lin=1.3649e-04
+
+==================== $FIXTURES/cat_letter.cat ====================
+read_pred_cat_alloc -> 2 lines
+  Ju bucket |  n_qn=0   1    2    3    4    5    6
+   0.. 9    |     0    0    0    2    0    0    0
+  line f=3400.0000 n_qn=3 U=(0 3 0 0 0 0) L=(0 3 0 0 0 0) lin=1.0000e-04
+  line f=3401.0000 n_qn=3 U=(6 3 3 0 0 0) L=(5 3 2 0 0 0) lin=1.0000e-04
+
+==================== $FIXTURES/cat_trim.cat ====================
+read_pred_cat_alloc -> 0 lines
+  Ju bucket |  n_qn=0   1    2    3    4    5    6

@@ -1,0 +1,18 @@
+
+==================== RESTORE of .int: auto fields and active-species values ====================
+before: active=1 int{temp=1 fqlim=0 maxv=-1}
+  species 0 'Species 1' v=0 T=2.000 mu=(0.750 0.210 1.140) conc=1.000
+  species 1 'Species 2' v=1 T=5.000 mu=(0.400 0.300 0.500) conc=1.000
+-- model.int:
+  | SpectraVisual multi-state prediction
+  | 0 1 499.310628306 0 40 -20 -20 8 1 1
+  | 1 0.75 /a dipole/
+  | 2 0.21 /b dipole/
+  | 3 1.14 /c dipole/
+  | 111 0.4 /a dipole/
+  | 112 0.3 /b dipole/
+  | 113 0.5 /c dipole/
+after restart: active=1 int{temp=1 fqlim=8 maxv=1} p->temp=1.000 p->mu=(0.750 0.210 1.140)
+  species 0 'Species 1' v=0 T=2.000 mu=(0.750 0.210 1.140) conc=1.000
+  species 1 'Species 2' v=1 T=1.000 mu=(0.750 0.210 1.140) conc=1.000
+after adding a 3rd species: state_count=3  MAXV written to .int = 1

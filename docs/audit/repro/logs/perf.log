@@ -1,0 +1,6 @@
+
+==================== LOAD TIME of assignments.txt versus number of rows ====================
+  250 rows ->   250 assignments in       6.3 ms
+  500 rows ->   500 assignments in      45.4 ms
+ 1000 rows ->  1000 assignments in     348.2 ms
+ 2000 rows ->  2000 assignments in    2706.1 ms

@@ -1,0 +1,24 @@
+
+==================== DATA LOSS: restart without .cat from another folder, then Save all ====================
+Added assignment for 3000.1000 MHz
+Assigned 1 selected predicted line to 3000.0800 MHz
+Added assignment for 5999.2867 MHz
+Assigned 1 selected predicted line to 5999.2667 MHz
+Added assignment for 7000.0000 MHz
+Assigned 1 selected predicted line to 6999.9800 MHz
+Saved assignments.txt
+-- session 1: data_dir/assignments.txt
+  | # Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
+  |   5  1  5  4  1  4                      3000.080000     3000.100000    1.000000E-04 3
+  |  11 10                                  5999.266700     5999.286700    1.364897E-04 1
+  |  25  3 24  3                            6999.980000     7000.000000    6.309573E-05 2
+-- session 1: model.lin
+  |   5  1  5  4  1  4                      3000.080000   0.010000 1.0
+  |  11 10                                  5999.266700   0.010000 1.0
+  |  25  3 24  3                            6999.980000   0.010000 1.0
+-- session 2 (no .cat, CWD != data_dir): n_assignments=1
+  [0] exp=3000.0800 exp_int=0.000e+00 fit=1 pred: f=0.0000 n_qn=3 U=(5 1 5 0 0 0) L=(4 1 4 0 0 0) lin=0.0000e+00
+Saved assignments.txt
+-- data_dir/assignments.txt after Save all in session 2:
+  | # Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
+  |   5  1  5  4  1  4                      3000.080000     3000.100000    1.000000E-04 3

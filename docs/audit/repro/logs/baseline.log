@@ -1,0 +1,105 @@
+
+==================== INTENSITY FIT: fitted T rot versus a constant spectral baseline ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+Added assignment for 2124.9435 MHz
+Assigned 1 selected predicted line to 2124.9455 MHz
+Added assignment for 2173.2128 MHz
+Assigned 1 selected predicted line to 2173.2148 MHz
+Added assignment for 2203.2053 MHz
+Assigned 1 selected predicted line to 2203.2073 MHz
+Added assignment for 2280.9450 MHz
+Assigned 1 selected predicted line to 2280.9470 MHz
+Added assignment for 2294.7875 MHz
+Assigned 1 selected predicted line to 2294.7895 MHz
+Added assignment for 2402.6829 MHz
+Assigned 1 selected predicted line to 2402.6849 MHz
+Added assignment for 2428.6077 MHz
+Assigned 1 selected predicted line to 2428.6097 MHz
+Added assignment for 2445.9894 MHz
+Assigned 1 selected predicted line to 2445.9914 MHz
+Added assignment for 2468.5204 MHz
+Assigned 1 selected predicted line to 2468.5224 MHz
+Added assignment for 2495.5862 MHz
+Assigned 1 selected predicted line to 2495.5882 MHz
+baseline 0.000 (strongest line = 1): T rot fitted =   2.048 K  (true 2 K)  7/10 lines used; log RMS 0.00925
+Added assignment for 2124.9435 MHz
+Assigned 1 selected predicted line to 2124.9455 MHz
+Added assignment for 2173.2128 MHz
+Assigned 1 selected predicted line to 2173.2148 MHz
+Added assignment for 2203.2053 MHz
+Assigned 1 selected predicted line to 2203.2073 MHz
+Added assignment for 2280.9450 MHz
+Assigned 1 selected predicted line to 2280.9470 MHz
+Added assignment for 2294.7875 MHz
+Assigned 1 selected predicted line to 2294.7895 MHz
+Added assignment for 2402.6829 MHz
+Assigned 1 selected predicted line to 2402.6849 MHz
+Added assignment for 2428.6077 MHz
+Assigned 1 selected predicted line to 2428.6097 MHz
+Added assignment for 2445.9894 MHz
+Assigned 1 selected predicted line to 2445.9914 MHz
+Added assignment for 2468.5204 MHz
+Assigned 1 selected predicted line to 2468.5224 MHz
+Added assignment for 2495.5862 MHz
+Assigned 1 selected predicted line to 2495.5882 MHz
+baseline 0.005 (strongest line = 1): T rot fitted =   3.316 K  (true 2 K)  7/10 lines used; log RMS 0.165
+Added assignment for 2124.9435 MHz
+Assigned 1 selected predicted line to 2124.9455 MHz
+Added assignment for 2173.2128 MHz
+Assigned 1 selected predicted line to 2173.2148 MHz
+Added assignment for 2203.2053 MHz
+Assigned 1 selected predicted line to 2203.2073 MHz
+Added assignment for 2280.9450 MHz
+Assigned 1 selected predicted line to 2280.9470 MHz
+Added assignment for 2294.7875 MHz
+Assigned 1 selected predicted line to 2294.7895 MHz
+Added assignment for 2402.6829 MHz
+Assigned 1 selected predicted line to 2402.6849 MHz
+Added assignment for 2428.6077 MHz
+Assigned 1 selected predicted line to 2428.6097 MHz
+Added assignment for 2445.9894 MHz
+Assigned 1 selected predicted line to 2445.9914 MHz
+Added assignment for 2468.5204 MHz
+Assigned 1 selected predicted line to 2468.5224 MHz
+Added assignment for 2495.5862 MHz
+Assigned 1 selected predicted line to 2495.5882 MHz
+baseline 0.020 (strongest line = 1): T rot fitted =   4.436 K  (true 2 K)  7/10 lines used; log RMS 0.245
+Added assignment for 2124.9435 MHz
+Assigned 1 selected predicted line to 2124.9455 MHz
+Added assignment for 2173.2128 MHz
+Assigned 1 selected predicted line to 2173.2148 MHz
+Added assignment for 2203.2053 MHz
+Assigned 1 selected predicted line to 2203.2073 MHz
+Added assignment for 2280.9450 MHz
+Assigned 1 selected predicted line to 2280.9470 MHz
+Added assignment for 2294.7875 MHz
+Assigned 1 selected predicted line to 2294.7895 MHz
+Added assignment for 2402.6829 MHz
+Assigned 1 selected predicted line to 2402.6849 MHz
+Added assignment for 2428.6077 MHz
+Assigned 1 selected predicted line to 2428.6097 MHz
+Added assignment for 2445.9894 MHz
+Assigned 1 selected predicted line to 2445.9914 MHz
+Added assignment for 2468.5204 MHz
+Assigned 1 selected predicted line to 2468.5224 MHz
+Added assignment for 2495.5862 MHz
+Assigned 1 selected predicted line to 2495.5882 MHz
+baseline 0.100 (strongest line = 1): T rot fitted =   5.294 K  (true 2 K)  8/10 lines used; log RMS 0.619

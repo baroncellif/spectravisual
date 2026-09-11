@@ -1,0 +1,107 @@
+
+==================== ERR column of model.cat after Fit and after a later Calculate ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8836    4.9224
+    225.000     81130.2799    4.9092
+    150.000     76411.6885    4.8832
+     75.000     64385.6490    4.8088
+     37.500     47281.5059    4.6747
+     18.750     28290.1731    4.4516
+      9.375     13218.8068    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+after Calculate: max ERR =  999.9999 MHz (at 2255.0953 MHz)
+Added assignment for 2511.3318 MHz
+Assigned 1 selected predicted line to 2511.3338 MHz
+Added assignment for 2517.2220 MHz
+Assigned 1 selected predicted line to 2517.2240 MHz
+Added assignment for 3139.1499 MHz
+Assigned 1 selected predicted line to 3139.1519 MHz
+Added assignment for 3766.9583 MHz
+Assigned 1 selected predicted line to 3766.9603 MHz
+Added assignment for 4394.7550 MHz
+Assigned 1 selected predicted line to 4394.7570 MHz
+Added assignment for 3146.4679 MHz
+Assigned 1 selected predicted line to 3146.4699 MHz
+Added assignment for 3775.6741 MHz
+Assigned 1 selected predicted line to 3775.6761 MHz
+Added assignment for 1883.5058 MHz
+Assigned 1 selected predicted line to 1883.5078 MHz
+model.par
+model.lin
+model.fit
+model.bak
+model.var
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 08:21:42 2026
+
+LINES REQUESTED=    8 NUMBER OF PARAMETERS=  3 NUMBER OF ITERATIONS= 50
+  MARQUARDT PARAMETER = 0.0000E+00 max (OBS-CALC)/ERROR =1.0000E+06
+Converting Line 8
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =        0.002005 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =        0.002005 MHz, IR RMS =        0.00000
+ END OF ITERATION  1 OLD, NEW RMS ERROR=        0.20050         0.04771
+Finished Quantum   7
+MARQUARDT PARAMETER = 0, TRUST EXPANSION = 1.00
+ MICROWAVE AVG =        0.000113 MHz, IR AVG =        0.00000
+ MICROWAVE RMS =        0.000477 MHz, IR RMS =        0.00000
+ END OF ITERATION  2 OLD, NEW RMS ERROR=        0.04771         0.04771
+SpectraVisual Pred&Fit quick model                      Fri Sep 11 08:21:42 2026
+FIT COMPLETE
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8876    4.9224
+    225.000     81130.2849    4.9092
+    150.000     76411.6952    4.8832
+     75.000     64385.6584    4.8088
+     37.500     47281.5155    4.6747
+     18.750     28290.1787    4.4516
+      9.375     13218.8079    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+after Fit (SPCAT on the .var written by SPFIT): max ERR =   39.0301 MHz (at 7433.6355 MHz)
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.8876    4.9224
+    225.000     81130.2849    4.9092
+    150.000     76411.6952    4.8832
+     75.000     64385.6584    4.8088
+     37.500     47281.5155    4.6747
+     18.750     28290.1787    4.4516
+      9.375     13218.8079    4.1212
+      2.000      1415.5665    3.1509
+sorted     3350 lines
+after Calculate with the same parameters: max ERR =  999.9999 MHz (at 2255.1247 MHz)
+-- model.var now:
+  | SpectraVisual Pred&Fit quick model
+  |    3    0    0    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
+  | s 1 1 0
+  |        10000  1.151359051972066E+03  1.00000000E+00 /A/
+  |        20000  3.161513294607095E+02  1.00000000E+00 /B/
+  |        30000  3.131744120178863E+02  1.00000000E+00 /C/

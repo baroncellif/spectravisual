@@ -1,0 +1,8 @@
+
+==================== DIPOLE INPUT: one quantity, three validation rules ====================
+start: predfit.mu=(1 1 1)
+Pred&Fit panel, mu b = 0            -> predfit.mu[1] = 1
+Pred&Fit panel, mu c = -1.141963    -> predfit.mu[2] = 1
+Advanced species, mu c = -1.141963  -> species[0].mu[2] = 1
+Intensity analysis, mu red b = 0    -> dipole_red[1] = 0, predfit.mu[1] = 1
+Intensity analysis, mu red c = -1.1 -> dipole_red[2] = -1.14196, predfit.mu[2] = -1.14196, species[0].mu[2] = -1.14196

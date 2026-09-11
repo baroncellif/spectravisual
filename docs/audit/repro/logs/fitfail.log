@@ -1,0 +1,31 @@
+
+==================== RUN FIT that fails: side effects anyway ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:03:31 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   7714
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000    168818.6491    5.2274
+    225.000    164219.5502    5.2154
+    150.000    155540.1603    5.1918
+     75.000    133103.4093    5.1242
+     37.500    100276.4975    5.0012
+     18.750     62196.3024    4.7938
+      9.375     30220.3850    4.4803
+      2.000      3332.9216    3.5228
+sorted     7714 lines
+species-1 line 2000.6523: ratio to catalogue = 0.100 (concentration 0.1)
+Run fit with 0 assignments -> 'Need spectrum, catalog, and at least 2 assignments.'; ratio now 1.000
+Added assignment for 3003.3112 MHz
+Assigned 1 selected predicted line to 3003.3112 MHz
+Added assignment for 3018.3266 MHz
+Assigned 1 selected predicted line to 3018.3266 MHz
+Added assignment for 3018.3268 MHz
+Assigned 1 selected predicted line to 3018.3268 MHz
+before: dipole_red=(0.750 0.000 1.140)
+Run fit, lines outside the trace -> 'No 2 positive assigned areas in the active trace.'; dipole_red=(0.750 0.210 1.140); ratio 1.000

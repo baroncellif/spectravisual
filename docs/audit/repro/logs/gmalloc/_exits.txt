@@ -1,0 +1,7 @@
+peakfinder (protect before) exit=139
+qnfmt exit=0
+rt3 exit=0
+formats exit=0
+intfit exit=0
+intfit (protect before) exit=0
+saveloss exit=0

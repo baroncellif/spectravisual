@@ -1,0 +1,60 @@
+
+==================== LAUNCH WITH A .cat: the Pred&Fit model is not restored ====================
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =      1412.2637, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =   3350
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     83644.9937    4.9224
+    225.000     81130.4210    4.9092
+    150.000     76411.8841    4.8832
+     75.000     64385.9605    4.8088
+     37.500     47281.9147    4.6747
+     18.750     28290.5642    4.4516
+      9.375     13219.0395    4.1212
+      2.000      1415.5762    3.1509
+sorted     3350 lines
+-- session 1: model.var written by Calculate:
+  | SpectraVisual Pred&Fit quick model
+  |    4    0    0    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
+  | s 1 1 0
+  |        10000  1.151360417000000E+03  1.00000000E+00 /A/
+  |        20000  3.161511127000000E+02  1.00000000E+00 /B/
+  |        30000  3.131742368000000E+02  1.00000000E+00 /C/
+  |          200 -7.000000000000000E-06  0.00000000E+00 /DJ/
+session 2a (launched with a .cat): quick A B C = 10000.0000 1000.0000 900.0000, n_param = 3
+  session 3a: param  10000 = 1151.36042     error 1
+  session 3a: param  20000 = 316.151113     error 1
+  session 3a: param  30000 = 313.174237     error 1
+  session 3a: param    200 = -7e-06         error 1
+model.int
+model.var
+model.out
+model.cat
+model.str
+model.egy
+SpectraVisual multi-state prediction                    Fri Sep 11 08:21:42 2026
+INITIAL Q =       158.9427, NEW Q IS RELATIVE TO MIN.EGY.=         0.0000
+ NUMBER OF LINES =    699
+TEMPERATURE - Q(SPIN-ROT.) - log Q(SPIN-ROT.)
+    300.000     54736.7252    4.7383
+    225.000     47917.5226    4.6805
+    150.000     38096.6348    4.5809
+     75.000     22668.6446    4.3554
+     37.500     11142.6647    4.0470
+     18.750      4484.1742    3.6517
+      9.375      1615.0368    3.2082
+      2.000       160.0936    2.2044
+sorted      699 lines
+-- session 2b: model.var after Calculate:
+  | SpectraVisual Pred&Fit quick model
+  |    3    0    0    0      0.0000E+00      1.0000E+06      1.0000E+00 1.0000000000
+  | s 1 1 0
+  |        10000  1.000000000000000E+04  1.00000000E+00 /A/
+  |        20000  1.000000000000000E+03  1.00000000E+00 /B/
+  |        30000  9.000000000000000E+02  1.00000000E+00 /C/

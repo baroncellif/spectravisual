@@ -1,0 +1,20 @@
+GuardMalloc[timeout-85951]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[timeout-85951]:  - Some buffer overruns may not be noticed.
+GuardMalloc[timeout-85951]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[timeout-85951]: version 064575.39.1
+GuardMalloc[harness3-85952]: Allocations will be placed on 16 byte boundaries.
+GuardMalloc[harness3-85952]:  - Some buffer overruns may not be noticed.
+GuardMalloc[harness3-85952]:  - Applications using vector instructions (e.g., SSE) should work.
+GuardMalloc[harness3-85952]: version 064575.39.1
+
+==================== PEAK FINDER: noise window unused, threshold on the raw signal, negative search width ====================
+RMS: 1.17e+00 | Threshold: 3.51e+00 | SigPts: 5
+Found 21 peaks.
+RMS: 1.17e+00 | Threshold: 3.51e+00 | SigPts: 5
+Found 21 peaks.
+baseline 1, lines +5: noise window 10 -> 21 peaks, noise window 1000 -> 21 peaks
+RMS: 1.01e+01 | Threshold: 3.02e+01 | SigPts: 5
+Found 0 peaks.
+same lines on a baseline of 10 (still noise-free) -> 0 peaks
+search width -5 (the panel accepts it, controller.c:890):
+RMS: 1.01e+01 | Threshold: 3.02e+01 | SigPts: -5

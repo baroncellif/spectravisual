@@ -1,0 +1,4 @@
+
+==================== CATALOGUE LOADED BEFORE THE SPECTRUM (the order of main.c:429-430) ====================
+CAT then spectrum (command line): spectrum y range 1e-06..3.1e-05, shown Y range vymin=0 vymax=1
+spectrum then CAT (drop)       : spectrum y range 1e-06..3.1e-05, shown Y range vymin=1e-06 vymax=3.1e-05

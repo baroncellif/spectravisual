@@ -1,0 +1,39 @@
+
+==================== ROUNDTRIP: CAT -> select -> peak -> assignment -> Save all -> restart ====================
+catalogue: $FIXTURES/cat6_306.cat
+work/data_dir: $RUNS/rt6
+click at 3300.0000 MHz -> n_selected=1
+   selected f=3300.0000 n_qn=6 U=(2 1 1 3 4 5) L=(1 1 0 2 3 4) lin=1.0000e-04
+Peak found: 3299.9700 (Copied to clipboard)
+Added assignment for 3300.0000 MHz
+Assigned 1 selected predicted line to 3299.9700 MHz
+click at 3300.3000 MHz -> n_selected=1
+   selected f=3300.3000 n_qn=6 U=(2 1 1 3 4 4) L=(1 1 0 2 3 3) lin=7.9433e-05
+Peak found: 3300.2700 (Copied to clipboard)
+Added assignment for 3300.3000 MHz
+Assigned 1 selected predicted line to 3300.2700 MHz
+click at 6300.0000 MHz -> n_selected=1
+   selected f=6300.0000 n_qn=1 U=(13 1 12 14 15 16) L=(12 1 11 13 14 15) lin=6.3096e-05
+Peak found: 6299.9700 (Copied to clipboard)
+Added assignment for 6300.0000 MHz
+Assigned 1 selected predicted line to 6299.9700 MHz
+-- in memory (before Save all): n_assignments=3
+  [0] exp=3299.9700 exp_int=1.000e+00 fit=1 pred: f=3300.0000 n_qn=6 U=(2 1 1 3 4 5) L=(1 1 0 2 3 4) lin=1.0000e-04
+  [1] exp=3300.2700 exp_int=1.000e+00 fit=1 pred: f=3300.3000 n_qn=6 U=(2 1 1 3 4 4) L=(1 1 0 2 3 3) lin=7.9433e-05
+  [2] exp=6299.9700 exp_int=1.000e+00 fit=1 pred: f=6300.0000 n_qn=1 U=(13 1 12 14 15 16) L=(12 1 11 13 14 15) lin=6.3096e-05
+Saved assignments.txt
+-- $RUNS/rt6/assignments.txt written by the real Save-all handler:
+  | # Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
+  |   2  1  1  3  4  5  1  1  0  2  3  4    3299.970000     3300.000000    1.000000E-04 6
+  |   2  1  1  3  4  4  1  1  0  2  3  3    3300.270000     3300.300000    7.943282E-05 6
+  |  13 12                                  6299.970000     6300.000000    6.309573E-05 1
+Added assignment for 3300.0000 MHz
+Added assignment for 3300.3000 MHz
+Added assignment for 6300.0000 MHz
+Loaded 3 assignments from $RUNS/rt6/assignments.txt
+-- after restart (set_predictions -> ensure_aux_loaded): n_assignments=3
+  [0] exp=3299.9700 exp_int=1.000e-04 fit=1 pred: f=3300.0000 n_qn=6 U=(2 1 1 3 4 5) L=(1 1 0 2 3 4) lin=1.0000e-04
+  [1] exp=3300.2700 exp_int=7.943e-05 fit=1 pred: f=3300.3000 n_qn=6 U=(2 1 1 3 4 4) L=(1 1 0 2 3 3) lin=7.9433e-05
+  [2] exp=6299.9700 exp_int=6.310e-05 fit=1 pred: f=6300.0000 n_qn=1 U=(13 0 0 0 0 0) L=(12 0 0 0 0 0) lin=6.3096e-05
+   NOT RESTORED IDENTICALLY: f=6300.0000 n_qn=1 U=(13 1 12 14 15 16) L=(12 1 11 13 14 15) lin=6.3096e-05
+RESULT: 3 in memory, 3 restored, 1 transitions not restored identically

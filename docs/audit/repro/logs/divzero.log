@@ -1,0 +1,5 @@
+
+==================== PREDICTION-ONLY LAYOUT: W divides by exp_h = 0 ====================
+exp_h=0 pred_h=746 vymin=0 vymax=1
+after W: vymin=0 vymax=-inf
+after loading a spectrum: vymin=0 vymax=-inf
