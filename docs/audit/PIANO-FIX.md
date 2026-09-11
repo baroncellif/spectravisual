@@ -686,9 +686,11 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_dipole_rules_consistent` (T-26, R-23).
 - **Bloccato da**: D10, solo per la regola dei dipoli.
 - **Documentazione**: schede B-33, B-38, B-51; A3 U-15; A4 R-23, R-27, R-40.
-- **Stato**: ◐ fix parziale in corso — ID dei parametri e presenza di A/B/C sono
-  indipendenti e procedibili; la regola comune per i dipoli resta bloccata da D10
-  e non viene modificata senza una decisione esplicita.
+- **Stato**: ◐ fix parziale il 2026-09-12 — commit codice: `a3934e5` — test
+  aggiunti: `test_param_id_zero_or_duplicate_rejected`,
+  `test_calculate_requires_abc` (suite 45/45 PASS). ID positivi/unici e A/B/C
+  per ogni specie calcolata sono obbligatori prima dei file Pickett; la regola
+  comune per i dipoli resta bloccata da D10.
 
 ### #16 — Tastiera e testo tra finestre
 
