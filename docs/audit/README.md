@@ -143,9 +143,9 @@ R-18…R-40 di [A4](A4-riproduzioni.md)). I più gravi:
 - **B-46, T rot distorta.** Le aree del fit delle intensità includono la baseline:
   con una baseline pari allo 0,5 % della riga più forte T rot passa da 2,05 a 3,3 K
   [RIPR R-35].
-- **B-42, spettri decrescenti.** Con un file scritto dalla frequenza più alta il
-  trascinamento destro misura il picco più alto dell'intero spettro (3001,0 invece di
-  3000,0 MHz) e il fit delle intensità non trova aree [RIPR R-31].
+- **B-42, spettri decrescenti.** Risolto: il loader riordina un file strettamente
+  decrescente e lo comunica nello stato; rifiuta invece frequenze duplicate o
+  mescolate, prima che possano raggiungere le ricerche binarie [RIPR R-31].
 - **B-28, cartella dati con spazi.** SPCAT e SPFIT non partono perché `cd` riceve
   il percorso senza virgolette [RIPR R-18].
 - **B-49, tastiera tra finestre.** Testo e Invio digitati in Advanced o Settings
@@ -1561,7 +1561,7 @@ analysis, allargamento, filtri.
 | `linelist.csv` | [controller.c:337-348](../../controller.c#L337-L348) | — | `Freq,Int` |
 | `intensity_fit.ifit` (CWD) | `intensity_fit_export` [intensity_fit.c:329-364](../../intensity_fit.c#L329-L364) | — | intestazione, tabella per componente, righe con 6 QN per stato |
 | `spectravisual_export.bmp` (CWD) | `save_screenshot` [main.c:345-364](../../main.c#L345-L364) | — | — |
-| spettri sperimentali | — | `read_data_alloc` [loader.c:462-520](../../loader.c#L462-L520) | 2 colonne; separatore (virgola, tab, spazio) dedotto dalla prima riga numerica |
+| spettri sperimentali | — | `read_data_alloc` [loader.c](../../loader.c) | 2 colonne; separatore dedotto dalla prima riga numerica; x strettamente crescente o decrescente (quest’ultimo riordinato), altrimenti rifiutato |
 
 ---
 
@@ -2410,8 +2410,8 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 ### B-42 — Spettri in ordine di frequenza decrescente: picco sbagliato e fit delle intensità impossibile
 
 - **Gravità** alta se i file sono decrescenti · **P0, P2** · [FATTO] + [RIPR R-31]
-- **Dove**: lettura [loader.c:462-519](../../loader.c#L462-L519) (nessun ordinamento né
-  controllo); ricerche binarie [algorithms.c:8-26](../../algorithms.c#L8-L26);
+- **Dove (prima della correzione)**: lettura `read_data_alloc` senza ordinamento né
+  controllo; ricerche binarie [algorithms.c:8-26](../../algorithms.c#L8-L26);
   `run_right_click_peak_find` [controller.c:786-799](../../controller.c#L786-L799);
   `integrate_area` [intensity_fit.c:93](../../intensity_fit.c#L93).
 - **Causa**: tutte le ricerche per frequenza presuppongono x crescente. Su un file
@@ -2429,8 +2429,10 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
   e Tab ([controller.c:1086-1106](../../controller.c#L1086-L1106)) usano le stesse ricerche [INF];
   il disegno è corretto, quindi a schermo il difetto non si vede.
 - **Origine**: `5bb57d7` (ricerche binarie); `1c598a7` (`integrate_area`).
-- **Correzione minima** [PROP]: ordinare i punti per x alla lettura, oppure rifiutare
-  file non monotoni con un messaggio.
+- **Correzione**: il loader accetta solo sequenze x strettamente monotone; riordina
+  quelle decrescenti e le segnala nello stato, mentre rifiuta duplicate o sequenze
+  miste con un messaggio. Test: `test_descending_spectrum_same_results` e
+  `test_nonmonotonic_spectrum_rejected`.
 
 <a id="b-43"></a>
 ### B-43 — Rimozione di una specie: la specie attiva cambia e una specie nuova eredita le costanti di quella rimossa

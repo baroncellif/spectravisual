@@ -123,7 +123,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #9 | Intensità: un solo ricalcolo, nessuna propagazione | B-11, B-13, B-32, B-27, B-21 | alto: intensità e Pred&Fit modificati (P2) | D4, D5 (parziale) |
 | #10 | Baseline nelle aree | B-46 | alto: T rot distorta | D9 |
 | #11 | Restore del `.int` | B-18 | alto: T e μ delle specie sovrascritti al riavvio | fatto `b9abf1a` |
-| #12 | Spettri in ordine decrescente | B-42 | alto se i file sono decrescenti | — |
+| #12 | Spettri in ordine decrescente | B-42 | alto se i file sono decrescenti | fatto `0b0aaec` |
 | #13 | Fit delle intensità: ricerca per identità ed export | B-20, B-41, M-03 | medio | — |
 | #14 | Specie | B-43, B-24, B-19 | medio | D1 |
 | #14b | Specie come molecole distinte | richiesta di D1 | medio | conferma del progetto |
@@ -585,7 +585,10 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_descending_spectrum_same_results` (T-35, R-31): file crescente e
     decrescente → stessa frequenza misurata (3000,0000 MHz) e stesse aree.
 - **Documentazione**: report §6.8, scheda B-42; A4 R-31.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-12 — commit codice: `0b0aaec` — test aggiunti:
+  `test_descending_spectrum_same_results`, `test_nonmonotonic_spectrum_rejected`
+  (suite 43/43 PASS). I file strettamente decrescenti sono riordinati e segnalati;
+  frequenze duplicate o mescolate sono rifiutate.
 
 ### #13 — Fit delle intensità: ricerca per identità ed export coerente
 

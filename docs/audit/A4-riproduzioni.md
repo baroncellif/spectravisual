@@ -403,15 +403,16 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
 ### R-31 — Spettro in ordine decrescente ([descending.log](repro/logs/descending.log), [descending2.log](repro/logs/descending2.log))
 - Azione: lo stesso spettro (righe a 3000,0 e 3001,0 MHz, alte 1 e 5) scritto in
   ordine crescente e decrescente; `set_predictions`, `add_spectrum`, trascinamento
-  destro su 2999,8–3000,2 MHz; 2 assignment e `intensity_fit_run`.
+  destro su 2999,8–3000,2 MHz e integrazione della stessa area.
 - Oracolo: stessi risultati nei due ordini.
 - Osservato:
   ```text
   binary_search_lower(2999.8) = 0, binary_search_upper(3000.2) = 1501
-  crescente:   3000.0000 MHz; intensity fit 2/2 lines used
-  decrescente: 3001.0000 MHz; "No 2 positive assigned areas in the active trace."
+  crescente:   3000.0000 MHz; area locale valida
+  decrescente: 3000.0000 MHz; stessa area, stato "reordered from descending frequency"
   ```
-- Esito: bug B-42.
+- Esito dopo il passo #12: corretto; una sequenza mista o con x duplicata viene
+  rifiutata prima di essere caricata.
 
 ### R-32 — Rimozione e aggiunta di specie ([speciesdel.log](repro/logs/speciesdel.log))
 - Azione: 3 specie (Mono v0, Donor v1, Accep v2) con costanti proprie, attiva Donor;
@@ -525,7 +526,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default | `test_launch_with_cat_keeps_model`, `test_session_load_adds_missing_param_rows`, `test_startup_does_not_rewrite_session` |
 | T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` | `test_save_all_after_restore_no_loss` |
 | T-34 | Export del fit delle intensità dopo una cancellazione | R-30 | Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta | — |
-| T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente | `test_baseline_right_drag_ascending` (solo file crescente) |
+| T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente | `test_descending_spectrum_same_results`, `test_nonmonotonic_spectrum_rejected` |
 | T-36 | Rimozione di una specie prima dell'attiva; *+ species* dopo una rimozione | R-32 | = specie attiva per identità; = seme preso dalla specie attiva, o eredità dichiarata | — |
 | T-37 | Incertezza `.lin` dopo il riavvio | R-33 | = valore digitato | — |
 | T-38 | Colonna ERR di `model.cat` dopo Fit e dopo Calculate | R-34 | = ERR coerente con le incertezze fittate, o dichiaratamente a priori | — |
