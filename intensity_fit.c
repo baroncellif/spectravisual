@@ -87,7 +87,7 @@ static int lower_point(const Point *p, int n, double x) {
 
 /* Integral of the displayed active trace.  The edge points are linearly
  * interpolated, so a changed half-width does not jump at a data-bin edge. */
-static int integrate_area(const AppState *s, double center, double half_width, double *area) {
+int intensity_fit_integrate_area(const AppState *s, double center, double half_width, double *area) {
     if (!s->current_pts || s->n_pts < 2 || !(half_width > 0.0)) return 0;
     double left = center - half_width, right = center + half_width;
     if (left < s->current_pts[0].x || right > s->current_pts[s->n_pts - 1].x) return 0;
@@ -135,8 +135,8 @@ static int collect_work(const AppState *s, FitWork *work) {
     for (int i = 0; i < s->n_assignments; i++) {
         const PredLine *p = current_pred_line(s, &s->assignments[i]);
         double area = 0.0;
-        if (!p || !integrate_area(s, s->assignments[i].exp_freq,
-                                  s->intfit_half_window_mhz, &area) || !(area > 0.0))
+        if (!p || !intensity_fit_integrate_area(s, s->assignments[i].exp_freq,
+                                                s->intfit_half_window_mhz, &area) || !(area > 0.0))
             continue;
         work[n++] = (FitWork){i, p, area, 0.0, 0.0, 0.0, 0};
     }

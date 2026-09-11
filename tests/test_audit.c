@@ -338,6 +338,65 @@ static int test_baseline_right_drag_ascending(void) {
     DONE();
 }
 
+static void write_r31_spectrum(const char *path, int descending) {
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    for (int k = 0; k <= 2000; k++) {
+        int i = descending ? 2000 - k : k;
+        double x = 2998.0 + i * 0.002;
+        double d1 = (x - 3000.0) / 0.03, d2 = (x - 3001.0) / 0.03;
+        fprintf(f, "%.6f %.8e\n", x, 1e-4 + exp(-0.5 * d1 * d1) + 5.0 * exp(-0.5 * d2 * d2));
+    }
+    fclose(f);
+}
+
+/* T-35, R-31: a descending trace is normalised at input, so all binary-search
+   consumers measure the same local peak and area as its ascending twin. */
+static int test_descending_spectrum_same_results(void) {
+    FILE *f = fopen(work_path("two.cat"), "w");
+    CHECK(f != NULL, "impossibile creare il catalogo R-31");
+    if (!f) DONE();
+    fprintf(f, "%13.4f%8.4f%8.4f%2d%10.4f%3d%7d%4d%s\n", 3000.0, 0.001, -4.0, 3, 1.0, 11, 1, 303, " 5 1 5       4 1 4      ");
+    fprintf(f, "%13.4f%8.4f%8.4f%2d%10.4f%3d%7d%4d%s\n", 3001.0, 0.001, -3.3, 3, 1.0, 11, 1, 303, " 6 1 6       5 1 5      ");
+    fclose(f);
+    write_r31_spectrum(work_path("ascending.txt"), 0);
+    write_r31_spectrum(work_path("descending.txt"), 1);
+
+    AppState *ascending = new_state(), *descending = new_state();
+    set_predictions(ascending, work_path("two.cat"));
+    set_predictions(descending, work_path("two.cat"));
+    CHECK_INT("carica crescente", add_spectrum(ascending, work_path("ascending.txt")), 1);
+    CHECK_INT("carica decrescente", add_spectrum(descending, work_path("descending.txt")), 1);
+    CHECK(strstr(descending->status_message, "reordered from descending") != NULL,
+          "stato del file decrescente: '%s'", descending->status_message);
+    click_select(ascending, 3000.0); click_select(descending, 3000.0);
+    right_drag(ascending, 2999.8, 3000.2); right_drag(descending, 2999.8, 3000.2);
+    CHECK_INT("picco crescente", ascending->n_peaks, 1);
+    CHECK_INT("picco decrescente", descending->n_peaks, 1);
+    if (ascending->n_peaks && descending->n_peaks)
+        CHECK_DBL("stessa frequenza misurata", descending->peaks[0].x, ascending->peaks[0].x, 5e-4);
+    double area_up = 0.0, area_down = 0.0;
+    CHECK_INT("area crescente", intensity_fit_integrate_area(ascending, 3000.0, 0.2, &area_up), 1);
+    CHECK_INT("area decrescente", intensity_fit_integrate_area(descending, 3000.0, 0.2, &area_down), 1);
+    CHECK_DBL("stessa area", area_down, area_up, 1e-9);
+    DONE();
+}
+
+static int test_nonmonotonic_spectrum_rejected(void) {
+    const char *cases[] = {"1 1\n2 2\n1.5 3\n", "1 1\n2 2\n2 3\n"};
+    for (int i = 0; i < 2; i++) {
+        FILE *f = fopen(work_path(i ? "duplicate.txt" : "mixed.txt"), "w");
+        CHECK(f != NULL, "impossibile creare il caso non monotono");
+        if (!f) continue;
+        fputs(cases[i], f); fclose(f);
+        AppState *s = new_state();
+        CHECK_INT("file non monotono rifiutato", add_spectrum(s, work_path(i ? "duplicate.txt" : "mixed.txt")), 0);
+        CHECK(strstr(s->error_message, "strictly monotonic") != NULL,
+              "errore del file non monotono: '%s'", s->error_message);
+    }
+    DONE();
+}
+
 /* Calculate with a one-species model produces model.cat and loads it. */
 static int test_baseline_calculate_single_species(void) {
     AppState *s = new_state();
@@ -1514,6 +1573,8 @@ static const Test TESTS[] = {
     {"test_baseline_roundtrip_qnfmt1404",      test_baseline_roundtrip_qnfmt1404},
     {"test_baseline_reassign_updates_obsfreq", test_baseline_reassign_updates_obsfreq},
     {"test_baseline_right_drag_ascending",     test_baseline_right_drag_ascending},
+    {"test_descending_spectrum_same_results",  test_descending_spectrum_same_results},
+    {"test_nonmonotonic_spectrum_rejected",    test_nonmonotonic_spectrum_rejected},
     {"test_baseline_calculate_single_species", test_baseline_calculate_single_species},
     {"test_cat_nqn_from_qnfmt_3qn",            test_cat_nqn_from_qnfmt_3qn},
     {"test_cat_nqn_4_5_6",                     test_cat_nqn_4_5_6},

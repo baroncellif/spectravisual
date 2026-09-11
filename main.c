@@ -249,10 +249,15 @@ static int add_spectrum(AppState *state, const char *path) {
     }
     Point *raw = NULL;
     double xmin, xmax, ymin, ymax;
-    int n = read_data_alloc(path, &raw, &xmin, &xmax, &ymin, &ymax);
+    int was_descending = 0;
+    int n = read_data_alloc(path, &raw, &xmin, &xmax, &ymin, &ymax, &was_descending);
     if (n <= 0 || !raw) {
-        snprintf(state->error_message, sizeof(state->error_message),
-                 "Could not load spectrum: %s", path);
+        if (n == -2)
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load spectrum: frequencies must be strictly monotonic (no duplicates): %s", path);
+        else
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load spectrum: %s", path);
         return 0;
     }
     Point *smooth = malloc(sizeof(Point) * n);
@@ -291,7 +296,9 @@ static int add_spectrum(AppState *state, const char *path) {
         if (state->n_pred == 0) { state->pxmin = xmin; state->pxmax = xmax; }
     }
     snprintf(state->status_message, sizeof(state->status_message),
-             "Loaded spectrum '%s' (%d pts). %d spectra loaded.", sp->name, n, state->n_spectra);
+             was_descending ? "Loaded spectrum '%s' (%d pts; reordered from descending frequency). %d spectra loaded."
+                            : "Loaded spectrum '%s' (%d pts). %d spectra loaded.",
+             sp->name, n, state->n_spectra);
     state->error_message[0] = '\0';
     ensure_aux_loaded(state);   /* after the messages above: it can add its own */
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);

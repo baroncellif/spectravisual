@@ -8,6 +8,11 @@
 
 typedef enum { SEP_COMMA, SEP_TAB, SEP_SPACE } Separator;
 
+static int compare_point_frequency(const void *a, const void *b) {
+    const Point *x = a, *y = b;
+    return (x->x > y->x) - (x->x < y->x);
+}
+
 /* One two-character QN field of a .cat record, decoded like Pickett's readqn
    (calpgm/catutil.c:10-60): a blank field is 0; the first character is a
    blank, a tens digit, '-' (-1..-9), an upper-case letter for the hundreds
@@ -482,8 +487,10 @@ int read_data(const char *fname, Point *pts, int maxpts,
 }
 
 int read_data_alloc(const char *fname, Point **pts,
-                    double *xmin, double *xmax, double *ymin, double *ymax)
+                    double *xmin, double *xmax, double *ymin, double *ymax,
+                    int *was_descending)
 {
+    if (was_descending) *was_descending = 0;
     FILE *f = fopen(fname, "r");
     if (!f) return 0;
     char line[512];
@@ -534,6 +541,25 @@ int read_data_alloc(const char *fname, Point **pts,
         free(arr);
         *pts = NULL;
         return 0;
+    }
+
+    /* Point consumers use binary search, so accept only a strict monotonic
+       trace.  Descending files are common exports and can safely be restored
+       to the one invariant those consumers need; mixed/duplicate x values
+       are ambiguous and are rejected rather than silently mismeasured. */
+    int direction = 0;
+    for (int i = 1; i < n; i++) {
+        double delta = arr[i].x - arr[i - 1].x;
+        if (delta == 0.0 || (direction && (delta > 0.0) != (direction > 0))) {
+            free(arr);
+            *pts = NULL;
+            return -2;
+        }
+        if (!direction) direction = delta > 0.0 ? 1 : -1;
+    }
+    if (direction < 0) {
+        qsort(arr, (size_t)n, sizeof(*arr), compare_point_frequency);
+        if (was_descending) *was_descending = 1;
     }
 
     Point *shrunk = realloc(arr, sizeof(Point) * n);
