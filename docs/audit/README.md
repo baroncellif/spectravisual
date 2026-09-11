@@ -1847,7 +1847,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-12"></a>
 ### B-12 — Pred&Fit invia a SPFIT righe con un NQN diverso da quello del modello
 
-- **Stato: risolto** nel commit del passo #6 — nuova logica:
+- **Stato: risolto** in `deef2f7` — nuova logica:
   `current_model_nqn` legge il QNFMT di `.fit/model.cat` solo se la terza riga
   di `model.par` coincide con `hamiltonian_line`. `write_inputs(1)` rifiuta
   prima di aprire `model.lin` gli assignment inclusi con NQN diverso ed elenca
@@ -1995,7 +1995,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-22"></a>
 ### B-22 — Diagnostica di SPFIT non mostrata
 
-- **Stato: risolto** nel commit del passo #6 — nuova logica: `fit_summary`
+- **Stato: risolto** in `deef2f7` — nuova logica: `fit_summary`
   riporta i conteggi di Bad Line, Lines rejected, NEXT LINE NOT USED IN FIT e
   Fit Diverging insieme all'RMS; `report_refresh` conserva le righe Bad Line e
   `fitting_row_state` rende le righe Fitting come esclusa, rifiutata, usata o

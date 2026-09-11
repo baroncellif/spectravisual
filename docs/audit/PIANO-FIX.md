@@ -421,7 +421,13 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Bloccato da**: D2, solo per la conversione (il rifiuto non è bloccato).
 - **Documentazione**: report executive summary punto 3, §4 flusso 5, §7, schede
   B-12/B-22; A3 U-08; A4 R-11.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `deef2f7` —
+  test aggiunti: `test_fit_rejects_nqn_mismatch`,
+  `test_fit_status_counts_spfit_diagnostics`, `test_fitting_tab_row_states`
+  (suite 31/31 PASS). `current_model_nqn` accetta il catalogo soltanto quando
+  la riga opzioni salvata in `model.par` coincide con quella corrente; il Fit
+  rifiuta le righe incluse incompatibili prima di `model.lin`. R-11 rieseguito;
+  la conversione resta rinviata a D2.
 
 ### #7 — Modello Pred&Fit all'avvio con un `.cat` e cartella di lavoro
 

@@ -734,7 +734,13 @@ rifiutata e usata.</li>
 <li><strong>Bloccato da</strong>: D2, solo per la conversione (il rifiuto non è bloccato).</li>
 <li><strong>Documentazione</strong>: report executive summary punto 3, §4 flusso 5, §7, schede
 B-12/B-22; A3 U-08; A4 R-11.</li>
-<li><strong>Stato</strong>: ☐ non fatto — commit: —</li>
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: <code>deef2f7</code> —
+test aggiunti: <code>test_fit_rejects_nqn_mismatch</code>,
+<code>test_fit_status_counts_spfit_diagnostics</code>, <code>test_fitting_tab_row_states</code>
+(suite 31/31 PASS). <code>current_model_nqn</code> accetta il catalogo soltanto quando
+la riga opzioni salvata in <code>model.par</code> coincide con quella corrente; il Fit
+rifiuta le righe incluse incompatibili prima di <code>model.lin</code>. R-11 rieseguito;
+la conversione resta rinviata a D2.</li>
 </ul>
 <h3 id="piano-7--modello-predfit-allavvio-con-un-cat-e-cartella-di-lavoro"><a class="hlink" href="#piano-7--modello-predfit-allavvio-con-un-cat-e-cartella-di-lavoro">#</a>#7 — Modello Pred&amp;Fit all&#39;avvio con un <code>.cat</code> e cartella di lavoro</h3>
 <ul>
@@ -3688,7 +3694,7 @@ che scelga il percorso per specie quando il catalogo è generato.</li>
 <p><a id="readme-b-12"></a></p>
 <h3 id="readme-b-12--predfit-invia-a-spfit-righe-con-un-nqn-diverso-da-quello-del-modello"><a class="hlink" href="#readme-b-12--predfit-invia-a-spfit-righe-con-un-nqn-diverso-da-quello-del-modello">#</a>B-12 — Pred&amp;Fit invia a SPFIT righe con un NQN diverso da quello del modello</h3>
 <ul>
-<li><strong>Stato: risolto</strong> nel commit del passo #6 — nuova logica:
+<li><strong>Stato: risolto</strong> in <code>deef2f7</code> — nuova logica:
 <code>current_model_nqn</code> legge il QNFMT di <code>.fit/model.cat</code> solo se la terza riga
 di <code>model.par</code> coincide con <code>hamiltonian_line</code>. <code>write_inputs(1)</code> rifiuta
 prima di aprire <code>model.lin</code> gli assignment inclusi con NQN diverso ed elenca
@@ -3836,7 +3842,7 @@ rapporti dei dipoli.</li>
 <p><a id="readme-b-22"></a></p>
 <h3 id="readme-b-22--diagnostica-di-spfit-non-mostrata"><a class="hlink" href="#readme-b-22--diagnostica-di-spfit-non-mostrata">#</a>B-22 — Diagnostica di SPFIT non mostrata</h3>
 <ul>
-<li><strong>Stato: risolto</strong> nel commit del passo #6 — nuova logica: <code>fit_summary</code>
+<li><strong>Stato: risolto</strong> in <code>deef2f7</code> — nuova logica: <code>fit_summary</code>
 riporta i conteggi di Bad Line, Lines rejected, NEXT LINE NOT USED IN FIT e
 Fit Diverging insieme all&#39;RMS; <code>report_refresh</code> conserva le righe Bad Line e
 <code>fitting_row_state</code> rende le righe Fitting come esclusa, rifiutata, usata o
