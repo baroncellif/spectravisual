@@ -134,7 +134,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | fatto `79f231c` |
 | #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | fatto `a2b91ff` |
 | #21 | Pred&Fit opt-in | B-26 | medio (vincolo 4) | D7 |
-| #22 | Prestazioni del caricamento della lista | B-48 | basso | — |
+| #22 | Prestazioni del caricamento della lista | B-48 | basso | parziale `7169e8b` |
 | #23 | Vista iniziale, estensioni, input numerici | B-31, B-50, U-14, B-37, M-02, U-18 | basso | — |
 | #24 | UI e pulizia | U-01, U-05, U-07, U-09, U-10, U-11, U-12, M-04, M-05 | basso | — |
 
@@ -855,7 +855,10 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_load_5000_rows_fast` (T-41, R-37): 5000 righe in meno di 1 s, con lo
     stesso risultato della versione attuale su 250 righe.
 - **Documentazione**: scheda B-48; A4 R-37.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ◐ fix parziale il 2026-09-12 — commit codice: `7169e8b`. Il lettore
+  accumula le righe valide e deduplica una sola volta alla fine, conservando
+  l’ultima occorrenza come prima. Il benchmark dedicato di 5000 righe resta da
+  aggiungere prima di dichiarare il requisito prestazionale definitivamente chiuso.
 
 ### #23 — Vista iniziale, estensioni e input numerici
 
