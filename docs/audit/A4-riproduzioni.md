@@ -262,10 +262,11 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
 - Osservato:
   ```text
   prima    int{temp=1 fqlim=0 maxv=-1}; specie1 T=5 mu=(0.4 0.3 0.5)
-  dopo     int{temp=1 fqlim=8 maxv=1};  specie1 T=1 mu=(0.75 0.21 1.14)   <- Tcat e dipoli dello stato 0
-  + specie MAXV resta 1 (lo stato 2 non verrà calcolato da SPCAT)
+  dopo     int{temp=1 fqlim=0 maxv=-1}; specie1 T=5 mu=(0.4 0.3 0.5)
+  + specie MAXV resta automatico
   ```
-- Esito: bug B-18.
+- Esito dopo il passo #11: corretto; `model.int` conflittuale non altera la
+  sessione. Test: `test_restore_int_keeps_species_and_auto_fields`.
 
 ### Secondo e terzo passaggio (R-18…R-40)
 
@@ -508,7 +509,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito; = `model.lin` non scritto | `test_fit_rejects_nqn_mismatch` |
 | T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
 | T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T | — |
-| T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici | — |
+| T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici | `test_restore_int_keeps_species_and_auto_fields` |
 | T-20 | Legacy `assignments.txt` a 14/16 campi | R-09 | = campi letti correttamente o riga rifiutata con messaggio | `test_reader_rejects_lin_file`, `test_reader_legacy_14_and_16` |
 | T-21 | `data_dir` con spazi e metacaratteri di shell | R-18 | = Calculate e Fit riusciti; = nessuna parte del percorso interpretata dalla shell | — |
 | T-22 | Rimozione di uno spettro prima e dopo quello attivo | R-19 | = spettro attivo per identità, con offset e smoothing | — |

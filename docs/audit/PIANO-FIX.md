@@ -122,7 +122,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #8 | Esclusioni dal fit per identità | B-09, B-16, B-17, B-47 | alto: righe escluse che entrano nel fit | D3, D8 |
 | #9 | Intensità: un solo ricalcolo, nessuna propagazione | B-11, B-13, B-32, B-27, B-21 | alto: intensità e Pred&Fit modificati (P2) | D4, D5 (parziale) |
 | #10 | Baseline nelle aree | B-46 | alto: T rot distorta | D9 |
-| #11 | Restore del `.int` | B-18 | alto: T e μ delle specie sovrascritti al riavvio | — |
+| #11 | Restore del `.int` | B-18 | alto: T e μ delle specie sovrascritti al riavvio | fatto `b9abf1a` |
 | #12 | Spettri in ordine decrescente | B-42 | alto se i file sono decrescenti | — |
 | #13 | Fit delle intensità: ricerca per identità ed export | B-20, B-41, M-03 | medio | — |
 | #14 | Specie | B-43, B-24, B-19 | medio | D1 |
@@ -536,7 +536,9 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   senza effetti non sono bloccati).
 - **Documentazione**: report executive summary punto 6, §4 flusso 7, §5.5, §5.9,
   schede B-11/B-13/B-21/B-27/B-32; A2.1; A4 R-12 e R-22.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☐ sospeso per decisione di progetto — il fit delle intensità dovrà
+  essere progettato insieme come fit globale di tutte le specie o di un sottoinsieme
+  esplicitamente selezionato; non va reso indipendente nel frattempo.
 
 ### #10 — Aree del fit delle intensità con baseline sottratta
 
@@ -566,7 +568,10 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     1 con T 5 K e μ (0,4 0,3 0,5), FQLIM e MAXV automatici → identici dopo il
     riavvio; aggiungendo una specie MAXV resta automatico.
 - **Documentazione**: report §4 flusso 6, §6.5, scheda B-18; A4 R-16.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-12 — commit codice: `b9abf1a` — test aggiunto:
+  `test_restore_int_keeps_species_and_auto_fields` (suite 41/41 PASS). La riga
+  `int2` della sessione moderna prevale integralmente; `model.int` fa da fallback
+  soltanto per sessioni senza quella riga e non modifica mai T o dipoli della specie.
 
 ### #12 — Spettri in ordine di frequenza decrescente
 

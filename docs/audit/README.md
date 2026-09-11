@@ -270,10 +270,10 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `lin_data`, `n_lin_data` | marcatori "assegnati" | `AppState` | `ensure_aux_loaded` (da `assigned.lin`/ini nella CWD) | render | una volta per processo | non collegati alla lista (U-07) |
 | `predfit.param[]`, `n_param` | modello Pred&Fit | `PredFitState` | init, `add_species`, add/delete, Advanced, `import_fitted_parameters`, `sync_basic_parameters`, `predfit_load_session`, Undo | `write_inputs`, Advanced | valore e incertezza in sessione v3; `model.var` dopo un Fit | CAT esterno conserva i parametri (B-39 risolto) |
 | `predfit.a/b/c` | vista rapida della specie attiva | `PredFitState` | init, pannello, `sync_basic_from_parameters`, Undo | `sync_basic_parameters`, Q rot, render | — | copia dei parametri |
-| `predfit.mu`, `predfit.temp_k` | vista rapida di `species[active]` | `PredFitState` | pannello, `load_active_species`, `predfit_adopt_shared_state`, `import_int_settings`, Undo, init | `store_active_species`, `.int`, `predfit_publish_shared_state` | via righe `molecule2` | 6 writer; restore (B-18) |
+| `predfit.mu`, `predfit.temp_k` | vista rapida di `species[active]` | `PredFitState` | pannello, `load_active_species`, `predfit_adopt_shared_state`, Undo, init | `store_active_species`, `predfit_publish_shared_state` | via righe `molecule2` | il restore mantiene la specie della sessione (B-18 risolto) |
 | `predfit.hamiltonian_line` | riga opzioni `.par/.var` | `PredFitState` | init `s 1 1 0`, sessione, Advanced, Undo | `write_inputs` (sola validazione), sessione, render | sessione | NVIB resta quello digitato; Calculate/Fit rifiutati se < massimo stato incluso (B-02 risolto) |
 | `predfit.species[]`, `n_species`, `active_species` | Pred&Fit (specie = stati vibrazionali) | `PredFitState` | init, `add_species`, rimozione, sessione, Undo, `store_active_species`, Advanced | `write_inputs`, `rescale_by_species`, `state_count`, sessione | sessione | specie trattate come stati v di un unico Hamiltoniano |
-| `predfit.int_settings` | scheda `.int` | `PredFitState` | init, sessione (`int2`), `import_int_settings`, Advanced, Undo | `write_int_header`, Q rot, render | sessione + `model.int` | al restore vince `model.int` (B-18) |
+| `predfit.int_settings` | scheda `.int` | `PredFitState` | init, sessione (`int2`), `import_int_settings`, Advanced, Undo | `write_int_header`, Q rot, render | sessione + `model.int` (fallback) | al restore moderno vince `int2` (B-18 risolto) |
 | `predfit.line_error_mhz` | Pred&Fit | `PredFitState` | init, default di Settings, Advanced, Undo | writer `.lin` | **non salvato** in sessione | soglia della sentinella (B-09) |
 | `predfit.generated_catalog_pending/active` | provenienza del catalogo | `PredFitState` | Calculate, Fit, restore, `adopt`, `set_predictions` | `adopt`, `publish` | memoria | ignorati da `commit_text_input` (B-11) |
 | `predfit.history`, `history_count` | Undo | heap | `push_fit_snapshot`, Undo, dispose | Undo | solo RAM | snapshot di modello e identità escluse; non ripristina la lista (passo #8) |
@@ -521,7 +521,9 @@ Undo (pannello [controller.c:546], Advanced [1697], Cmd/Ctrl+B [998])
       predfit_calculate (solo SPCAT, nessun SPFIT) → model.cat ricaricato
   storia solo in RAM [types.h:110-111]: chiudere l'app la cancella
 
-restore .fit: vedi flusso 8
+restore `.fit`: `int2` e `molecule2` della sessione sono autorevoli; `model.int`
+è soltanto il fallback per impostazioni INT assenti e non può alterare la specie
+attiva. Dettaglio nel flusso 8.
 ```
 
 <a id="flusso-7"></a>
@@ -588,8 +590,10 @@ riapertura senza argomenti, .fit/model.cat presente
       import_fitted_parameters [954] ← model.var (valori; nuovi ID aggiunti)
       predfit_load_session [955] (seconda volta: azzera e rilegge specie, riga opzioni con NVIB forzato, int2, errori)
       sync_basic_from_parameters [956]
-      import_int_settings [957] ← model.int: TEMP → temp_k, FQLIM → fmax, ID 1..3 → mu; campi auto diventano fissi
-      store_active_species [958] → la specie attiva riceve TCAT e i dipoli dello stato 0 (B-18)
+      import_int_settings ← model.int solo se manca `int2`: inizializza i soli campi INT
+      `int2` presente → impostazioni e specie della sessione restano autorevoli
+      `int2` assente → `model.int` inizializza soltanto i campi INT mancanti
+      nessun `store_active_species` dopo l'import: T e dipoli della specie non cambiano (B-18 risolto)
       import_fit_lines [959] → lista = data_dir/assignments.txt (dal passo #2; prima CWD) + righe solo-.lin (freq 0, n_qn = slot/2;
         dal passo #2 anche quelle con meno di 3 QN per stato, marcate da riassegnare), flag dalla sentinella
       pending_pred_path = model.cat; generated_catalog_pending = active = 1
@@ -1243,8 +1247,8 @@ flowchart LR
   sessione (`predfit_save_session` a eventi) e, implicitamente, per la lista quando
   si fa Fit (`model.lin`); la lista non era mai salvata all'uscita
   ([main.c:545](../../main.c#L545)).
-- **File che prevalgono sulla memoria**: al restore `model.int` prevale sulla
-  sessione e sulla specie attiva (B-18); `model.lin` prevale sui flag
+- **File che prevalgono sulla memoria**: al restore `model.int` è un fallback
+  soltanto se manca `int2` nella sessione; `model.lin` prevale sui flag
   (B-16); la sessione prevale su `model.par` per la riga opzioni.
 - **Memoria che prevale sui file**: a ogni Calculate/Fit tutti i file
   Pred&Fit sono riscritti dalla memoria (modifiche manuali perse); *Save all*
@@ -1323,7 +1327,7 @@ funzioni non elencate hanno la loro riga in [A1](A1-funzioni.md).
 | K-10 | `S_TMU` → `S_PF` | S·OVW | `predfit_adopt_shared_state` | idem, direzione opposta | T rot, μ red, Run fit | `predfit.temp_k/mu`, specie attiva | `.int` del prossimo Calculate (B-13) |
 | K-11 | `F_INTFIT` → `S_TMU` | S·OVW | `intensity_fit_run`, `fit_relative_dipoles` | applicare il risultato | Run fit | Trot, μ red | K-10, poi riscalamento a specie singola (B-11) |
 | K-12 | `S_TMU` → `S_PRED` | D·TR | `rescale_predicted_intensities` | T e dipoli richiesti | campi T/μ, Run fit, caricamento | intensità di tutte le righe | filtro di intensità, normalizzazione, CalcInt salvata |
-| K-13 | `FILE_INT` → `S_SPECIES` | P·OVW | `import_int_settings` + `store_active_species` | restore del modello | avvio senza `.cat` | specie attiva, campi `.int` | `.int` e intensità successive (B-18) |
+| K-13 | `FILE_INT` → `S_INT` | P·INIT | `import_int_settings` | restore di sessione vecchia | avvio senza `.cat`, `int2` assente | soli campi INT non salvati | `.int` non modifica specie o dipoli (B-18 risolto) |
 | K-14 | `S_PRED` ⇢ `S_SEL` | INV | `set_predictions` (dal passo #3) | la selezione è fatta di indici del catalogo corrente | ogni cambio di catalogo | `n_selected = 0` | prima del passo #3 mancava: assegnazione della transizione sbagliata (B-10) |
 | K-15 | `F_UNDO` → `S_ASG` | S·OVW | `restore_fit_snapshot` | annullare il fit | Undo | `fit_enabled` per identità; lista invariata | B-17 risolto al passo #8 |
 
@@ -1500,9 +1504,10 @@ Dipoli: `model.int` contiene per ogni specie inclusa gli ID `110·v + 1..3`
 ([393-411](../../predfit.c#L393-L411)); `species_XX.int` ([380-386](../../predfit.c#L380-L386),
 [681-687](../../predfit.c#L681-L687)) contiene `001/002/003` della singola specie e non
 è letto da nessuno (SPCAT è lanciato su `model`).
-Reader dell'app (`import_int_settings` [770-799](../../predfit.c#L770-L799)): i 10 campi
-tornano in `int_settings` già risolti (i valori "auto" diventano fissi), TEMP →
-`temp_k`, FQLIM → `fmax_ghz`, e **solo** gli ID 1..3 → `mu` (B-18).
+Reader dell'app (`import_int_settings`): `int2` della sessione moderna è autorevole.
+Solo se quella riga manca (sessione vecchia) i 10 campi di `model.int` inizializzano
+`int_settings`; TEMP e gli ID dipolo del file non vengono mai copiati nella specie
+attiva, né FQLIM/MAXV automatici vengono risolti in valori fissi (B-18 risolto).
 [INF] un solo QROT per tutti gli stati significa che le intensità relative tra
 specie diverse (molecole con A/B/C diversi) sono scalate con la funzione di
 partizione della specie attiva; la concentrazione per specie compensa solo in
@@ -1949,18 +1954,18 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 - **Gravità** media · **P1** · [FATTO] + [RIPR R-14]
 
 <a id="b-18"></a>
-### B-18 — Il restore sovrascrive T e dipoli della specie attiva e fissa i campi automatici
+### B-18 — Il restore sovrascriveva T e dipoli della specie attiva e fissava i campi automatici
 
 - **Gravità** alta · **P1, P2** · [FATTO] + [RIPR R-16]
-- **Dove**: `import_int_settings` [predfit.c:770-799](../../predfit.c#L770-L799) (TEMP →
-  `temp_k` [790](../../predfit.c#L790), ID 1..3 → `mu` [796](../../predfit.c#L796),
-  campi risolti [779-789](../../predfit.c#L779-L789)) seguito da `store_active_species`
-  [958](../../predfit.c#L958).
+- **Dove (prima della correzione)**: `import_int_settings` copiava TEMP e gli ID
+  dipolo dal file generato `model.int`, poi il restore risalvava quei valori nella
+  specie attiva.
 - **Prova**: specie attiva 1 con T 5 K e μ (0,4 0,3 0,5) → dopo il riavvio T 1 K
   (TCAT) e μ (0,75 0,21 1,14) (stato 0); FQLIM 0 → 8, MAXV −1 → 1; aggiungendo una
   terza specie MAXV resta 1.
-- **Correzione minima**: al restore leggere dal `.int` solo i campi che la sessione
-  non ha e non toccare le specie.
+- **Correzione**: `int2` è autorevole quando presente; `model.int` riempie soltanto
+  le impostazioni INT di sessioni vecchie e non tocca mai specie, dipoli, T o campi
+  automatici. Test: `test_restore_int_keeps_species_and_auto_fields`.
 
 <a id="b-19"></a>
 ### B-19 — Specie dedotta dal quarto QN anche quando non è lo stato vibrazionale
