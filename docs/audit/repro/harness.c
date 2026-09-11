@@ -786,6 +786,7 @@ static int sc_workdir(const char *work) {
     settings_init(s, ARGV0);
     settings_apply_defaults(s);
     snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", work);   /* as if read from spectravisual.settings */
+    predfit_refresh_work_dir(s);                  /* main: after Settings */
     char root[700]; fit_root(s, root, sizeof root);
     printf("predfit.work_dir = '%s'   fit_root(data_dir) = '%s'\n", s->predfit.work_dir, root);
     printf("before Restore defaults: spcat='%s'\n", s->settings.spcat_path);
@@ -868,7 +869,7 @@ static int sc_param(const char *work, int dup_id) {
 
 /* ------------------------------------------------ second-pass scenarios, part 2 */
 static int sc_clicat(const char *work, const char *extcat) {
-    banner("LAUNCH WITH A .cat: the Pred&Fit model is not restored");
+    banner("LAUNCH WITH A .cat: the persisted Pred&Fit model is retained");
     enter(work);
     char var[900], spec[900];
     snprintf(var, sizeof var, "%s/.fit/model.var", work);
@@ -880,12 +881,12 @@ static int sc_clicat(const char *work, const char *extcat) {
     set_param(&s->predfit, 200, -7.0e-6, 0.0);
     predfit_calculate(s); pump(s);
     printf("-- session 1: model.var written by Calculate:\n"); cat_file(var, 7);
-    /* session 2a: `spectravisual spec.txt pred.cat`, then quit (main.c:400, 429-450, 545) */
+    /* session 2a: `spectravisual spec.txt pred.cat`, then quit.  Startup does
+       not save the Pred&Fit session; its modern param rows are already enough. */
     AppState *a = new_state(work);
     predfit_load_session(a);
     set_predictions(a, extcat);
     add_spectrum(a, spec);
-    predfit_save_session(a);
     printf("session 2a (launched with a .cat): quick A B C = %.4f %.4f %.4f, n_param = %d\n",
            a->predfit.a, a->predfit.b, a->predfit.c, a->predfit.n_param);
     /* session 3a: plain restart, restore from .fit */

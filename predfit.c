@@ -25,6 +25,10 @@ static void fit_root(const AppState *s, char *out, size_t n) {
     else                         snprintf(out, n, "%s", FIT_DIR_NAME);
 }
 
+void predfit_refresh_work_dir(AppState *s) {
+    fit_root(s, s->predfit.work_dir, sizeof(s->predfit.work_dir));
+}
+
 int predfit_is_generated_catalog(const AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0;
     char root[600], expected[700];
@@ -46,6 +50,8 @@ static int have_program(const char *path) {
 }
 
 static int state_count(const PredFitState *p);
+static void parameter_label(PickettParameter *x);
+static void sync_basic_from_parameters(PredFitState *p);
 
 static double qrot_at(const PredFitState *p, double temp_k) {
     if (!(p->a > 0 && p->b > 0 && p->c > 0 && temp_k > 0)) return 0.0;
@@ -207,8 +213,8 @@ int predfit_is_session_file(const AppState *s, const char *path) {
     return strcmp(state_path, path) == 0;
 }
 
-void predfit_save_session(const AppState *s) {
-    const PredFitState *p = &s->predfit;
+void predfit_save_session(AppState *s) {
+    PredFitState *p = &s->predfit;
     char root[600];
     fit_root(s, root, sizeof(root));
     if (mkdir(root, 0700) != 0 && errno != EEXIST) return;
@@ -218,8 +224,9 @@ void predfit_save_session(const AppState *s) {
     FILE *fp = fopen(tmp_path, "w");
     if (!fp) return;
     fputs("# SpectraVisual session v3\n", fp);
-    fputs("# Pickett parameter ID and user-selected fit uncertainty\n", fp);
-    for (int i = 0; i < p->n_param; i++) fprintf(fp, "%d %.17g\n", p->param[i].id, p->param[i].error);
+    fputs("# Pickett parameter ID, value and user-selected fit uncertainty\n", fp);
+    for (int i = 0; i < p->n_param; i++)
+        fprintf(fp, "param %d %.17g %.17g\n", p->param[i].id, p->param[i].value, p->param[i].error);
     fprintf(fp, "hamiltonian %s\n", p->hamiltonian_line);
     {
         const PickettIntSettings *x = &p->int_settings;
@@ -259,7 +266,21 @@ void predfit_save_session(const AppState *s) {
         saved_count++;
     }
     if (saved_active >= 0) fprintf(fp, "active %d\n", saved_active);
-    if (fclose(fp) == 0) rename(tmp_path, path);
+    if (fclose(fp) == 0 && rename(tmp_path, path) == 0) p->session_dirty = 0;
+}
+
+static void session_set_parameter(PredFitState *p, int id, double value, double error) {
+    for (int i = 0; i < p->n_param; i++) {
+        if (p->param[i].id != id) continue;
+        p->param[i].value = value;
+        p->param[i].error = error;
+        parameter_label(&p->param[i]);
+        return;
+    }
+    if (p->n_param >= MAX_PICKETT_PARAMS) return;
+    PickettParameter *x = &p->param[p->n_param++];
+    *x = (PickettParameter){id, value, error, ""};
+    parameter_label(x);
 }
 
 void predfit_load_session(AppState *s) {
@@ -277,6 +298,12 @@ void predfit_load_session(AppState *s) {
         if (line[0] == '#') continue;
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
+        if (strncmp(line, "param ", 6) == 0) {
+            int id = 0; double value = 0.0, error = 0.0;
+            if (sscanf(line + 6, "%d %lf %lf", &id, &value, &error) == 3 && id > 0)
+                session_set_parameter(p, id, value, error);
+            continue;
+        }
         if (strncmp(line, "view ", 5) == 0) {
             int sync = 1, average_window = s->rolling_avg_window;
             if (sscanf(line + 5, "%lf %lf %lf %lf %lf %lf %d %d",
@@ -367,6 +394,8 @@ void predfit_load_session(AppState *s) {
             continue;
         }
         if (strncmp(line, "active ", 7) == 0) { s->session_active_spec = atoi(line + 7); continue; }
+        /* v1-v3 stored just "ID uncertainty".  Keep reading it, but only
+           modern param rows can reconstruct a term absent from defaults. */
         int id = 0; double error = 0;
         if (sscanf(line, "%d %lf", &id, &error) != 2) continue;
         for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) { p->param[i].error = error; break; }
@@ -378,6 +407,7 @@ void predfit_load_session(AppState *s) {
     }
     if (p->active_species < 0 || p->active_species >= p->n_species) p->active_species = 0;
     load_active_species(p);
+    sync_basic_from_parameters(p);
 }
 
 /* Trot and the requested (red) dipoles describe the active molecular
@@ -438,6 +468,7 @@ void predfit_adopt_shared_state(AppState *s) {
     PredFitState *p=&s->predfit;
     if (s->rot_temp_k > 0.0) p->temp_k=s->rot_temp_k;
     for (int c=0;c<3;c++) if (s->dipole_red[c] != 0.0) p->mu[c]=s->dipole_red[c];
+    p->session_dirty = 1;
     store_active_species(p);
 }
 
@@ -614,6 +645,7 @@ static void select_species(AppState *s, int index) {
     load_active_species(p);
     sync_basic_from_parameters(p);
     predfit_publish_shared_state(s);
+    p->session_dirty = 1;
 }
 
 static void add_species(AppState *s) {
@@ -647,6 +679,7 @@ static void add_species(AppState *s) {
     load_active_species(p);
     sync_basic_from_parameters(p);
     predfit_publish_shared_state(s);
+    p->session_dirty = 1;
 }
 
 static int write_inputs(AppState *s, int for_fit) {
@@ -1304,6 +1337,7 @@ static void advanced_edit_paste(PredFitState *p) {
 }
 
 static void advanced_commit_edit(PredFitState *p) {
+    if (p->advanced_edit_param != -1) p->session_dirty = 1;
     if (p->advanced_edit_param == -5) {
         PickettIntSettings *x = &p->int_settings;
         char *end = NULL;
@@ -1452,6 +1486,7 @@ static void add_parameter(PredFitState *p) {
     if (p->n_param >= MAX_PICKETT_PARAMS) return;
     PickettParameter *x = &p->param[p->n_param++];
     *x = (PickettParameter){0, 0.0, 1.0, "Pickett parameter"};
+    p->session_dirty = 1;
     advanced_begin_edit(p, p->n_param - 1, 0);
 }
 
@@ -1461,6 +1496,7 @@ static void delete_parameter(PredFitState *p, int row) {
     if (row < 0 || row >= p->n_param) return;
     for (int i = row; i < p->n_param - 1; i++) p->param[i] = p->param[i + 1];
     p->n_param--;
+    p->session_dirty = 1;
     if (p->advanced_edit_param == row) { p->advanced_edit_param = -1; SDL_StopTextInput(); }
     else if (p->advanced_edit_param > row) p->advanced_edit_param--;
     if (p->advanced_param_scroll > 0 && p->advanced_param_scroll >= p->n_param) p->advanced_param_scroll--;
@@ -1795,10 +1831,12 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                     p->n_species--;
                     if (p->active_species >= p->n_species) p->active_species = p->n_species - 1;
                     load_active_species(p); sync_basic_from_parameters(p); predfit_publish_shared_state(s);
+                    p->session_dirty = 1;
                 } else if (x < adv_col(u.table, 0.10)) {
                     select_species(s, row);
                 } else if (x < adv_col(u.table, 0.18)) {
                     p->species[row].predict_enabled = !p->species[row].predict_enabled;
+                    p->session_dirty = 1;
                 } else if (x < adv_col(u.table, 0.40)) {
                     advanced_begin_species_edit(p, row, 0);
                 } else if (x >= adv_col(u.table, 0.47) && x < adv_col(u.table, 0.58)) {
@@ -1824,6 +1862,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         int row = p->advanced_line_scroll + (y - u.rows.y) / u.row_h;
         if (row >= 0 && row < s->n_assignments)
             s->assignments[row].fit_enabled = !s->assignments[row].fit_enabled;
+        p->session_dirty = 1;
         return 1;
     }
     if (p->advanced_tab == 2) {

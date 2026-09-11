@@ -1241,6 +1241,97 @@ static int test_fitting_tab_row_states(void) {
     DONE();
 }
 
+/* =================================================== #7 Startup and model */
+
+static PickettParameter *parameter_by_id(PredFitState *p, int id) {
+    for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) return &p->param[i];
+    return NULL;
+}
+
+/* T-32, R-28: an explicit external CAT must not make a persisted model fall
+   back to defaults.  The next Calculate writes the restored values. */
+static int test_launch_with_cat_keeps_model(void) {
+    AppState *saved = new_state();
+    mono_model(&saved->predfit);
+    PickettParameter *dj = &saved->predfit.param[saved->predfit.n_param++];
+    *dj = (PickettParameter){200, -7.0e-6, 0.0, "DJ"};
+    predfit_save_session(saved);
+
+    AppState *launch = new_state();
+    predfit_load_session(launch);                       /* then main opens pred.cat */
+    set_predictions(launch, fx("cat3_303.cat"));
+    CHECK_DBL("A ripristinata", launch->predfit.a, 1151.360417, 1e-9);
+    CHECK_DBL("B ripristinata", launch->predfit.b, 316.1511127, 1e-9);
+    CHECK_DBL("C ripristinata", launch->predfit.c, 313.1742368, 1e-9);
+    dj = parameter_by_id(&launch->predfit, 200);
+    CHECK(dj != NULL, "DJ assente dopo avvio con .cat");
+    if (dj) {
+        CHECK_DBL("DJ ripristinato", dj->value, -7.0e-6, 1e-14);
+        CHECK_DBL("incertezza DJ ripristinata", dj->error, 0.0, 1e-14);
+    }
+    CHECK_INT("write_inputs dopo .cat", write_inputs(launch, 0), 1);
+    CHECK_DBL("A non sovrascritta da Calculate", launch->predfit.a, 1151.360417, 1e-9);
+    dj = parameter_by_id(&launch->predfit, 200);
+    if (dj) CHECK_DBL("DJ non sovrascritto da Calculate", dj->value, -7.0e-6, 1e-14);
+    DONE();
+}
+
+/* A modern param record is self-contained: loading it must add a term that
+   the initial quick model does not already carry. */
+static int test_session_load_adds_missing_param_rows(void) {
+    char fitdir[800];
+    snprintf(fitdir, sizeof(fitdir), "%s/.fit", g_work);
+    mkdir(fitdir, 0700);
+    FILE *fp = fopen(work_path(".fit/spectravisual.state"), "w");
+    CHECK(fp != NULL, "impossibile creare sessione di prova");
+    if (!fp) DONE();
+    fputs("# SpectraVisual session v3\nparam 910001 42.25 0.125\n", fp);
+    fclose(fp);
+
+    AppState *s = new_state();
+    predfit_load_session(s);
+    PickettParameter *x = parameter_by_id(&s->predfit, 910001);
+    CHECK(x != NULL, "parametro assente non aggiunto dalla sessione");
+    if (x) {
+        CHECK_DBL("valore parametro aggiunto", x->value, 42.25, 1e-12);
+        CHECK_DBL("errore parametro aggiunto", x->error, 0.125, 1e-12);
+    }
+    DONE();
+}
+
+/* A passive start/exit leaves a v3 session byte-for-byte unchanged.  This is
+   the same guard main() uses at shutdown; a real edit sets session_dirty. */
+static int test_startup_does_not_rewrite_session(void) {
+    AppState *saved = new_state();
+    mono_model(&saved->predfit);
+    predfit_save_session(saved);
+    char *before = read_all(work_path(".fit/spectravisual.state"));
+    CHECK(before != NULL, "sessione iniziale assente");
+    if (!before) DONE();
+
+    AppState *start = new_state();
+    predfit_load_session(start);
+    CHECK_INT("sessione passiva non sporca", start->predfit.session_dirty, 0);
+    if (start->predfit.session_dirty) predfit_save_session(start);
+    char *after = read_all(work_path(".fit/spectravisual.state"));
+    CHECK(after != NULL && strcmp(before, after) == 0,
+          "sessione riscritta durante avvio/uscita passivi");
+    free(before); free(after);
+    DONE();
+}
+
+/* T-28, R-25: after Settings choose a data directory, the cached work path
+   must agree immediately, before Calculate or Restore happen. */
+static int test_workdir_after_settings(void) {
+    AppState *s = new_state();
+    predfit_refresh_work_dir(s);
+    char want[800];
+    snprintf(want, sizeof(want), "%s/.fit", g_work);
+    CHECK(strcmp(s->predfit.work_dir, want) == 0,
+          "work_dir: atteso '%s', ottenuto '%s'", want, s->predfit.work_dir);
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -1276,6 +1367,10 @@ static const Test TESTS[] = {
     {"test_fit_rejects_nqn_mismatch",          test_fit_rejects_nqn_mismatch},
     {"test_fit_status_counts_spfit_diagnostics", test_fit_status_counts_spfit_diagnostics},
     {"test_fitting_tab_row_states",            test_fitting_tab_row_states},
+    {"test_launch_with_cat_keeps_model",       test_launch_with_cat_keeps_model},
+    {"test_session_load_adds_missing_param_rows", test_session_load_adds_missing_param_rows},
+    {"test_startup_does_not_rewrite_session",   test_startup_does_not_rewrite_session},
+    {"test_workdir_after_settings",            test_workdir_after_settings},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

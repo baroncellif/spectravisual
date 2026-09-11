@@ -345,9 +345,10 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
   `settings_apply_defaults`) con `data_dir` impostata; poi `settings_restore_defaults`
   (pulsante *Restore defaults*).
 - Oracolo: `work_dir` = `data_dir/.fit`; programmi e cartella dati conservati.
-- Osservato: `predfit.work_dir = '.fit'` contro `'$RUNS/n2/workdir/.fit'`; dopo il
-  ripristino `spcat='' spfit='' data_dir=''`.
-- Esito: bug B-35, B-36.
+- Osservato: `predfit.work_dir = '$RUNS/workdir/.fit'`, uguale a `fit_root(data_dir)`;
+  dopo il ripristino `spcat='' spfit='' data_dir=''`.
+- Esito: B-35 risolto al passo #7; B-36 resta aperto. Test:
+  `test_workdir_after_settings`.
 
 ### R-26 — Estensione `.CAT` maiuscola ([uppercase.log](repro/logs/uppercase.log))
 - Azione: `cat3_303.cat` copiato come `PRED.CAT`; `path_looks_like_cat`; caricamento come farebbe il drop.
@@ -366,16 +367,18 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
 ### R-28 — Avvio con un `.cat` e modello Pred&Fit ([clicat.log](repro/logs/clicat.log))
 - Azione: sessione 1 con A, B, C e DJ (ID 200, incertezza 0), Calculate. Sessione 2a:
   avvio con `pred.cat` e uno spettro (sequenza di `main`: `predfit_load_session`,
-  `set_predictions`, `add_spectrum`, salvataggio della sessione). Sessione 3a: riavvio
+  `set_predictions`, `add_spectrum`, nessun salvataggio passivo). Sessione 3a: riavvio
   senza `.cat`. Sessione 2b: avvio con `.cat` e Calculate.
 - Oracolo: stessi parametri e incertezze in tutte le sessioni; `model.var` mai riscritto con i default.
 - Osservato:
   ```text
-  2a: A B C = 10000 1000 900, n_param = 3
-  3a: param 200 = -7e-06, error 1      (era 0: fissato)
-  2b: model.var con 10000 / 1000 / 900
+  2a: A B C = 1151.3604 316.1511 313.1742, n_param = 4
+  3a: param 200 = -7e-06, error 0
+  2b: model.var con A/B/C ripristinati e DJ = -7e-06, error 0
   ```
-- Esito: bug B-39.
+- Esito: B-39 risolto al passo #7. Test:
+  `test_launch_with_cat_keeps_model`, `test_session_load_adds_missing_param_rows`,
+  `test_startup_does_not_rewrite_session`.
 
 ### R-29 — Riavvio da un'altra cartella e *Save all* ([saveloss.log](repro/logs/saveloss.log))
 - Azione: sessione 1 in `data_dir` con 3 assignment da `cat3_303.cat` (J = 5, 11, 25),
@@ -517,11 +520,11 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-25 | *Run fit* che fallisce | R-22 | = intensità, μ red, T rot e specie di Pred&Fit invariati | — |
 | T-26 | μ = 0 e μ < 0 nei tre campi | R-23 | = stessa regola e stesso messaggio in tutti i campi | — |
 | T-27 | Drop di N file in un gesto | R-24 | = N file caricati | — |
-| T-28 | `data_dir` impostata, avvio con `.cat` | R-25 | = `work_dir` = `data_dir/.fit` prima del primo Calculate | — |
+| T-28 | `data_dir` impostata, avvio con `.cat` | R-25 | = `work_dir` = `data_dir/.fit` prima del primo Calculate | `test_workdir_after_settings` |
 | T-29 | *Restore defaults* | R-25 | = programmi SPCAT/SPFIT e `data_dir` invariati, oppure richiesta esplicita | — |
 | T-30 | Estensioni `.CAT` e `.Cat` | R-26 | = aperti come cataloghi | — |
 | T-31 | Parametro con ID 0 o duplicato | R-27 | Δ rifiuto con messaggio; = `.par` senza righe non valide | — |
-| T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default | — |
+| T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default | `test_launch_with_cat_keeps_model`, `test_session_load_adds_missing_param_rows`, `test_startup_does_not_rewrite_session` |
 | T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` | `test_save_all_after_restore_no_loss` |
 | T-34 | Export del fit delle intensità dopo una cancellazione | R-30 | Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta | — |
 | T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente | `test_baseline_right_drag_ascending` (solo file crescente) |

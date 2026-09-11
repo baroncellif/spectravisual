@@ -162,6 +162,7 @@ typedef struct {
     int generated_catalog_pending;
     int generated_catalog_active; /* current prediction is .fit/model.cat */
     int intensity_dirty;
+    int session_dirty;             /* save on exit only after an actual edit */
     char work_dir[512];       // persistent .fit working state (latest run)
     int last_fit_iterations;
     char status[160];

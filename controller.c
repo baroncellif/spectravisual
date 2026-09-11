@@ -1018,6 +1018,7 @@ static void commit_text_input(AppState *s) {
         int i=s->input_state-INPUT_PF_A;
         if (isfinite(x) && ((i == 7 && x >= 0.0) || (i != 7 && x > 0.0))) {
             *v[i]=x;
+            p->session_dirty = 1;
             if (i >= 3 && i <= 6) predfit_publish_shared_state(s);
         }
     }

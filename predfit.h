@@ -4,6 +4,7 @@
 #include "types.h"
 
 void predfit_init(AppState *state);
+void predfit_refresh_work_dir(AppState *state);
 int predfit_calculate(AppState *state);
 /* Generate one catalogue for every configured species and present their
    concentration-weighted union as the prediction. */
@@ -18,7 +19,7 @@ int predfit_restore_latest(AppState *state);
 /* The session file: which spectra were open, which one was active, and the
    fit uncertainties the user chose. Save it whenever the working set changes. */
 void predfit_load_session(AppState *state);
-void predfit_save_session(const AppState *state);
+void predfit_save_session(AppState *state);
 /* Guard against accidentally treating .fit/spectravisual.state as a two-column
    experimental spectrum: its numeric settings make it superficially valid. */
 int predfit_is_session_file(const AppState *state, const char *path);

@@ -135,9 +135,10 @@ R-18…R-40 di [A4](A4-riproduzioni.md)). I più gravi:
   restore legge la lista dalla CWD e scarta le righe `.lin` troncate da B-01;
   *Save all* riscrive poi `assignments.txt` con la lista ridotta: 2 righe su 3
   perse [RIPR R-29]. **Risolto al passo #2.**
-- **B-39, modello Pred&Fit perso con un `.cat` sulla riga di comando.** Il pannello
-  mostra i default 10000/1000/900, la sessione perde parametri e flag "fissato" già
-  all'avvio, e un Calculate sovrascrive il `model.var` fittato [RIPR R-28].
+- **B-39, modello Pred&Fit con un `.cat` sulla riga di comando.** Dal passo #7
+  la sessione conserva valore e incertezza di ogni parametro; un CAT esterno
+  non azzera più il modello e Calculate riscrive gli stessi valori [RIPR R-28;
+  `test_launch_with_cat_keeps_model`].
 - **B-46, T rot distorta.** Le aree del fit delle intensità includono la baseline:
   con una baseline pari allo 0,5 % della riga più forte T rot passa da 2,05 a 3,3 K
   [RIPR R-35].
@@ -266,7 +267,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `PredLine.n_qn` | riga CAT (QNFMT % 10) | `PredLine` | `parse_cat_quantum_numbers`, `parse_assignment_lin_order`, lettore legacy, `import_fit_lines` (`slot/2`) | identità ×3, writer ×2, mappatura delle specie, display | per caricamento | corrotto (B-01); dedotto dal `.lin` (B-16) |
 | `PredLine` QN `Ju…M3l` | riga CAT | `PredLine` | come sopra | identità, filtro, writer, display | per caricamento | codici lettera persi (B-04) |
 | `lin_data`, `n_lin_data` | marcatori "assegnati" | `AppState` | `ensure_aux_loaded` (da `assigned.lin`/ini nella CWD) | render | una volta per processo | non collegati alla lista (U-07) |
-| `predfit.param[]`, `n_param` | modello Pred&Fit | `PredFitState` | init, `add_species`, add/delete, Advanced, `import_fitted_parameters`, `sync_basic_parameters`, `predfit_load_session` (errori), Undo | `write_inputs`, Advanced | valori solo in `model.var`; errori in sessione | due fonti per lo stesso parametro |
+| `predfit.param[]`, `n_param` | modello Pred&Fit | `PredFitState` | init, `add_species`, add/delete, Advanced, `import_fitted_parameters`, `sync_basic_parameters`, `predfit_load_session`, Undo | `write_inputs`, Advanced | valore e incertezza in sessione v3; `model.var` dopo un Fit | CAT esterno conserva i parametri (B-39 risolto) |
 | `predfit.a/b/c` | vista rapida della specie attiva | `PredFitState` | init, pannello, `sync_basic_from_parameters`, Undo | `sync_basic_parameters`, Q rot, render | — | copia dei parametri |
 | `predfit.mu`, `predfit.temp_k` | vista rapida di `species[active]` | `PredFitState` | pannello, `load_active_species`, `predfit_adopt_shared_state`, `import_int_settings`, Undo, init | `store_active_species`, `.int`, `predfit_publish_shared_state` | via righe `molecule2` | 6 writer; restore (B-18) |
 | `predfit.hamiltonian_line` | riga opzioni `.par/.var` | `PredFitState` | init `s 1 1 0`, sessione, Advanced, Undo | `write_inputs` (sola validazione), sessione, render | sessione | NVIB resta quello digitato; Calculate/Fit rifiutati se < massimo stato incluso (B-02 risolto) |
@@ -275,7 +276,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `predfit.line_error_mhz` | Pred&Fit | `PredFitState` | init, default di Settings, Advanced, Undo | writer `.lin` | **non salvato** in sessione | soglia della sentinella (B-09) |
 | `predfit.generated_catalog_pending/active` | provenienza del catalogo | `PredFitState` | Calculate, Fit, restore, `adopt`, `set_predictions` | `adopt`, `publish` | memoria | ignorati da `commit_text_input` (B-11) |
 | `predfit.history`, `history_count` | Undo | heap | `push_fit_snapshot`, Undo, dispose | Undo | solo RAM | flag per indice (B-17) |
-| `predfit.work_dir` | cartella di lavoro | `PredFitState` | `predfit_init`, `prepare_fit_dir`, restore | `work_file`, `system()` | memoria | può differire da `data_dir` dopo un cambio in Settings |
+| `predfit.work_dir` | cartella di lavoro | `PredFitState` | `predfit_init`, `predfit_refresh_work_dir`, `prepare_fit_dir`, restore | `work_file`, `system()` | memoria | dopo Settings iniziale coincide con `data_dir/.fit` (B-35 risolto) |
 | `predfit.status` | messaggi | `PredFitState` | molti | render | memoria | dal passo #6 include NQN incompatibili e quattro diagnostiche SPFIT (B-12/B-22 risolti) |
 | `g_report` (static) | cache di `model.fit` | predfit.c | `report_refresh`/`report_invalidate` | Advanced | per `mtime` | associazione per indice |
 | `g_lin_rows` (static) | righe di `model.lin` | predfit.c | `read_lin_rows` | `import_fit_lines` | transitorio | — |
@@ -304,12 +305,13 @@ avvio `spectravisual` (nessun argomento)
       init_app_defaults [21-81] → predfit_init [predfit.c:481-504]      (modello di default, NVIB 1)
       settings_init [settings.c:278-284]                                  (legge spectravisual.settings accanto all'eseguibile; cerca spcat/spfit)
       settings_apply_defaults [settings.c:286-300]                        (tool; predfit.line_error_mhz)
-      predfit_load_session [predfit.c:240-357]                            (se data_dir/.fit/spectravisual.state esiste: specie, riga opzioni con NVIB forzato, int2, vista, spettri)
+      predfit_refresh_work_dir → data_dir/.fit (passo #7)
+      predfit_load_session (se data_dir/.fit/spectravisual.state esiste: parametri completi, specie, riga opzioni, int2, vista, spettri)
       predfit_restore_latest [predfit.c:946-968]  ← SOLO se non c'è un .cat e se .fit/model.cat esiste (altrimenti ritorna 0 a 951)
   → nessuno spettro sulla riga di comando: spettri della sessione [main.c:433-442] → add_spectrum → ensure_aux_loaded [155-168]
       → assignments[] ← data_dir/assignments.txt (load_existing_assignments [loader.c:609-667])
       → lin_data ← assigned.lin / *.ini nella CWD [loader.c:121-218]
-  → predfit_save_session [main.c:450] se c'è almeno uno spettro     (crea data_dir/.fit/ anche senza Pred&Fit, predfit.c:189)
+  → nessun salvataggio Pred&Fit: file da riga di comando non modifica una sessione esistente (passo #7)
 
 drop di uno spettro
   → SDL_DROPFILE [controller.c:218-226] → pending_spec_path, pending_load
@@ -2230,23 +2232,26 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-35"></a>
 ### B-35 — `work_dir` calcolata prima di leggere le impostazioni
 
+- **Stato: risolto** nel commit del passo #7 — `main` richiama
+  `predfit_refresh_work_dir` dopo `settings_init`; prima di Calculate/Fit la
+  cache coincide già con `data_dir/.fit`. Test: `test_workdir_after_settings`;
+  R-25 rieseguito (B-36 resta aperto).
 - **Gravità** bassa · **P1** · [FATTO] + [RIPR R-25]
 - **Dove**: `init_app_defaults` → `predfit_init` [main.c:369](../../main.c#L369),
   [predfit.c:503](../../predfit.c#L503); `settings_init` [main.c:398](../../main.c#L398).
-- **Causa**: `predfit_init` fissa `work_dir = fit_root()` quando `data_dir` è ancora
+- **Causa (prima della correzione)**: `predfit_init` fissa `work_dir = fit_root()` quando `data_dir` è ancora
   vuota, cioè `.fit` relativo alla CWD; `work_dir` viene ricalcolata solo da
   `prepare_fit_dir` ([predfit.c:84](../../predfit.c#L84)) o dal restore ([953](../../predfit.c#L953)).
 - **Condizioni**: `data_dir` impostata, avvio con un `.cat` (niente restore), prima del
   primo Calculate o Fit.
-- **Prova**: `predfit.work_dir = '.fit'` contro `fit_root(data_dir) =
+- **Prova pre-fix**: `predfit.work_dir = '.fit'` contro `fit_root(data_dir) =
   '$RUNS/n2/workdir/.fit'` [RIPR R-25].
 - **Effetti**: tutto ciò che legge `work_file()` prima del primo Calculate (scheda
   *Fitting*, riepilogo del fit) guarda `.fit` nella CWD, contro l'intento del commento
   [predfit.c:501-503](../../predfit.c#L501-L503) [INF sull'effetto a schermo].
 - **Origine**: `6066740` (pagina Settings) per la riga 503; ordine di `main` da
   `13e8bff` (0_28_v).
-- **Correzione minima** [PROP]: ricalcolare `work_dir` dopo `settings_init`, o sempre al
-  momento dell'uso.
+- **Correzione applicata**: ricalcolare `work_dir` dopo `settings_init`.
 
 <a id="b-36"></a>
 ### B-36 — *Restore defaults* cancella i programmi SPCAT/SPFIT e la cartella dati
@@ -2307,12 +2312,19 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-39"></a>
 ### B-39 — Avvio con un `.cat`: il modello Pred&Fit non viene ripristinato e può essere sovrascritto
 
+- **Stato: risolto** nel commit del passo #7 — la sessione scrive righe
+  `param <id> <valore> <incertezza>` e le rilegge aggiungendo i parametri
+  mancanti; il vecchio formato `ID incertezza` resta compatibile. L'avvio con
+  file da riga di comando non riscrive più la sessione senza una modifica.
+  Test: `test_launch_with_cat_keeps_model`,
+  `test_session_load_adds_missing_param_rows`,
+  `test_startup_does_not_rewrite_session`; R-28 rieseguito.
 - **Gravità** alta · **P1**, **vincolo 4** · [FATTO] + [RIPR R-28]
 - **Dove**: [main.c:401](../../main.c#L401) (restore solo senza `.cat`) e
   [450](../../main.c#L450) (salvataggio della sessione all'avvio); sessione
   [predfit.c:197](../../predfit.c#L197), [345-347](../../predfit.c#L345-L347);
   `import_fitted_parameters` [predfit.c:723-741](../../predfit.c#L723-L741).
-- **Causa**: i valori dei parametri stanno solo in `model.var`. La sessione salva
+- **Causa (prima della correzione)**: i valori dei parametri stavano solo in `model.var`. La sessione salva
   soltanto "ID incertezza" ([197](../../predfit.c#L197)) e al caricamento aggiorna
   l'incertezza delle righe già in memoria, ignorando le altre ([347](../../predfit.c#L347)).
   Con un `.cat` sulla riga di comando `predfit_restore_latest` non viene chiamata e
@@ -2321,19 +2333,18 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
   con quelle tre righe. Al riavvio successivo `import_fitted_parameters` ricrea le righe
   mancanti con incertezza 1,0 ([734](../../predfit.c#L734)).
 - **Condizioni**: `.fit/model.var` presente; avvio `spectravisual spettro.txt catalogo.cat`.
-- **Prova** [RIPR R-28]: sessione 1 con A, B, C e DJ (ID 200) fissato (incertezza 0).
+- **Prova pre-fix** [RIPR R-28]: sessione 1 con A, B, C e DJ (ID 200) fissato (incertezza 0).
   Avvio con `.cat`: A B C = 10000/1000/900, 3 parametri, e la sessione perde la riga
   200. Riavvio normale: DJ ripristinato da `model.var` con incertezza 1, quindi non più
   fissato. Nuovo avvio con `.cat` + Calculate: `model.var` riscritto con 10000/1000/900.
-- **Effetti**: un Calculate distrugge il modello fittato su disco; i parametri fissati
+- **Effetti pre-fix**: un Calculate distrugge il modello fittato su disco; i parametri fissati
   tornano liberi al Fit successivo; il pannello mostra costanti che non sono quelle del
   lavoro salvato. La sessione di Pred&Fit viene scritta anche se Pred&Fit non è stato
   usato (vincolo 4, B-26).
 - **Origine**: `fa9731f` ([main.c:401](../../main.c#L401)); `d8ba6d8`
   ([predfit.c:347](../../predfit.c#L347), [main.c:450](../../main.c#L450)).
-- **Correzione minima** [PROP]: salvare i valori dei parametri nella sessione (o leggere
-  `model.var` a ogni avvio); non scrivere la sessione Pred&Fit se non è stata caricata;
-  al caricamento aggiungere le righe mancanti invece di ignorarle.
+- **Correzione applicata**: salvare i valori dei parametri nella sessione, non
+  riscriverla durante un avvio passivo e aggiungere le righe mancanti.
 
 <a id="b-40"></a>
 ### B-40 — Riavvio da un'altra cartella + *Save all*: assignment persi in modo permanente

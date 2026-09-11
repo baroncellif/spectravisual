@@ -424,6 +424,7 @@ int main(int argc, char *argv[])
        a resumable session rather than a transient cache. */
     settings_init(&state, argv[0]);
     settings_apply_defaults(&state);
+    predfit_refresh_work_dir(&state);
     predfit_load_session(&state);
     if (!pred_arg) predfit_restore_latest(&state);
 
@@ -472,9 +473,8 @@ int main(int argc, char *argv[])
            not a request to impose the previous session's zoom and offsets. */
         state.session_has_view = 0;
     }
-    /* Opening a file makes it part of the session straight away, so a crash or
-       a force-quit does not lose what was loaded. */
-    if (state.n_spectra > 0) predfit_save_session(&state);
+    /* Command-line files are a fresh task.  Do not overwrite an existing
+       Pred&Fit session with defaults merely because the app was launched. */
     
     int running = 1;
     Layout layout;
@@ -569,7 +569,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    predfit_save_session(&state);
+    if (state.predfit.session_dirty) predfit_save_session(&state);
     free_dataset(&state);
     plotgpu_shutdown();
     settings_dispose(&state);
