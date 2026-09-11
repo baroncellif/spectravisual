@@ -1237,6 +1237,20 @@ vincoli 1–6 verificati da test dedicati.</p>
 <td>#1</td>
 <td>#24</td>
 </tr>
+<tr>
+<td>N-02</td>
+<td>La sessione Pred&amp;Fit viene ancora salvata automaticamente da Calculate/Fit (<code>write_inputs</code>), quindi un esperimento o un modello sbagliato può sovrascrivere uno stato buono. Richiesta utente: eliminare gli autosalvataggi e aggiungere un pulsante <strong>Save session</strong> nella finestra principale, accanto a Export, che sia l&#39;unico writer esplicito della sessione completa.</td>
+<td>richiesta utente, 2026-09-11; writer <code>predfit_save_session</code> in <code>write_inputs</code></td>
+<td>#7</td>
+<td>nuovo passo, dopo una decisione su D7/sessione generale</td>
+</tr>
+<tr>
+<td>N-03</td>
+<td>L&#39;export deve produrre un PNG con una specifica visiva da definire; l&#39;attuale screenshot esporta <code>spectravisual_export.bmp</code> nella CWD.</td>
+<td>richiesta utente, 2026-09-11; <code>save_screenshot</code> in <code>main.c</code></td>
+<td>#7</td>
+<td>nuovo passo, dopo la specifica PNG</td>
+</tr>
 </tbody></table></div>
 
 </section>
