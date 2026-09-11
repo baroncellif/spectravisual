@@ -1266,8 +1266,7 @@ int predfit_restore_latest(AppState *s) {
     int ignored_exclusions = 0;
     int marked = import_fit_lines(s, &ignored_exclusions);
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
-    snprintf(s->pending_pred_path,sizeof(s->pending_pred_path),"%s",cat_path);
-    s->pending_load=1;
+    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
     p->generated_catalog_pending=1;
     p->generated_catalog_active=1;
@@ -1301,8 +1300,7 @@ int predfit_calculate_all_species(AppState *s) {
     work_file(p, "model.cat", model_cat, sizeof(model_cat));
     snprintf(cmd, sizeof(cmd), "cd %s && \"%s\" model", p->work_dir, s->settings.spcat_path);
     if (!run(cmd, p, "SPCAT")) return 0;
-    snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s", model_cat);
-    s->pending_load = 1;
+    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, model_cat, 1);
     p->generated_catalog_pending = 1;
     snprintf(p->status, sizeof(p->status), "SPCAT complete: multi-state model written to model.cat.");
     return 1;
@@ -1327,8 +1325,7 @@ int predfit_fit(AppState *s) {
     snprintf(cmd,sizeof(cmd),"cd %s && \"%s\" model",p->work_dir,s->settings.spcat_path);
     if (!run(cmd, p, "SPCAT after fit")) return 0;
     work_file(p,"model.cat",cat_path,sizeof(cat_path));
-    snprintf(s->pending_pred_path, sizeof(s->pending_pred_path), "%s",cat_path);
-    s->pending_load = 1;
+    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     p->generated_catalog_pending = 1;
     snprintf(p->status, sizeof(p->status), "SPFIT complete; refreshed SPCAT prediction.");
     fit_summary(p, p->status, sizeof(p->status));

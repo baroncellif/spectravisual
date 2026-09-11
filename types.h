@@ -11,6 +11,7 @@
 #define MAX_SELECTED 100
 #define MAX_LIN_POINTS 50000 // New constant for LIN file
 #define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
+#define MAX_PENDING_LOADS 32  // files/actions waiting to be opened, in FIFO order
 #define MAX_PICKETT_PARAMS 128
 #define MAX_PICKETT_LABEL 128
 #define MAX_PICKETT_SPECIES 16
@@ -53,6 +54,18 @@ typedef struct {
     int    visible;
     int    opacity;
 } SessionSpectrum;
+
+typedef enum {
+    PENDING_LOAD_SPECTRUM,
+    PENDING_LOAD_CATALOG,
+    PENDING_LOAD_SESSION
+} PendingLoadKind;
+
+typedef struct {
+    PendingLoadKind kind;
+    int generated_catalog;    /* produced by SPCAT, not a manually opened .cat */
+    char path[512];
+} PendingLoadRequest;
 
 typedef struct {
     double freq_mhz;   
@@ -341,9 +354,9 @@ typedef struct {
     int multi_ynorm;          // 0 = shared Y scale, 1 = normalized per trace
     int multi_indiv_int;      // 0 = intensity controls scale all spectra together,
                               //     1 = only the active spectrum
-    char pending_spec_path[512];
-    char pending_pred_path[512];
-    int pending_session_load; /* dropped .fit/spectravisual.state */
+    PendingLoadRequest pending_loads[MAX_PENDING_LOADS];
+    int pending_load_head;
+    int pending_load_count;
     int pending_select;       // request to switch active spectrum (-1 = none)
     int pending_remove;       // request to remove a spectrum (-1 = none)
 
@@ -355,7 +368,6 @@ typedef struct {
     int data_loaded;
     int verbose;
     int show_help;
-    int pending_load;
     int export_requested;
     char exp_path[512];
     char pred_path[512];
@@ -508,6 +520,11 @@ typedef struct {
     double measure_x1;
 
 } AppState;
+
+/* Producers include the event controller and Pred&Fit; consumption happens
+   in main after events have been collected for the frame. */
+int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
+                             const char *path, int generated_catalog);
 
 typedef struct {
     int win_w, win_h;

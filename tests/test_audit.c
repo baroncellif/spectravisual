@@ -112,14 +112,9 @@ static void compute_layout(AppState *s, Layout *L) {
     L->pred_x = L->plot_x; L->pred_w = L->exp_w;
 }
 
-/* Copy of the pending-load pump of main.c:514-522 and 530. */
+/* Same pending-load pump used by the application event loop. */
 static void pump(AppState *s) {
-    if (s->pending_session_load) { s->pending_session_load = 0; reopen_predfit_session(s); }
-    if (s->pending_load) {
-        s->pending_load = 0;
-        if (s->pending_pred_path[0]) { set_predictions(s, s->pending_pred_path); predfit_adopt_generated_catalog(s); s->pending_pred_path[0] = '\0'; }
-        if (s->pending_spec_path[0]) { add_spectrum(s, s->pending_spec_path); s->pending_spec_path[0] = '\0'; predfit_save_session(s); }
-    }
+    process_pending_loads(s);
     commit_active(s);
 }
 
@@ -330,6 +325,56 @@ static int test_remove_spectrum_keeps_active(void) {
     CHECK_INT("indice attivo corretto", s->active_spec, 1);
     CHECK(strstr(s->spectra[s->active_spec].path, "third.txt") != NULL,
           "traccia attiva cambiata: '%s'", s->spectra[s->active_spec].path);
+    DONE();
+}
+
+static void queue_drop(const char *path) {
+    SDL_Event e;
+    memset(&e, 0, sizeof(e));
+    e.type = SDL_DROPFILE;
+    e.drop.file = SDL_strdup(path);
+    SDL_PushEvent(&e);
+}
+
+/* T-27, R-24: every path received in one SDL batch remains queued, rather
+   than leaving only the final drop in a single pending-path field. */
+static int test_drop_many_files_loads_all(void) {
+    const double p0[] = {3000.0}, p1[] = {3001.0}, p2[] = {3002.0};
+    write_spectrum(work_path("drop-one.txt"), p0, NULL, 1);
+    write_spectrum(work_path("drop-two.txt"), p1, NULL, 1);
+    write_spectrum(work_path("drop-three.txt"), p2, NULL, 1);
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    AppState *s = new_state(); Layout L = {0}; int running = 1;
+    queue_drop(work_path("drop-one.txt"));
+    queue_drop(work_path("drop-two.txt"));
+    queue_drop(work_path("drop-three.txt"));
+    handle_app_events(s, &L, &running);
+    CHECK_INT("tre richieste in FIFO", s->pending_load_count, 3);
+    pump(s);
+    CHECK_INT("tutte le tracce caricate", s->n_spectra, 3);
+    CHECK(strstr(s->spectra[0].path, "drop-one.txt") != NULL, "ordine primo drop: %s", s->spectra[0].path);
+    CHECK(strstr(s->spectra[1].path, "drop-two.txt") != NULL, "ordine secondo drop: %s", s->spectra[1].path);
+    CHECK(strstr(s->spectra[2].path, "drop-three.txt") != NULL, "ordine terzo drop: %s", s->spectra[2].path);
+    DONE();
+}
+
+/* A completed Calculate produces the same catalog request as this direct
+   enqueue.  A simultaneous spectrum drop must not overwrite either request. */
+static int test_calculate_and_drop_same_frame(void) {
+    const double p[] = {3000.0};
+    write_spectrum(work_path("calculation-drop.txt"), p, NULL, 1);
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    AppState *s = new_state(); Layout L = {0}; int running = 1;
+    CHECK_INT("catalogo Calculate accodato",
+              app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, fx("cat3_303.cat"), 0), 1);
+    queue_drop(work_path("calculation-drop.txt"));
+    handle_app_events(s, &L, &running);
+    CHECK_INT("catalogo e drop in FIFO", s->pending_load_count, 2);
+    pump(s);
+    CHECK(s->n_pred > 0, "catalogo della Calculate perso");
+    CHECK_INT("spettro del drop presente", s->n_spectra, 1);
+    CHECK(strstr(s->spectra[0].path, "calculation-drop.txt") != NULL,
+          "drop perso: %s", s->spectra[0].path);
     DONE();
 }
 
@@ -1662,6 +1707,8 @@ static const Test TESTS[] = {
     {"test_baseline_roundtrip_qnfmt1404",      test_baseline_roundtrip_qnfmt1404},
     {"test_baseline_reassign_updates_obsfreq", test_baseline_reassign_updates_obsfreq},
     {"test_remove_spectrum_keeps_active",     test_remove_spectrum_keeps_active},
+    {"test_drop_many_files_loads_all",        test_drop_many_files_loads_all},
+    {"test_calculate_and_drop_same_frame",    test_calculate_and_drop_same_frame},
     {"test_baseline_right_drag_ascending",     test_baseline_right_drag_ascending},
     {"test_descending_spectrum_same_results",  test_descending_spectrum_same_results},
     {"test_nonmonotonic_spectrum_rejected",    test_nonmonotonic_spectrum_rejected},

@@ -215,9 +215,6 @@ static void free_dataset(AppState *state) {
    opening a project file would in a conventional program. */
 static void reopen_predfit_session(AppState *state) {
     free_dataset(state);
-    state->pending_pred_path[0] = '\0';
-    state->pending_spec_path[0] = '\0';
-    state->pending_load = 0;
 
     predfit_load_session(state);
     predfit_restore_latest(state);
@@ -233,6 +230,23 @@ static void reopen_predfit_session(AppState *state) {
     snprintf(state->status_message, sizeof(state->status_message),
              "Restored %d experimental spectrum%s from the Pred&Fit session.",
              state->n_spectra, state->n_spectra == 1 ? "" : "s");
+}
+
+int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
+                             const char *path, int generated_catalog) {
+    if (!state || !path || !path[0]) return 0;
+    if (state->pending_load_count >= MAX_PENDING_LOADS) {
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "Too many files waiting to load (maximum %d).", MAX_PENDING_LOADS);
+        return 0;
+    }
+    int slot = (state->pending_load_head + state->pending_load_count) % MAX_PENDING_LOADS;
+    PendingLoadRequest *request = &state->pending_loads[slot];
+    request->kind = kind;
+    request->generated_catalog = generated_catalog != 0;
+    snprintf(request->path, sizeof(request->path), "%s", path);
+    state->pending_load_count++;
+    return 1;
 }
 
 // Load an experimental spectrum and append it to the store (becomes active).
@@ -364,6 +378,28 @@ static int set_predictions(AppState *state, const char *path) {
     ensure_aux_loaded(state);   /* after the messages above: it can add its own */
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
+}
+
+/* Consume all requests collected in this frame.  In particular, a session
+   request must not discard later drops in the same queue. */
+static void process_pending_loads(AppState *state) {
+    while (state->pending_load_count > 0) {
+        PendingLoadRequest request = state->pending_loads[state->pending_load_head];
+        state->pending_load_head = (state->pending_load_head + 1) % MAX_PENDING_LOADS;
+        state->pending_load_count--;
+        switch (request.kind) {
+            case PENDING_LOAD_CATALOG:
+                set_predictions(state, request.path);
+                if (request.generated_catalog) predfit_adopt_generated_catalog(state);
+                break;
+            case PENDING_LOAD_SESSION:
+                reopen_predfit_session(state);
+                break;
+            case PENDING_LOAD_SPECTRUM:
+                if (add_spectrum(state, request.path)) predfit_save_session(state);
+                break;
+        }
+    }
 }
 
 static void remove_spectrum(AppState *state, int idx) {
@@ -551,15 +587,7 @@ int main(int argc, char *argv[])
         layout.pred_w = layout.exp_w;
 
         handle_app_events(&state, &layout, &running);
-        if (state.pending_session_load) {
-            state.pending_session_load = 0;
-            reopen_predfit_session(&state);
-        }
-        if(state.pending_load) {
-            state.pending_load = 0;
-            if (state.pending_pred_path[0]) { set_predictions(&state, state.pending_pred_path); predfit_adopt_generated_catalog(&state); state.pending_pred_path[0] = '\0'; }
-            if (state.pending_spec_path[0]) { add_spectrum(&state, state.pending_spec_path); state.pending_spec_path[0] = '\0'; predfit_save_session(&state); }
-        }
+        process_pending_loads(&state);
         restore_session_view(&state);
         predfit_render_advanced(&state);
         settings_render(&state);
