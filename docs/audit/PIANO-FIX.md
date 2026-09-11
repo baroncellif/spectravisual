@@ -388,7 +388,12 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Bloccato da**: D1, solo per la regola con NVIB troppo piccolo.
 - **Documentazione**: report executive summary punto 2, §4 flusso 5, §5.9, §6.4,
   scheda B-02; A4 R-08.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `9f5ee42` —
+  test aggiunti: `test_nvib_typed_value_kept`, `test_nvib_too_small_rejected`,
+  `test_option_line_other_tokens_kept` (suite 28/28 PASS). `hamiltonian_line`
+  resta testuale e invariata; `write_inputs` legge NVIB senza normalizzarlo e
+  rifiuta Calculate/Fit prima di creare `.fit` se è minore del massimo stato
+  delle specie PRED incluse. R-08 rieseguito.
 
 ### #6 — Fit: nessuna riga con NQN diverso dal modello; diagnostica di SPFIT visibile
 

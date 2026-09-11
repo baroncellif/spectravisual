@@ -1639,7 +1639,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-02"></a>
 ### B-02 — Il campo N (NVIB) della riga opzioni è sempre riportato al numero di specie
 
-- **Stato: risolto** nel commit del passo #5 — nuova logica:
+- **Stato: risolto** in `9f5ee42` — nuova logica:
   `hamiltonian_nvib` legge NVIB senza riscrivere `hamiltonian_line`; Advanced,
   add/remove specie e restore conservano il testo. `write_inputs` controlla
   prima di `prepare_fit_dir` che NVIB sia almeno il massimo stato con PRED

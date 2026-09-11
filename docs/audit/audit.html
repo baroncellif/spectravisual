@@ -699,7 +699,12 @@ invariati.</li>
 <li><strong>Bloccato da</strong>: D1, solo per la regola con NVIB troppo piccolo.</li>
 <li><strong>Documentazione</strong>: report executive summary punto 2, §4 flusso 5, §5.9, §6.4,
 scheda B-02; A4 R-08.</li>
-<li><strong>Stato</strong>: ☐ non fatto — commit: —</li>
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: <code>9f5ee42</code> —
+test aggiunti: <code>test_nvib_typed_value_kept</code>, <code>test_nvib_too_small_rejected</code>,
+<code>test_option_line_other_tokens_kept</code> (suite 28/28 PASS). <code>hamiltonian_line</code>
+resta testuale e invariata; <code>write_inputs</code> legge NVIB senza normalizzarlo e
+rifiuta Calculate/Fit prima di creare <code>.fit</code> se è minore del massimo stato
+delle specie PRED incluse. R-08 rieseguito.</li>
 </ul>
 <h3 id="piano-6--fit-nessuna-riga-con-nqn-diverso-dal-modello-diagnostica-di-spfit-visibile"><a class="hlink" href="#piano-6--fit-nessuna-riga-con-nqn-diverso-dal-modello-diagnostica-di-spfit-visibile">#</a>#6 — Fit: nessuna riga con NQN diverso dal modello; diagnostica di SPFIT visibile</h3>
 <ul>
@@ -3475,7 +3480,7 @@ si decide di supportarlo (<a href="#readme-12-domande-bloccanti">§12</a>).</li>
 <p><a id="readme-b-02"></a></p>
 <h3 id="readme-b-02--il-campo-n-nvib-della-riga-opzioni-è-sempre-riportato-al-numero-di-specie"><a class="hlink" href="#readme-b-02--il-campo-n-nvib-della-riga-opzioni-è-sempre-riportato-al-numero-di-specie">#</a>B-02 — Il campo N (NVIB) della riga opzioni è sempre riportato al numero di specie</h3>
 <ul>
-<li><strong>Stato: risolto</strong> nel commit del passo #5 — nuova logica:
+<li><strong>Stato: risolto</strong> in <code>9f5ee42</code> — nuova logica:
 <code>hamiltonian_nvib</code> legge NVIB senza riscrivere <code>hamiltonian_line</code>; Advanced,
 add/remove specie e restore conservano il testo. <code>write_inputs</code> controlla
 prima di <code>prepare_fit_dir</code> che NVIB sia almeno il massimo stato con PRED
