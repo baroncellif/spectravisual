@@ -131,7 +131,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | fatto `656a1ab` |
 | #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | fatto |
 | #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | parziale `b98d08f` |
-| #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | — |
+| #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | fatto `79f231c` |
 | #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | — |
 | #21 | Pred&Fit opt-in | B-26 | medio (vincolo 4) | D7 |
 | #22 | Prestazioni del caricamento della lista | B-48 | basso | — |
@@ -789,7 +789,11 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     un apostrofo → Calculate e Fit riusciti;
   - `test_process_exit_status_decoded` (M-01): un programma che esce con 1 → "exit 1".
 - **Documentazione**: report §5.1, §5.8, scheda B-28, M-01; A4 R-18.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-12 — commit codice: `79f231c` — test aggiunti:
+  `test_spaces_and_quotes_in_data_dir`, `test_process_exit_status_decoded`
+  (suite 57/57 PASS). SPCAT/SPFIT partono con `fork` + `chdir` + `execv`, quindi
+  né spazi né apostrofi attraversano una shell; gli errori riportano il vero
+  codice di uscita o il segnale ricevuto.
 
 ### #20 — Find peaks
 
