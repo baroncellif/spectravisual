@@ -341,6 +341,7 @@ void predfit_save_session(AppState *s) {
     fputs("# Pickett parameter ID, value and user-selected fit uncertainty\n", fp);
     for (int i = 0; i < p->n_param; i++)
         fprintf(fp, "param %d %.17g %.17g\n", p->param[i].id, p->param[i].value, p->param[i].error);
+    fprintf(fp, "line_error %.17g\n", p->line_error_mhz);
     fprintf(fp, "hamiltonian %s\n", p->hamiltonian_line);
     {
         const PickettIntSettings *x = &p->int_settings;
@@ -424,6 +425,16 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
             int id = 0; double value = 0.0, error = 0.0;
             if (sscanf(line + 6, "%d %lf %lf", &id, &value, &error) == 3 && id > 0)
                 session_set_parameter(p, id, value, error);
+            continue;
+        }
+        if (strncmp(line, "line_error ", 11) == 0) {
+            char *end = NULL;
+            errno = 0;
+            double value = strtod(line + 11, &end);
+            while (end && isspace((unsigned char)*end)) end++;
+            if (end != line + 11 && end && !*end && errno != ERANGE &&
+                isfinite(value) && value > 0.0)
+                p->line_error_mhz = value;
             continue;
         }
         if (strncmp(line, "view ", 5) == 0) {
@@ -847,6 +858,48 @@ static void add_species(AppState *s) {
     p->session_dirty = 1;
 }
 
+/* A Calculate immediately after SPFIT must leave SPFIT's estimated errors in
+   model.var intact.  It is safe to reuse that file only when it describes the
+   current Hamiltonian and every current parameter value; otherwise write a
+   fresh input model as usual. */
+static int existing_var_matches_model(const char *path, const PredFitState *p) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return 0;
+    char line[512];
+    int seen[MAX_PICKETT_PARAMS] = {0};
+    if (!fgets(line, sizeof(line), fp) || !fgets(line, sizeof(line), fp) ||
+        !fgets(line, sizeof(line), fp)) {
+        fclose(fp);
+        return 0;
+    }
+    line[strcspn(line, "\r\n")] = '\0';
+    if (strcmp(line, p->hamiltonian_line) != 0) {
+        fclose(fp);
+        return 0;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        int id = 0;
+        double value = 0.0, ignored_error = 0.0;
+        if (!strchr(line, '/') || sscanf(line, "%d %lf %lf", &id, &value, &ignored_error) != 3) continue;
+        int found = 0;
+        for (int i = 0; i < p->n_param; i++) {
+            if (p->param[i].id != id) continue;
+            found = 1;
+            double scale = fmax(1.0, fabs(p->param[i].value));
+            if (fabs(value - p->param[i].value) > 1e-11 * scale) {
+                fclose(fp);
+                return 0;
+            }
+            seen[i] = 1;
+            break;
+        }
+        if (!found) { fclose(fp); return 0; }
+    }
+    fclose(fp);
+    for (int i = 0; i < p->n_param; i++) if (!seen[i]) return 0;
+    return 1;
+}
+
 static int write_inputs(AppState *s, int for_fit) {
     PredFitState *p = &s->predfit;
     int nvib = 0;
@@ -910,14 +963,14 @@ static int write_inputs(AppState *s, int for_fit) {
     char var_path[600], int_path[600], par_path[600], lin_path[600];
     work_file(p,"model.var",var_path,sizeof(var_path)); work_file(p,"model.int",int_path,sizeof(int_path));
     work_file(p,"model.par",par_path,sizeof(par_path)); work_file(p,"model.lin",lin_path,sizeof(lin_path));
-    FILE *var = fopen(var_path, "w");
+    int preserve_fitted_var = !for_fit && existing_var_matches_model(var_path, p);
+    FILE *var = preserve_fitted_var ? NULL : fopen(var_path, "w");
     FILE *in = fopen(int_path, "w");
-    /* Keep the two model files in lockstep even for a Calculate-only pass:
-       SPCAT reads .var, SPFIT reads .par, but Hamiltonian/options/parameters
-       must always describe the exact same molecule. */
+    /* SPCAT reads .var and SPFIT reads .par.  A Calculate-only pass can retain
+       an unchanged fitted .var; otherwise both files describe the same model. */
     FILE *par = fopen(par_path, "w");
     FILE *lin = for_fit ? fopen(lin_path, "w") : NULL;
-    if (!var || !in || !par || (for_fit && !lin)) {
+    if ((!preserve_fitted_var && !var) || !in || !par || (for_fit && !lin)) {
         if (var) fclose(var); if (in) fclose(in); if (par) fclose(par); if (lin) fclose(lin);
         snprintf(p->status, sizeof(p->status), "Cannot write Pickett working files.");
         return 0;
@@ -927,17 +980,17 @@ static int write_inputs(AppState *s, int for_fit) {
     int nline = 0;
     if (for_fit) for (int i = 0; i < s->n_assignments; i++)
         if (s->assignments[i].fit_enabled) nline++;
-    fprintf(var, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
-            p->n_param, nline, 0, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
+    if (var) fprintf(var, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
+                     p->n_param, nline, 0, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
     if (par) fprintf(par, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
                      p->n_param, nline, 50, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
     for (int i = 0; i < p->n_param; i++) {
         PickettParameter *x = &p->param[i];
-        fprintf(var, "%12d % .15E % .8E /%s/\n", x->id, x->value, x->error, x->label);
+        if (var) fprintf(var, "%12d % .15E % .8E /%s/\n", x->id, x->value, x->error, x->label);
         if (par) fprintf(par, "%12d % .15E % .8E /%s/\n", x->id, x->value, x->error, x->label);
     }
     if (!write_multi_state_int(in, p)) {
-        fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
+        if (var) fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
         snprintf(p->status, sizeof(p->status), "Select a prediction species (states 0 through 9 are supported).");
         return 0;
     }
@@ -968,7 +1021,7 @@ static int write_inputs(AppState *s, int for_fit) {
         for (int k = 2 * nq; k < 12; k++) fputs("   ", lin);
         fprintf(lin, "%15.6f %10.6f 1.0\n", a->exp_freq, p->line_error_mhz);
     }
-    fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
+    if (var) fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
     return 1;
 }
 

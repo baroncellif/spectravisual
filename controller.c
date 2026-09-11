@@ -523,10 +523,12 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     return;
                 }
                 if (point_in_rect(mx, my, ui_fit_export(w))) {
-                    if (!intensity_fit_export(s, "intensity_fit.ifit"))
+                    char path[600];
+                    settings_data_file(s, "intensity_fit.ifit", path, sizeof(path));
+                    if (!intensity_fit_export(s, path))
                         snprintf(s->intfit_message, sizeof(s->intfit_message), "Run a fit before exporting.");
                     else
-                        snprintf(s->intfit_message, sizeof(s->intfit_message), "Saved intensity_fit.ifit");
+                        snprintf(s->intfit_message, sizeof(s->intfit_message), "Saved %s", path);
                     return;
                 }
                 return;

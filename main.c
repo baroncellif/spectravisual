@@ -431,10 +431,12 @@ static void save_screenshot(SDL_Renderer *ren, AppState *state) {
         SDL_FreeSurface(surf);
         return;
     }
-    if (SDL_SaveBMP(surf, "spectravisual_export.bmp") != 0) {
-        snprintf(state->error_message, sizeof(state->error_message), "Could not save spectravisual_export.bmp.");
+    char path[600];
+    settings_data_file(state, "spectravisual_export.bmp", path, sizeof(path));
+    if (SDL_SaveBMP(surf, path) != 0) {
+        snprintf(state->error_message, sizeof(state->error_message), "Could not save %s.", path);
     } else {
-        snprintf(state->status_message, sizeof(state->status_message), "Exported spectravisual_export.bmp");
+        snprintf(state->status_message, sizeof(state->status_message), "Exported %s", path);
     }
     SDL_FreeSurface(surf);
 }

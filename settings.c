@@ -55,6 +55,15 @@ static const SDL_Color DEFAULT_TRACE[MAX_SPECTRA] = {
 
 void settings_restore_defaults(AppState *s) {
     AppSettings *d = &s->settings;
+    /* Restore affects presentation and numeric defaults, not the machine- and
+       user-specific locations needed to run Pred&Fit.  Clearing those paths
+       makes a harmless visual reset destroy a working configuration. */
+    char spcat_path[sizeof(d->spcat_path)];
+    char spfit_path[sizeof(d->spfit_path)];
+    char data_dir[sizeof(d->data_dir)];
+    snprintf(spcat_path, sizeof(spcat_path), "%s", d->spcat_path);
+    snprintf(spfit_path, sizeof(spfit_path), "%s", d->spfit_path);
+    snprintf(data_dir, sizeof(data_dir), "%s", d->data_dir);
     d->trace_width = 1;
     for (int i = 0; i < MAX_SPECTRA; i++) d->trace_color[i] = DEFAULT_TRACE[i];
     d->pred_width = 1;
@@ -88,12 +97,10 @@ void settings_restore_defaults(AppState *s) {
     d->def_line_error = 0.01;
     d->def_int_min = -10.0; d->def_int_max = 0.0;
 
-    /* Left empty on purpose: an absolute path to someone else's home would be
-       worse than nothing. Pred&Fit says what is missing and where to set it. */
     d->edit_id = -1;
-    d->spcat_path[0] = '\0';
-    d->spfit_path[0] = '\0';
-    d->data_dir[0]   = '\0';
+    snprintf(d->spcat_path, sizeof(d->spcat_path), "%s", spcat_path);
+    snprintf(d->spfit_path, sizeof(d->spfit_path), "%s", spfit_path);
+    snprintf(d->data_dir, sizeof(d->data_dir), "%s", data_dir);
 }
 
 static void write_color(FILE *fp, const char *key, SDL_Color c) {

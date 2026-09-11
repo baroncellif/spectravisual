@@ -1364,6 +1364,86 @@ static int test_calculate_requires_abc(void) {
     DONE();
 }
 
+/* T-29, R-25: Restore defaults is a visual/defaults reset, never a request
+   to forget the local executables and project directory. */
+static int test_restore_defaults_keeps_paths(void) {
+    AppState *s = new_state();
+    snprintf(s->settings.spcat_path, sizeof(s->settings.spcat_path), "/tools/SPCAT");
+    snprintf(s->settings.spfit_path, sizeof(s->settings.spfit_path), "/tools/SPFIT");
+    snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", work_path("saved data"));
+    settings_restore_defaults(s);
+    CHECK(strcmp(s->settings.spcat_path, "/tools/SPCAT") == 0, "SPCAT cancellato dal reset");
+    CHECK(strcmp(s->settings.spfit_path, "/tools/SPFIT") == 0, "SPFIT cancellato dal reset");
+    CHECK(strstr(s->settings.data_dir, "saved data") != NULL, "cartella dati cancellata dal reset");
+    DONE();
+}
+
+/* T-37, R-33: the one uncertainty written on every .lin observation belongs
+   to the fit session, not to a transient application default. */
+static int test_line_error_persists(void) {
+    AppState *s = new_state();
+    s->predfit.line_error_mhz = 0.00375;
+    predfit_save_session(s);
+    AppState *restored = new_state();
+    predfit_load_session(restored);
+    CHECK_DBL("incertezza .lin ripristinata", restored->predfit.line_error_mhz, 0.00375, 1e-12);
+    DONE();
+}
+
+static double var_parameter_error(const char *path, int id) {
+    FILE *fp = fopen(path, "r");
+    char line[512];
+    double error = -1.0;
+    while (fp && fgets(line, sizeof(line), fp)) {
+        int got_id = 0; double value = 0.0, got_error = 0.0;
+        if (sscanf(line, "%d %lf %lf", &got_id, &value, &got_error) == 3 && got_id == id) {
+            error = got_error;
+            break;
+        }
+    }
+    if (fp) fclose(fp);
+    return error;
+}
+
+/* T-38, R-34: Calculate reuses a fitted model.var when the model values have
+   not changed, so the SPFIT estimated uncertainty is not silently replaced. */
+static int test_calculate_after_fit_keeps_fitted_var(void) {
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    CHECK_INT("prepara modello", write_inputs(s, 0), 1);
+    char var_path[700];
+    snprintf(var_path, sizeof(var_path), "%s/.fit/model.var", g_work);
+    FILE *fp = fopen(var_path, "w");
+    CHECK(fp != NULL, "impossibile preparare model.var da SPFIT");
+    if (!fp) DONE();
+    PredFitState *p = &s->predfit;
+    fprintf(fp, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
+            p->n_param, 0, 0, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
+    for (int i = 0; i < p->n_param; i++)
+        fprintf(fp, "%12d % .15E % .8E /%s/\n", p->param[i].id, p->param[i].value,
+                0.12345 + i, p->param[i].label);
+    fclose(fp);
+    CHECK_INT("Calculate riscrive gli altri input", write_inputs(s, 0), 1);
+    for (int i = 0; i < p->n_param; i++) {
+        char what[64]; snprintf(what, sizeof(what), "errore SPFIT parametro %d", i + 1);
+        CHECK_DBL(what, var_parameter_error(var_path, p->param[i].id), 0.12345 + i, 1e-7);
+    }
+    DONE();
+}
+
+/* M-06: both export callers derive their destination from data_dir. */
+static int test_exports_go_to_data_dir(void) {
+    AppState *s = new_state();
+    snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", work_path("exports"));
+    char ifit[700], screenshot[700];
+    settings_data_file(s, "intensity_fit.ifit", ifit, sizeof(ifit));
+    settings_data_file(s, "spectravisual_export.bmp", screenshot, sizeof(screenshot));
+    CHECK(strstr(ifit, "/exports/intensity_fit.ifit") != NULL, "export IFIT fuori data_dir: %s", ifit);
+    CHECK(strstr(screenshot, "/exports/spectravisual_export.bmp") != NULL,
+          "screenshot fuori data_dir: %s", screenshot);
+    DONE();
+}
+
 static void queue_secondary_text(Uint32 window_id, const char *text) {
     SDL_Event e; memset(&e, 0, sizeof(e));
     e.type = SDL_TEXTINPUT; e.text.windowID = window_id;
@@ -1739,6 +1819,10 @@ static const Test TESTS[] = {
     {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
     {"test_param_id_zero_or_duplicate_rejected", test_param_id_zero_or_duplicate_rejected},
     {"test_calculate_requires_abc",            test_calculate_requires_abc},
+    {"test_restore_defaults_keeps_paths",      test_restore_defaults_keeps_paths},
+    {"test_line_error_persists",               test_line_error_persists},
+    {"test_calculate_after_fit_keeps_fitted_var", test_calculate_after_fit_keeps_fitted_var},
+    {"test_exports_go_to_data_dir",            test_exports_go_to_data_dir},
     {"test_text_from_secondary_window_ignored", test_text_from_secondary_window_ignored},
     {"test_keys_from_secondary_window_ignored", test_keys_from_secondary_window_ignored},
     {"test_cmd_modified_keys_not_plain_actions", test_cmd_modified_keys_not_plain_actions},
