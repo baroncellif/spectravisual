@@ -686,7 +686,9 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_dipole_rules_consistent` (T-26, R-23).
 - **Bloccato da**: D10, solo per la regola dei dipoli.
 - **Documentazione**: schede B-33, B-38, B-51; A3 U-15; A4 R-23, R-27, R-40.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ◐ fix parziale in corso — ID dei parametri e presenza di A/B/C sono
+  indipendenti e procedibili; la regola comune per i dipoli resta bloccata da D10
+  e non viene modificata senza una decisione esplicita.
 
 ### #16 — Tastiera e testo tra finestre
 
