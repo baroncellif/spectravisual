@@ -6,7 +6,6 @@ Added assignment for 2511.9000 MHz
 Assigned 1 selected predicted line to 2511.9010 MHz
 Added assignment for 6033.5894 MHz
 Assigned 1 selected predicted line to 6033.5904 MHz
-Saved assignments.txt
 data_dir=$RUNS/restore_data  CWD=$RUNS/restore_cwd
 -- data_dir/assignments.txt:
   | # Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN
@@ -17,11 +16,15 @@ data_dir=$RUNS/restore_data  CWD=$RUNS/restore_cwd
   |   4  1  4  0  3  1  3  0                2511.338500   0.010000 1.0
   |   4  1  4  1  3  1  3  1               92511.901000   0.010000 1.0
   |  12  2 10  2 11  2  9  2                6033.590400   0.010000 1.0
+Added assignment for 2511.3375 MHz
+Added assignment for 2511.9000 MHz
+Added assignment for 6033.5894 MHz
+Loaded 3 assignments from $RUNS/restore_data/assignments.txt
 launch WITHOUT .cat: restore=1, pred_path=$RUNS/restore_data/.fit/model.cat
---   list rebuilt by import_fit_lines (CWD assignments.txt + model.lin): n_assignments=3
-  [0] exp=2511.3385 exp_int=0.000e+00 fit=1 pred: f=0.0000 n_qn=4 U=(4 1 4 0 0 0) L=(3 1 3 0 0 0) lin=0.0000e+00
-  [1] exp=2511.9010 exp_int=0.000e+00 fit=0 pred: f=0.0000 n_qn=4 U=(4 1 4 1 0 0) L=(3 1 3 1 0 0) lin=0.0000e+00
-  [2] exp=6033.5904 exp_int=0.000e+00 fit=1 pred: f=0.0000 n_qn=4 U=(12 2 10 2 0 0) L=(11 2 9 2 0 0) lin=0.0000e+00
+--   list rebuilt by import_fit_lines (data_dir assignments.txt + model.lin): n_assignments=3
+  [0] exp=2511.3385 exp_int=1.000e-04 fit=1 pred: f=2511.3375 n_qn=4 U=(4 1 4 0 0 0) L=(3 1 3 0 0 0) lin=1.0000e-04
+  [1] exp=2511.9010 exp_int=7.943e-05 fit=0 pred: f=2511.9000 n_qn=4 U=(4 1 4 1 0 0) L=(3 1 3 1 0 0) lin=7.9433e-05
+  [2] exp=6033.5904 exp_int=6.310e-05 fit=1 pred: f=6033.5894 n_qn=4 U=(12 2 10 2 0 0) L=(11 2 9 2 0 0) lin=6.3096e-05
 Added assignment for 2511.3375 MHz
 Added assignment for 2511.9000 MHz
 Added assignment for 6033.5894 MHz

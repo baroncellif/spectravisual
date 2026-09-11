@@ -230,7 +230,7 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     messaggio (finché D6 non dice altro).
 - **Documentazione**: report §6.1, §7.2, schede B-01/B-03/B-04/B-25, punto 1
   dell'executive summary; A4 R-01 e R-17.
-- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #2 —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `fbdc645` —
   test aggiunti: `test_cat_nqn_from_qnfmt_3qn`, `test_cat_nqn_4_5_6`,
   `test_cat_letter_and_negative_qn`, `test_cat_trailing_spaces_irrelevant`,
   `test_cat_fixed_width_numbers`, `test_cat_invalid_nqn_reported` (suite 11/11 PASS).
@@ -273,7 +273,16 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     cancellazione il file su disco coincide con la lista in memoria, senza *Save all*.
 - **Documentazione**: report §4 (flussi 1, 2, 8), §5.7, §6.2, schede
   B-15/B-23/B-40; A3 U-06; A4 R-13 e R-29.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #3 —
+  test aggiunti: `test_restore_reads_data_dir_list`, `test_restore_keeps_short_lin_rows`,
+  `test_save_all_after_restore_no_loss`, `test_save_all_reports_write_error`,
+  `test_autosave_on_assign_update_delete` (suite 16/16 PASS). Unico writer
+  `save_assignments` in `controller.c` (file temporaneo, `rename`, copia `.bak`,
+  errori in `error_message`), chiamato anche dopo ogni aggiunta, riassegnazione e
+  cancellazione; nuovo campo `Assignment.needs_reassign` (riga in ambra nel pannello)
+  per le righe `.lin` con meno di 3 QN per stato. Di U-06 resta l'esito positivo
+  non visibile con dati caricati (passo #24). R-13 e R-29 rieseguiti; l'etichetta di
+  R-13 nell'harness ora dice `data_dir`.
 
 ### #3 — Selezione azzerata a ogni cambio di catalogo
 

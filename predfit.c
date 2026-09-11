@@ -828,7 +828,10 @@ static int read_lin_rows(const PredFitState *p) {
             row.qn[k] = atoi(field);
             slots = k + 1;
         }
-        if (slots < 6) continue;
+        /* Keep every row with at least one QN per state.  Fewer than three per
+           state is not a rotational record - an older build truncated it
+           (B-01) - so import_fit_lines keeps it marked for reassignment. */
+        if (slots < 2) continue;
         row.nq = slots / 2;
         double freq = atof(line + 36);
         if (!(freq > 0.0)) continue;
@@ -883,15 +886,31 @@ static void format_assignment_qn(char *out, size_t size, const PredLine *q) {
  * the selected catalogue - live in assignments.txt.  So that file is the source,
  * and the .lin is read only for the 90000 sentinel that marks the lines
  * excluded from the fit. */
-static void import_fit_lines(AppState *s) {
+/* The QN of a .lin row as two six-field states; fields past the row's own NQN
+   are 0, like the unused slots of a catalogue row. */
+static void lin_row_states(const LinRow *row, int upper[6], int lower[6]) {
+    for (int k = 0; k < 6; k++) {
+        upper[k] = k < row->nq ? row->qn[k] : 0;
+        lower[k] = k < row->nq ? row->qn[row->nq + k] : 0;
+    }
+}
+
+/* Returns the number of assignments marked for reassignment because their
+   .lin row has fewer than three QN per state. */
+static int import_fit_lines(AppState *s) {
     PredFitState *p = &s->predfit;
     int n_rows = read_lin_rows(p);
     static unsigned char used[MAX_ASSIGNMENTS];
     memset(used, 0, sizeof(used));
 
+    /* The same file Save all writes and a launch with a .cat reads: in the
+       data folder, not in whichever folder the program was started from. */
+    char path[600];
+    settings_data_file(s, "assignments.txt", path, sizeof(path));
     s->n_assignments = 0;
-    load_existing_assignments("assignments.txt", s->assignments, &s->n_assignments);
+    load_existing_assignments(path, s->assignments, &s->n_assignments);
 
+    int marked = 0;
     /* Carry the fit flags over. The two files can disagree - lines assigned
        after the last save are only in the .lin, lines saved and never fitted
        only in assignments.txt - so each row is matched once, on its quantum
@@ -900,16 +919,18 @@ static void import_fit_lines(AppState *s) {
         for (int i = 0; i < s->n_assignments; i++) {
             Assignment *a = &s->assignments[i];
             if (pass == 0) a->fit_enabled = 1;
+            const int au[6] = {a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.M1u, a->pred.M2u, a->pred.M3u};
+            const int al[6] = {a->pred.Jl, a->pred.Kal, a->pred.Kcl, a->pred.M1l, a->pred.M2l, a->pred.M3l};
             for (int k = 0; k < n_rows; k++) {
                 if (used[k]) continue;
                 LinRow *row = &g_lin_rows[k];
                 if (fabs(row->freq - a->exp_freq) >= 1e-4) continue;
-                int *u = row->qn, *l = row->qn + row->nq;
-                int same_qn = (u[0] == a->pred.Ju && u[1] == a->pred.Kau && u[2] == a->pred.Kcu &&
-                               l[0] == a->pred.Jl && l[1] == a->pred.Kal && l[2] == a->pred.Kcl &&
-                               (row->nq < 4 || (u[3] == a->pred.M1u && l[3] == a->pred.M1l)) &&
-                               (row->nq < 5 || (u[4] == a->pred.M2u && l[4] == a->pred.M2l)) &&
-                               (row->nq < 6 || (u[5] == a->pred.M3u && l[5] == a->pred.M3l)));
+                int u[6], l[6];
+                lin_row_states(row, u, l);
+                int compare = row->nq > 3 ? row->nq : 3;
+                int same_qn = 1;
+                for (int q = 0; q < compare; q++)
+                    if (u[q] != au[q] || l[q] != al[q]) same_qn = 0;
                 if (pass == 0 && !same_qn) continue;   /* exact match first */
                 a->fit_enabled = row->enabled;
                 /* Never promote the QN length from an old .lin: versions
@@ -917,6 +938,7 @@ static void import_fit_lines(AppState *s) {
                    number of fields there.  New assignments persist NQN in
                    assignments.txt; legacy ones deliberately remain invalid
                    until selected again from a freshly calculated CAT. */
+                if (row->nq < 3 && !a->needs_reassign) { a->needs_reassign = 1; marked++; }
                 used[k] = 1;
                 break;
             }
@@ -930,17 +952,22 @@ static void import_fit_lines(AppState *s) {
         LinRow *row = &g_lin_rows[k];
         Assignment *a = &s->assignments[s->n_assignments++];
         memset(a, 0, sizeof(*a));
-        int *u = row->qn, *l = row->qn + row->nq;
+        int u[6], l[6];
+        lin_row_states(row, u, l);
         a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
+        a->pred.M1u = u[3]; a->pred.M2u = u[4]; a->pred.M3u = u[5];
         a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
+        a->pred.M1l = l[3]; a->pred.M2l = l[4]; a->pred.M3l = l[5];
         a->pred.n_qn = row->nq;
-        if (row->nq > 3) { a->pred.M1u = u[3]; a->pred.M1l = l[3]; }
-        if (row->nq > 4) { a->pred.M2u = u[4]; a->pred.M2l = l[4]; }
-        if (row->nq > 5) { a->pred.M3u = u[5]; a->pred.M3l = l[5]; }
         set_branch_and_dipole(&a->pred);
         a->exp_freq = row->freq;
         a->fit_enabled = row->enabled;
+        /* Fewer than three QN per state is not a rotational record: the row
+           was truncated by an older build (B-01).  Keep it rather than drop
+           it, and say that it must be assigned again from the catalogue. */
+        if (row->nq < 3) { a->needs_reassign = 1; marked++; }
     }
+    return marked;
 }
 
 int predfit_restore_latest(AppState *s) {
@@ -956,14 +983,19 @@ int predfit_restore_latest(AppState *s) {
     sync_basic_from_parameters(p);
     import_int_settings(p);
     store_active_species(p);
-    import_fit_lines(s);
+    int marked = import_fit_lines(s);
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path,sizeof(s->pending_pred_path),"%s",cat_path);
     s->pending_load=1;
     /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
     p->generated_catalog_pending=1;
     p->generated_catalog_active=1;
-    snprintf(p->status,sizeof(p->status),"Restored the latest Pred&Fit state from .fit.");
+    if (marked > 0)
+        snprintf(p->status, sizeof(p->status),
+                 "Restored the latest Pred&Fit state from .fit; %d assignments from model.lin have fewer than 3 QN per state: assign them again.",
+                 marked);
+    else
+        snprintf(p->status,sizeof(p->status),"Restored the latest Pred&Fit state from .fit.");
     return 1;
 }
 

@@ -23,6 +23,8 @@ pred.*
 linelist.csv
 assigned.lin
 assignments.txt
+assignments.txt.bak
+assignments.txt.tmp
 *.bmp
 *.png
 

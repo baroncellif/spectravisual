@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <errno.h>
 
 #define ABS(x) ((x)<0?-(x):(x))
 
@@ -29,6 +30,7 @@ static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
 static const PredLine *current_assignment_prediction(const AppState *s, const Assignment *a);
+static int save_assignments(AppState *s);
 
 /* Assignments deliberately keep a copy of the CAT row selected at the time.
    When exporting, however, use the corresponding current CAT row when it is
@@ -47,6 +49,76 @@ static const PredLine *current_assignment_prediction(const AppState *s, const As
             return p;
     }
     return q;
+}
+
+#define SAVE_ASSIGNMENTS_ERROR "Could not save the assignments"
+#define EXPORT_LIST_ERROR      "Could not export the peak list"
+
+/* A failed write is reported in the title bar; the next successful write of
+   the same file clears it again. */
+static void report_write_error(AppState *s, const char *what, const char *path) {
+    snprintf(s->error_message, sizeof(s->error_message), "%s: cannot write %s (%s).",
+             what, path, strerror(errno));
+}
+
+static void clear_write_error(AppState *s, const char *what) {
+    if (strncmp(s->error_message, what, strlen(what)) == 0) s->error_message[0] = '\0';
+}
+
+/* Copies src to dst.  A missing src is nothing to keep, not an error. */
+static int copy_file(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    if (!in) return errno == ENOENT;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { int e = errno; fclose(in); errno = e; return 0; }
+    char buf[8192];
+    size_t n;
+    int ok = 1;
+    while (ok && (n = fread(buf, 1, sizeof(buf), in)) > 0) ok = fwrite(buf, 1, n, out) == n;
+    if (ferror(in)) ok = 0;
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    return ok;
+}
+
+/* The only writer of assignments.txt: Save all, and every assignment,
+   reassignment and deletion.  The list goes to a temporary file which then
+   replaces the old one, so a failed write can never leave a truncated list, and
+   the previous version is kept as assignments.txt.bak.
+   Keep the data part in SPFIT .lin order: upper QNs, lower QNs, observed
+   frequency.  The two fields which would be uncertainty and weight in .lin
+   are instead the calculated frequency and predicted intensity.  NQN is
+   retained at the end solely so this text file can restore the exact CAT QN
+   layout. */
+static int save_assignments(AppState *s) {
+    char path[600], tmp[640], bak[640];
+    settings_data_file(s, "assignments.txt", path, sizeof(path));
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+    FILE *fp = fopen(tmp, "w");
+    if (!fp) { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, tmp); return 0; }
+    fprintf(fp, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
+    for (int k = 0; k < s->n_assignments; k++) {
+        PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
+        int nq = p2.n_qn;
+        if (nq < 1 || nq > 6) nq = 3; /* legacy rows */
+        const int upper[6] = {p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u};
+        const int lower[6] = {p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l};
+        for (int q = 0; q < nq; q++) fprintf(fp, "%3d", upper[q]);
+        for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
+        /* Match the .lin's fixed 12I3 quantum-number field. */
+        for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
+        fprintf(fp, "%15.6f %15.6f %15.6E %d\n",
+                s->assignments[k].exp_freq, p2.freq_mhz,
+                p2.linear_int, nq);
+    }
+    int failed = ferror(fp);
+    if (fclose(fp) != 0 || failed) { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, tmp); remove(tmp); return 0; }
+    if (!copy_file(path, bak))     { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, bak); remove(tmp); return 0; }
+    if (rename(tmp, path) != 0)    { report_write_error(s, SAVE_ASSIGNMENTS_ERROR, path); remove(tmp); return 0; }
+    snprintf(s->status_message, sizeof(s->status_message), "Saved %d assignments to %s.", s->n_assignments, path);
+    clear_write_error(s, SAVE_ASSIGNMENTS_ERROR);
+    return 1;
 }
 
 // --- TEXT FIELD EDITING ---------------------------------------------------
@@ -281,40 +353,13 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     if (point_in_rect(mx, my, ui_as_row(w, i))) { s->selected_assignment = k; return; }
                 }
                 if (point_in_rect(mx, my, ui_as_save(s, w))) {
-                    char path[600];
                     /* Persist the same canonical assignment list that SPFIT
                        receives; old sessions may still contain duplicates
                        created before QN-based identity was introduced. */
                     deduplicate_assignments(s->assignments, &s->n_assignments);
                     if (s->selected_assignment >= s->n_assignments)
                         s->selected_assignment = s->n_assignments - 1;
-                    settings_data_file(s, "assignments.txt", path, sizeof(path));
-                    FILE *fp = fopen(path, "w");
-                    if (fp) {
-                        /* Keep the data part in SPFIT .lin order: upper QNs,
-                           lower QNs, observed frequency.  The two fields
-                           which would be uncertainty and weight in .lin are
-                           instead the calculated frequency and predicted
-                           intensity.  NQN is retained at the end solely so
-                           this text file can restore the exact CAT QN layout. */
-                        fprintf(fp, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
-                        for (int k = 0; k < s->n_assignments; k++) {
-                            PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
-                            int nq = p2.n_qn;
-                            if (nq < 1 || nq > 6) nq = 3; /* legacy rows */
-                            const int upper[6] = {p2.Ju, p2.Kau, p2.Kcu, p2.M1u, p2.M2u, p2.M3u};
-                            const int lower[6] = {p2.Jl, p2.Kal, p2.Kcl, p2.M1l, p2.M2l, p2.M3l};
-                            for (int q = 0; q < nq; q++) fprintf(fp, "%3d", upper[q]);
-                            for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
-                            /* Match the .lin's fixed 12I3 quantum-number field. */
-                            for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
-                            fprintf(fp, "%15.6f %15.6f %15.6E %d\n",
-                                    s->assignments[k].exp_freq, p2.freq_mhz,
-                                    p2.linear_int, nq);
-                        }
-                        fclose(fp);
-                        printf("Saved assignments.txt\n");
-                    }
+                    save_assignments(s);
                     return;
                 }
                 if (point_in_rect(mx, my, ui_as_delete(s, w))) { delete_assignment(s, s->selected_assignment); return; }
@@ -338,13 +383,14 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     char path[600];
                     settings_data_file(s, "linelist.csv", path, sizeof(path));
                     FILE *fp = fopen(path, "w");
-                    if (fp) {
-                        fprintf(fp, "Freq,Int\n");
-                        for (int k = 0; k < s->n_peaks; k++)
-                            fprintf(fp, "%.6f,%.6e\n", s->peaks[k].x, s->peaks[k].y);
-                        fclose(fp);
-                        printf("Saved linelist.csv\n");
-                    }
+                    if (!fp) { report_write_error(s, EXPORT_LIST_ERROR, path); return; }
+                    fprintf(fp, "Freq,Int\n");
+                    for (int k = 0; k < s->n_peaks; k++)
+                        fprintf(fp, "%.6f,%.6e\n", s->peaks[k].x, s->peaks[k].y);
+                    int failed = ferror(fp);
+                    if (fclose(fp) != 0 || failed) { report_write_error(s, EXPORT_LIST_ERROR, path); return; }
+                    snprintf(s->status_message, sizeof(s->status_message), "Exported %d peaks to %s.", s->n_peaks, path);
+                    clear_write_error(s, EXPORT_LIST_ERROR);
                 }
                 return;
 
@@ -836,12 +882,13 @@ static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1)
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int) {
     if (s->n_selected <= 0) return;
 
-    int requested = s->n_selected;
+    int requested = s->n_selected, assigned = 0;
     for(int k = 0; k < requested; k++) {
         int idx = s->selected_indices[k];
         if (idx < 0 || idx >= s->n_pred) continue;
         add_or_update_assignment(s->assignments, &s->n_assignments,
                                  s->pred_lines[idx], exp_freq, exp_int);
+        assigned++;
     }
 
     printf("Assigned %d selected predicted line%s to %.4f MHz\n",
@@ -849,6 +896,7 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     s->n_selected = 0;
     s->assignments_scroll = s->n_assignments - 13;
     clamp_assignment_scroll(s);
+    if (assigned) save_assignments(s);   /* the file follows every change */
 }
 
 static void delete_assignment(AppState *s, int idx) {
@@ -870,6 +918,7 @@ static void delete_assignment(AppState *s, int idx) {
 
     clamp_assignment_scroll(s);
     printf("Deleted assignment for %.4f MHz\n", pred_freq);
+    save_assignments(s);
 }
 
 static void clamp_assignment_scroll(AppState *s) {

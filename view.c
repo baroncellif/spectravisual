@@ -1246,7 +1246,9 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             else if (point_in_rect(mx, my, row)) fill_rounded_rect(ren, row, 3, UI_RAISED);
 
             format_pred_qn(buf, sizeof(buf), &p);
-            ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 6, row, sel ? UI_ACCENT_TEXT : UI_DIM);
+            /* amber: restored with fewer than 3 QN per state, assign it again */
+            ui_text_v(ren, UI_FONT_MONO_SM, buf, row.x + 6, row,
+                      sel ? UI_ACCENT_TEXT : state->assignments[k].needs_reassign ? UI_WARN : UI_DIM);
             fmt_mhz(buf, sizeof(buf), state->assignments[k].exp_freq, 4);
             ui_text_right(ren, UI_FONT_MONO_SM, buf, row.x + row.w - 6,
                           row.y + (row.h - ui_text_h(UI_FONT_MONO_SM)) / 2, UI_TEXT);

@@ -579,6 +579,7 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
             list[i].exp_int  = exp_i;
             list[i].pred = p;
             list[i].fit_enabled = 1;
+            list[i].needs_reassign = 0;
             printf("Updated assignment for transition at %.4f MHz\n", p.freq_mhz);
             return;
         }
@@ -588,6 +589,7 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
         list[*n].exp_freq = exp_f;
         list[*n].exp_int = exp_i;
         list[*n].fit_enabled = 1;
+        list[*n].needs_reassign = 0;
         (*n)++;
         printf("Added assignment for %.4f MHz\n", p.freq_mhz);
     }

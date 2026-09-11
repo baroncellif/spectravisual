@@ -538,6 +538,320 @@ static int test_cat_invalid_nqn_reported(void) {
     DONE();
 }
 
+/* ============================================== #2 no assignment is lost */
+
+static void assign_index(AppState *s, int idx, double exp_freq, double exp_int) {
+    s->selected_indices[0] = idx; s->n_selected = 1;          /* = controller.c:681-693 */
+    assign_selected_predictions(s, exp_freq, exp_int);        /* controller.c:836-852 */
+}
+
+static int index_of_freq(const AppState *s, double f) {
+    for (int i = 0; i < s->n_pred; i++) if (fabs(s->pred_lines[i].freq_mhz - f) < 1e-4) return i;
+    return -1;
+}
+
+static int copy_path(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb"), *out = in ? fopen(dst, "wb") : NULL;
+    char buf[4096];
+    size_t n;
+    int ok = in && out;
+    while (ok && (n = fread(buf, 1, sizeof(buf), in)) > 0) ok = fwrite(buf, 1, n, out) == n;
+    if (in) fclose(in);
+    if (out && fclose(out) != 0) ok = 0;
+    return ok;
+}
+
+/* Whole file as a string, or NULL. */
+static char *read_all(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = malloc((size_t)n + 1);
+    size_t got = fread(buf, 1, (size_t)n, f);
+    buf[got] = '\0';
+    fclose(f);
+    return buf;
+}
+
+/* QN block of assignments.txt and of the .lin: NQN upper, NQN lower, blanks
+   up to 36 columns. */
+static void put_qn_fields(FILE *f, const int *upper, const int *lower, int nq) {
+    for (int q = 0; q < nq; q++) fprintf(f, "%3d", upper[q]);
+    for (int q = 0; q < nq; q++) fprintf(f, "%3d", lower[q]);
+    for (int q = 2 * nq; q < 12; q++) fputs("   ", f);
+}
+static void write_list_row(FILE *f, const int *u, const int *l, int nq, double obs, double calc, double inten) {
+    put_qn_fields(f, u, l, nq);
+    fprintf(f, "%15.6f %15.6f %15.6E %d\n", obs, calc, inten, nq);
+}
+static void write_lin_row(FILE *f, const int *u, const int *l, int nq, double obs) {
+    put_qn_fields(f, u, l, nq);
+    fprintf(f, "%15.6f %10.6f 1.0\n", obs, 0.01);
+}
+
+static void click_panel_button(AppState *s, DraggableWindow *win, SDL_Rect (*rect_of)(SDL_Rect)) {
+    Layout L;
+    win->visible = 1;
+    compute_layout(s, &L);
+    SDL_Rect r = rect_of(win->rect);
+    mouse_button(s, &L, SDL_MOUSEBUTTONDOWN, r.x + r.w / 2, r.y + r.h / 2, SDL_BUTTON_LEFT);
+}
+
+/* Real "Delete selected" (controller.c:320) on row k of the list. */
+static void click_delete_selected(AppState *s, int k) {
+    Layout L;
+    s->selected_assignment = k;
+    s->win_as.visible = 1;
+    compute_layout(s, &L);
+    SDL_Rect r = ui_as_delete(s, s->win_as.rect);
+    mouse_button(s, &L, SDL_MOUSEBUTTONDOWN, r.x + r.w / 2, r.y + r.h / 2, SDL_BUTTON_LEFT);
+}
+
+/* The list on disk (data_dir/assignments.txt) must hold exactly the list in
+   memory: same transitions, same observed frequencies. */
+static void check_file_matches_list(const AppState *s, const char *when) {
+    char path[700];
+    settings_data_file(s, "assignments.txt", path, sizeof(path));
+    Assignment *disk = calloc(MAX_ASSIGNMENTS, sizeof(Assignment));
+    int n = 0;
+    load_existing_assignments(path, disk, &n);
+    char what[160];
+    snprintf(what, sizeof(what), "%s: righe in assignments.txt", when);
+    CHECK_INT(what, n, s->n_assignments);
+    for (int i = 0; i < s->n_assignments; i++) {
+        const Assignment *a = &s->assignments[i], *b = NULL;
+        for (int k = 0; k < n; k++) if (same_identity(&a->pred, &disk[k].pred)) b = &disk[k];
+        CHECK(b != NULL, "%s: attesa su disco la transizione J %d <- %d, assente", when, a->pred.Ju, a->pred.Jl);
+        if (b) CHECK_DBL("ObsFreq su disco", b->exp_freq, a->exp_freq, 1e-6);
+    }
+    free(disk);
+}
+
+/* A data folder inside the scratch folder, different from the CWD. */
+static void make_data_dir(char *out, size_t n) {
+    snprintf(out, n, "%s", work_path("data"));
+    mkdir(out, 0700);
+    char fit[800];
+    snprintf(fit, sizeof(fit), "%s/.fit", out);
+    mkdir(fit, 0700);
+}
+
+/* T-14: a launch without a .cat, from a folder that is not data_dir, rebuilds
+   the same list (count, QN, frequencies) as a launch with the .cat. */
+static int test_restore_reads_data_dir_list(void) {
+    char data[700];
+    make_data_dir(data, sizeof(data));
+    const double want[3] = {3000.1, 5999.2867, 7000.0};
+
+    AppState *s = new_state();
+    snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", data);
+    set_predictions(s, fx("cat3_303.cat"));
+    for (int k = 0; k < 3; k++) {
+        int i = index_of_freq(s, want[k]);
+        CHECK(i >= 0, "riga a %.4f MHz non trovata nel catalogo", want[k]);
+        if (i >= 0) assign_index(s, i, want[k] - 0.02, 1.0);
+    }
+    click_save_all(s);
+    write_inputs(s, 1);                                   /* model.lin, as a Fit writes it */
+    copy_path(fx("cat3_303.cat"), path_in(data, ".fit/model.cat"));
+
+    AppState *a = new_state();                            /* no .cat, CWD != data_dir */
+    snprintf(a->settings.data_dir, sizeof(a->settings.data_dir), "%s", data);
+    predfit_load_session(a);
+    CHECK_INT("predfit_restore_latest", predfit_restore_latest(a), 1);
+    pump(a);
+    AppState *b = new_state();                            /* with the .cat */
+    snprintf(b->settings.data_dir, sizeof(b->settings.data_dir), "%s", data);
+    predfit_load_session(b);
+    set_predictions(b, fx("cat3_303.cat"));
+
+    CHECK_INT("assignment all'avvio con il .cat", b->n_assignments, 3);
+    CHECK_INT("assignment all'avvio senza .cat", a->n_assignments, b->n_assignments);
+    for (int i = 0; i < b->n_assignments; i++) {
+        const Assignment *x = &b->assignments[i], *y = NULL;
+        for (int k = 0; k < a->n_assignments; k++) if (same_identity(&x->pred, &a->assignments[k].pred)) y = &a->assignments[k];
+        CHECK(y != NULL, "senza .cat: attesa la transizione J %d <- %d, assente", x->pred.Ju, x->pred.Jl);
+        if (!y) continue;
+        CHECK_DBL("ObsFreq senza .cat", y->exp_freq, x->exp_freq, 1e-6);
+        CHECK_DBL("CalcFreq senza .cat", y->pred.freq_mhz, x->pred.freq_mhz, 1e-6);
+    }
+    DONE();
+}
+
+/* The list and the .lin as commit 1f4df65 wrote them from cat3_303.cat: the
+   J = 11 and J = 25 rows were truncated by B-01 to 1 and 2 QN per state. */
+static const int LEG_U0[3] = {5, 1, 5}, LEG_L0[3] = {4, 1, 4};
+static const int LEG_U1[1] = {11},      LEG_L1[1] = {10};
+static const int LEG_U2[2] = {25, 3},   LEG_L2[2] = {24, 3};
+
+static void write_legacy_session(const char *data, int with_list) {
+    copy_path(fx("cat3_303.cat"), path_in(data, ".fit/model.cat"));
+    if (with_list) {
+        FILE *f = fopen(path_in(data, "assignments.txt"), "w");
+        fprintf(f, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
+        write_list_row(f, LEG_U0, LEG_L0, 3, 3000.08, 3000.1, 1.0e-4);
+        write_list_row(f, LEG_U1, LEG_L1, 1, 5999.2667, 5999.2867, 1.364897e-4);
+        write_list_row(f, LEG_U2, LEG_L2, 2, 6999.98, 7000.0, 6.309573e-5);
+        fclose(f);
+    }
+    FILE *f = fopen(path_in(data, ".fit/model.lin"), "w");
+    write_lin_row(f, LEG_U0, LEG_L0, 3, 3000.08);
+    write_lin_row(f, LEG_U1, LEG_L1, 1, 5999.2667);
+    write_lin_row(f, LEG_U2, LEG_L2, 2, 6999.98);
+    fclose(f);
+}
+
+static const Assignment *find_exp(const AppState *s, double f) {
+    for (int i = 0; i < s->n_assignments; i++) if (fabs(s->assignments[i].exp_freq - f) < 1e-6) return &s->assignments[i];
+    return NULL;
+}
+
+/* model.lin rows with 2 and 4 QN fields are kept, marked and counted. */
+static int test_restore_keeps_short_lin_rows(void) {
+    char data[700];
+    make_data_dir(data, sizeof(data));
+    write_legacy_session(data, 0);                        /* only model.lin, no list */
+
+    AppState *r = new_state();
+    snprintf(r->settings.data_dir, sizeof(r->settings.data_dir), "%s", data);
+    predfit_load_session(r);
+    CHECK_INT("predfit_restore_latest", predfit_restore_latest(r), 1);
+    CHECK_INT("assignment ripristinati da model.lin", r->n_assignments, 3);
+    const Assignment *a1 = find_exp(r, 5999.2667), *a2 = find_exp(r, 6999.98);
+    CHECK(a1 != NULL, "riga .lin a 2 campi (5999.2667 MHz): attesa, assente");
+    CHECK(a2 != NULL, "riga .lin a 4 campi (6999.98 MHz): attesa, assente");
+    if (a1) {
+        int q[12]; qn_of(&a1->pred, q);
+        static const int w1[12] = {11, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0};
+        CHECK_INT("n_qn della riga a 2 campi", a1->pred.n_qn, 1);
+        CHECK(memcmp(q, w1, sizeof(q)) == 0, "QN attesi %s, ottenuti %s", fmt_qn(w1), fmt_qn(q));
+    }
+    if (a2) {
+        int q[12]; qn_of(&a2->pred, q);
+        static const int w2[12] = {25, 3, 0, 0, 0, 0, 24, 3, 0, 0, 0, 0};
+        CHECK_INT("n_qn della riga a 4 campi", a2->pred.n_qn, 2);
+        CHECK(memcmp(q, w2, sizeof(q)) == 0, "QN attesi %s, ottenuti %s", fmt_qn(w2), fmt_qn(q));
+    }
+    const Assignment *a0 = find_exp(r, 3000.08);
+    CHECK(a0 != NULL && a0->needs_reassign == 0, "riga .lin a 6 campi: attesa presente e non marcata");
+    if (a1) CHECK_INT("riga a 2 campi marcata da riassegnare", a1->needs_reassign, 1);
+    if (a2) CHECK_INT("riga a 4 campi marcata da riassegnare", a2->needs_reassign, 1);
+    CHECK(strstr(r->predfit.status, "2 assignments from model.lin") != NULL,
+          "stato: atteso il conteggio '2 assignments from model.lin', ottenuto '%s'", r->predfit.status);
+    DONE();
+}
+
+/* T-33, R-29: restart from another folder, then Save all: no row is lost and
+   the previous file is kept as assignments.txt.bak. */
+static int test_save_all_after_restore_no_loss(void) {
+    char data[700];
+    make_data_dir(data, sizeof(data));
+    write_legacy_session(data, 1);
+    char *before = read_all(path_in(data, "assignments.txt"));
+
+    AppState *r = new_state();                            /* CWD != data_dir, no .cat */
+    snprintf(r->settings.data_dir, sizeof(r->settings.data_dir), "%s", data);
+    predfit_load_session(r);
+    CHECK_INT("predfit_restore_latest", predfit_restore_latest(r), 1);
+    pump(r);
+    CHECK_INT("assignment ripristinati", r->n_assignments, 3);
+    click_save_all(r);
+
+    FILE *f = fopen(work_path("before.txt"), "w");
+    fputs(before ? before : "", f);
+    fclose(f);
+    Assignment *was = calloc(MAX_ASSIGNMENTS, sizeof(Assignment)), *now = calloc(MAX_ASSIGNMENTS, sizeof(Assignment));
+    int n_was = 0, n_now = 0;
+    load_existing_assignments(work_path("before.txt"), was, &n_was);
+    load_existing_assignments(path_in(data, "assignments.txt"), now, &n_now);
+    CHECK_INT("righe di assignments.txt prima", n_was, 3);
+    CHECK_INT("righe di assignments.txt dopo Save all", n_now, n_was);
+    for (int i = 0; i < n_was; i++) {
+        const Assignment *b = NULL;
+        for (int k = 0; k < n_now; k++) if (same_identity(&was[i].pred, &now[k].pred)) b = &now[k];
+        CHECK(b != NULL, "dopo Save all: attesa la riga J %d <- %d (%.4f MHz), persa", was[i].pred.Ju, was[i].pred.Jl, was[i].exp_freq);
+        if (b) CHECK_DBL("ObsFreq", b->exp_freq, was[i].exp_freq, 1e-6);
+    }
+    char *bak = read_all(path_in(data, "assignments.txt.bak"));
+    CHECK(bak && before && strcmp(bak, before) == 0,
+          "assignments.txt.bak: atteso uguale al file precedente, ottenuto %s", bak ? "un contenuto diverso" : "file assente");
+    free(was); free(now); free(before); free(bak);
+    DONE();
+}
+
+/* U-06: Save all and Export list report a failed write, and a folder that
+   cannot be written keeps the previous list intact. */
+static int test_save_all_reports_write_error(void) {
+    AppState *s = new_state();
+    snprintf(s->settings.data_dir, sizeof(s->settings.data_dir), "%s", work_path("missing"));
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, 3000.08, 1.0);
+    s->error_message[0] = '\0';
+    click_save_all(s);
+    CHECK(s->error_message[0] != '\0', "Save all in una cartella inesistente: atteso un errore in error_message, ottenuto nessun messaggio");
+    s->error_message[0] = '\0';
+    s->peaks[0] = (Peak){3000.08, 1.0};
+    s->n_peaks = 1;
+    click_panel_button(s, &s->win_pf, ui_pf_export);
+    CHECK(s->error_message[0] != '\0', "Export list in una cartella inesistente: atteso un errore in error_message, ottenuto nessun messaggio");
+
+    char ro[700];
+    snprintf(ro, sizeof(ro), "%s", work_path("readonly"));
+    mkdir(ro, 0700);
+    FILE *f = fopen(path_in(ro, "assignments.txt"), "w");
+    fprintf(f, "# Upper QNs, lower QNs (SPFIT .lin order), ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n");
+    write_list_row(f, LEG_U0, LEG_L0, 3, 3000.05, 3000.1, 1.0e-4);
+    fclose(f);
+    char *previous = read_all(path_in(ro, "assignments.txt"));
+    chmod(ro, 0500);
+    AppState *t = new_state();
+    snprintf(t->settings.data_dir, sizeof(t->settings.data_dir), "%s", ro);
+    set_predictions(t, fx("cat3_303.cat"));
+    assign_index(t, 1, 5979.98, 1.0);
+    assign_index(t, 3, 6999.98, 1.0);
+    t->error_message[0] = '\0';
+    click_save_all(t);
+    chmod(ro, 0700);
+    CHECK(t->error_message[0] != '\0', "Save all in una cartella non scrivibile: atteso un errore in error_message, ottenuto nessun messaggio");
+    char *now = read_all(path_in(ro, "assignments.txt"));
+    CHECK(now && previous && strcmp(now, previous) == 0, "assignments.txt nella cartella non scrivibile: atteso intatto, ottenuto %s",
+          now ? "riscritto" : "assente");
+    free(previous); free(now);
+    DONE();
+}
+
+/* B-23: every assignment, reassignment and deletion is on disk at once. */
+static int test_autosave_on_assign_update_delete(void) {
+    const double pk[3] = {3000.07, 3000.30, 5979.97};
+    write_spectrum(work_path("peaks.txt"), pk, NULL, 3);
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    add_spectrum(s, work_path("peaks.txt"));
+
+    CHECK_INT("righe selezionate", click_select(s, 3000.1), 1);
+    right_drag(s, 2999.97, 3000.17);
+    CHECK_INT("assignment dopo la prima assegnazione", s->n_assignments, 1);
+    check_file_matches_list(s, "dopo l'assegnazione");
+
+    CHECK_INT("righe selezionate", click_select(s, 3000.1), 1);
+    right_drag(s, 3000.2, 3000.4);
+    CHECK_INT("assignment dopo la riassegnazione", s->n_assignments, 1);
+    if (s->n_assignments == 1) CHECK_DBL("ObsFreq riassegnata", s->assignments[0].exp_freq, 3000.30, 1e-3);
+    check_file_matches_list(s, "dopo la riassegnazione");
+
+    CHECK_INT("righe selezionate", click_select(s, 5980.0), 1);
+    right_drag(s, 5979.87, 5980.07);
+    CHECK_INT("assignment dopo la seconda assegnazione", s->n_assignments, 2);
+    check_file_matches_list(s, "dopo la seconda assegnazione");
+
+    click_delete_selected(s, 0);
+    CHECK_INT("assignment dopo la cancellazione", s->n_assignments, 1);
+    check_file_matches_list(s, "dopo la cancellazione");
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -553,6 +867,11 @@ static const Test TESTS[] = {
     {"test_cat_trailing_spaces_irrelevant",    test_cat_trailing_spaces_irrelevant},
     {"test_cat_fixed_width_numbers",           test_cat_fixed_width_numbers},
     {"test_cat_invalid_nqn_reported",          test_cat_invalid_nqn_reported},
+    {"test_restore_reads_data_dir_list",       test_restore_reads_data_dir_list},
+    {"test_restore_keeps_short_lin_rows",      test_restore_keeps_short_lin_rows},
+    {"test_save_all_after_restore_no_loss",    test_save_all_after_restore_no_loss},
+    {"test_save_all_reports_write_error",      test_save_all_reports_write_error},
+    {"test_autosave_on_assign_update_delete",  test_autosave_on_assign_update_delete},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

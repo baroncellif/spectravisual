@@ -487,7 +487,7 @@ static int sc_restore(const char *work, const char *cwd, const char *cat) {
     int restored = predfit_restore_latest(r1);
     pump(r1);
     printf("launch WITHOUT .cat: restore=%d, pred_path=%s\n", restored, r1->pred_path);
-    print_assignments(r1, "  list rebuilt by import_fit_lines (CWD assignments.txt + model.lin)");
+    print_assignments(r1, "  list rebuilt by import_fit_lines (data_dir assignments.txt + model.lin)");
     /* launch 2: `spectravisual <cat>` */
     AppState *r2 = new_state(work);
     predfit_load_session(r2);

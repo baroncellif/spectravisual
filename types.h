@@ -75,6 +75,7 @@ typedef struct {
     double exp_freq;
     double exp_int;
     int fit_enabled;          // assignment remains visible when this is 0
+    int needs_reassign;       // restored from a .lin row with fewer than 3 QN per state
 } Assignment;
 
 typedef struct {

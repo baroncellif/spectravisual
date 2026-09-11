@@ -221,6 +221,10 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
   avvio CON .cat    lista da data_dir/assignments.txt: frequenze e intensità presenti; fit=1 per tutte (esclusione persa)
   ```
 - Esito: bug B-15, B-16.
+- **Dopo il passo #2** ([restore.log](repro/logs/restore.log) rigenerato): senza `.cat` la
+  lista viene da `data_dir/assignments.txt`, con frequenze calcolate e intensità, e
+  l'esclusione è conservata (dal `.lin`); con `.cat` la lista è la stessa ma
+  l'esclusione è persa (B-16, passo #8). Test: `test_restore_reads_data_dir_list`.
 
 ### R-14 — Undo dopo una modifica della lista ([undo.log](repro/logs/undo.log))
 - Azioni: esclusione di `4 0 4 <- 3 0 3`, Fit, cancellazione della riga 0, Undo.
@@ -364,6 +368,12 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
 - Osservato: sessione 2 con 1 assignment (frequenza prevista 0, `exp_int` 0);
   `assignments.txt` riscritto con una riga.
 - Esito: bug B-40.
+- **Dopo il passo #2** ([saveloss.log](repro/logs/saveloss.log) rigenerato): sessione 2
+  con 3 assignment; *Save all* riscrive le stesse 3 righe. Dal passo #1 questo scenario
+  non produce più righe troncate: il caso con i file troncati scritti da `1f4df65` è
+  coperto da `test_save_all_after_restore_no_loss` e `test_restore_keeps_short_lin_rows`
+  (nessuna riga persa, righe corte marcate da riassegnare, copia `.bak` del file
+  precedente).
 
 ### R-30 — Export del fit delle intensità dopo una cancellazione ([exportstale.log](repro/logs/exportstale.log))
 - Azione: 6 assignment su uno spettro sintetico, `intensity_fit_run`, export;
@@ -476,7 +486,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza | — |
 | T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
 | T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |
-| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | — |
+| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | `test_restore_reads_data_dir_list` |
 | T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit | — |
 | T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito (o conversione documentata); = nessuna riga "Bad Line" silenziosa | — |
 | T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
@@ -495,7 +505,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-30 | Estensioni `.CAT` e `.Cat` | R-26 | = aperti come cataloghi | — |
 | T-31 | Parametro con ID 0 o duplicato | R-27 | Δ rifiuto con messaggio; = `.par` senza righe non valide | — |
 | T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default | — |
-| T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` | — |
+| T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` | `test_save_all_after_restore_no_loss` |
 | T-34 | Export del fit delle intensità dopo una cancellazione | R-30 | Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta | — |
 | T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente | `test_baseline_right_drag_ascending` (solo file crescente) |
 | T-36 | Rimozione di una specie prima dell'attiva; *+ species* dopo una rimozione | R-32 | = specie attiva per identità; = seme preso dalla specie attiva, o eredità dichiarata | — |

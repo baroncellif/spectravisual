@@ -139,8 +139,9 @@ Barra titolo: nomi dei file mostrati ([view.c:896-906](../../view.c#L896-L906));
 `error_message` ha precedenza, `status_message` compare solo senza dati
 ([view.c:954-958](../../view.c#L954-L958)). Dal passo #1 `set_predictions` mette in
 `error_message` anche il numero di righe del catalogo scartate perché hanno NQN 0
-o > 6. Nessun messaggio di esito per *Save all*,
-*Find peaks*, *Export list*, *Export fit* (quest'ultimo solo in `intfit_message`).
+o > 6. Dal passo #2 *Save all* ed *Export list* riportano gli errori di scrittura in
+`error_message` (l'esito positivo va in `status_message`, che con dati caricati non
+si vede); nessun messaggio per *Find peaks*; *Export fit* solo in `intfit_message`.
 
 ---
 
@@ -178,9 +179,9 @@ agisce ([controller.c:269](../../controller.c#L269)).
 ### Assignments (`win_as`)
 | Controllo | Geometria | Render | Handler | Effetto |
 |---|---|---|---|---|
-| righe (4..12) | `ui_as_row` [ui_panels.h:200-203](../../ui_panels.h#L200-L203) | [view.c:1239-1253](../../view.c#L1239-L1253) (`format_pred_qn` usa `n_qn`, fallback 3 [view.c:17-39](../../view.c#L17-L39)) | [controller.c:278-282](../../controller.c#L278-L282) | `selected_assignment` |
-| Save all | `ui_as_save` [ui_panels.h:204-207](../../ui_panels.h#L204-L207) | [view.c:1261](../../view.c#L1261) | [controller.c:283-319](../../controller.c#L283-L319) | dedup + scrittura `assignments.txt` (vedi [README §6.2](README.md#62-assignmentstxt)) |
-| Delete selected | `ui_as_delete` [ui_panels.h:208-211](../../ui_panels.h#L208-L211) | [view.c:1262](../../view.c#L1262) | `delete_assignment` [controller.c:854-873](../../controller.c#L854-L873) | rimuove in memoria; nessun salvataggio |
+| righe (4..12) | `ui_as_row` [ui_panels.h:200-203](../../ui_panels.h#L200-L203) | [view.c:1239-1253](../../view.c#L1239-L1253) (`format_pred_qn` usa `n_qn`, fallback 3 [view.c:17-39](../../view.c#L17-L39)); dal passo #2 le righe da riassegnare sono in ambra | [controller.c:278-282](../../controller.c#L278-L282) | `selected_assignment` |
+| Save all | `ui_as_save` [ui_panels.h:204-207](../../ui_panels.h#L204-L207) | [view.c:1261](../../view.c#L1261) | [controller.c:283-319](../../controller.c#L283-L319) | dedup + `save_assignments` (dal passo #2: file temporaneo, copia `.bak`, errori in `error_message`; vedi [README §6.2](README.md#62-assignmentstxt)) |
+| Delete selected | `ui_as_delete` [ui_panels.h:208-211](../../ui_panels.h#L208-L211) | [view.c:1262](../../view.c#L1262) | `delete_assignment` [controller.c:854-873](../../controller.c#L854-L873) | rimuove e, dal passo #2, salva subito `assignments.txt` |
 | rotella | `win_as.rect` | — | [controller.c:729-733](../../controller.c#L729-L733) | `assignments_scroll ±3` |
 | PageUp/PageDown | — | — | [controller.c:1018-1027](../../controller.c#L1018-L1027) | `assignments_scroll ±13` |
 
@@ -194,7 +195,7 @@ Campi *Search width*, *Noise window*, *Threshold* ([ui_panels.h:93-95](../../ui_
 ([controller.c:334-336](../../controller.c#L334-L336), [algorithms.c:73-140](../../algorithms.c#L73-L140)): la finestra
 di ricerca usa le coordinate **visualizzate** senza sottrarre `exp_offset`, a
 differenza del picking manuale ([controller.c:775-776](../../controller.c#L775-L776)).
-*Export list* → `linelist.csv` in `data_dir` ([controller.c:337-348](../../controller.c#L337-L348)).
+*Export list* → `linelist.csv` in `data_dir` ([controller.c:337-348](../../controller.c#L337-L348)); dal passo #2 un errore di scrittura va in `error_message`.
 Il peak finder **sovrascrive** `peaks[]` (anche i picchi scelti a mano).
 
 ### Rolling average (`win_avg`)
@@ -452,7 +453,7 @@ file `model.fit` durante il render.
 | U-03 | Tasti premuti in Advanced/Settings agiscono sul grafico principale | [FATTO] [predfit.c:1618](../../predfit.c#L1618), [settings.c:897](../../settings.c#L897), [controller.c:217-235](../../controller.c#L217-L235); [RIPR R-38]: con la tastiera su Advanced o su Settings e nessuna cella in modifica, Backspace cancella un picco, D apre *Intensity analysis*, R reimposta la vista principale |
 | U-04 | *Find peaks* ignora `exp_offset` | [FATTO] [controller.c:335](../../controller.c#L335) vs [775-776](../../controller.c#L775-L776) |
 | U-05 | Campo *Start* di Pred&Fit senza effetto | [FATTO] A3.6 |
-| U-06 | *Save all*, *Export list* ed errori di scrittura non danno esito in UI | [FATTO] [controller.c:292-317](../../controller.c#L292-L317), [340-347](../../controller.c#L340-L347); [RIPR] cartella dati inesistente → nessun file, nessun messaggio |
+| U-06 | *Save all*, *Export list* ed errori di scrittura non danno esito in UI. **Passo #2**: gli errori vanno in `error_message` e il file precedente resta intatto (`test_save_all_reports_write_error`); l'esito positivo va solo in `status_message`, che con dati caricati non si vede | [FATTO] [controller.c:292-317](../../controller.c#L292-L317), [340-347](../../controller.c#L340-L347); [RIPR] cartella dati inesistente → nessun file, nessun messaggio |
 | U-07 | I marcatori verdi "assigned" provengono da `assigned.lin` nella CWD, non dagli assignment correnti | [FATTO] A3.12 |
 | U-08 | Righe escluse mostrate come "reassigned — run Fit"; righe "Bad Line" come "not fitted yet" | [FATTO]+[RIPR] A3.10 |
 | U-09 | Il risultato di *Measure* non resta a schermo | [FATTO] [controller.c:646-648](../../controller.c#L646-L648) |
