@@ -314,6 +314,25 @@ static int test_baseline_reassign_updates_obsfreq(void) {
     DONE();
 }
 
+/* T-22, R-19: deleting a trace before the active one keeps the same trace
+   active after the compacting move. */
+static int test_remove_spectrum_keeps_active(void) {
+    const double p0[] = {3000.0}, p1[] = {3001.0}, p2[] = {3002.0};
+    write_spectrum(work_path("first.txt"), p0, NULL, 1);
+    write_spectrum(work_path("second.txt"), p1, NULL, 1);
+    write_spectrum(work_path("third.txt"), p2, NULL, 1);
+    AppState *s = new_state();
+    CHECK_INT("prima traccia", add_spectrum(s, work_path("first.txt")), 1);
+    CHECK_INT("seconda traccia", add_spectrum(s, work_path("second.txt")), 1);
+    CHECK_INT("terza traccia", add_spectrum(s, work_path("third.txt")), 1);
+    select_spectrum(s, 2);
+    remove_spectrum(s, 0);
+    CHECK_INT("indice attivo corretto", s->active_spec, 1);
+    CHECK(strstr(s->spectra[s->active_spec].path, "third.txt") != NULL,
+          "traccia attiva cambiata: '%s'", s->spectra[s->active_spec].path);
+    DONE();
+}
+
 /* R-31, ascending part: the right drag measures the weak line under the
    pointer, not the strong one 1 MHz away. */
 static int test_baseline_right_drag_ascending(void) {
@@ -1642,6 +1661,7 @@ static const Test TESTS[] = {
     {"test_baseline_cat1404_nqn4",             test_baseline_cat1404_nqn4},
     {"test_baseline_roundtrip_qnfmt1404",      test_baseline_roundtrip_qnfmt1404},
     {"test_baseline_reassign_updates_obsfreq", test_baseline_reassign_updates_obsfreq},
+    {"test_remove_spectrum_keeps_active",     test_remove_spectrum_keeps_active},
     {"test_baseline_right_drag_ascending",     test_baseline_right_drag_ascending},
     {"test_descending_spectrum_same_results",  test_descending_spectrum_same_results},
     {"test_nonmonotonic_spectrum_rejected",    test_nonmonotonic_spectrum_rejected},

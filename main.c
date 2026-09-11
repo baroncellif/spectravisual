@@ -368,11 +368,13 @@ static int set_predictions(AppState *state, const char *path) {
 
 static void remove_spectrum(AppState *state, int idx) {
     if (idx < 0 || idx >= state->n_spectra) return;
+    int removed_before_active = idx < state->active_spec;
     free(state->spectra[idx].raw_pts);
     free(state->spectra[idx].smooth_pts);
     for (int i = idx; i < state->n_spectra - 1; i++)
         state->spectra[i] = state->spectra[i + 1];
     state->n_spectra--;
+    if (removed_before_active) state->active_spec--;
     if (state->active_spec >= state->n_spectra) state->active_spec = state->n_spectra - 1;
     state->n_peaks = 0; state->n_selected = 0;
     if (state->n_spectra == 0 && state->n_pred == 0) state->data_loaded = 0;
