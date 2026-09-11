@@ -378,6 +378,80 @@ static int test_calculate_and_drop_same_frame(void) {
     DONE();
 }
 
+static void fill_peakfinder_trace(Point *pts, int n, double baseline) {
+    for (int i = 0; i < n; i++) {
+        double x = i * 0.01;
+        double z = (x - 1.0) / 0.035;
+        pts[i] = (Point){x, baseline + exp(-0.5 * z * z)};
+    }
+}
+
+/* T-23, R-20: an arbitrary vertical baseline does not change the detected
+   transition, because thresholding uses residual noise rather than raw RMS. */
+static int test_peakfinder_baseline_invariant(void) {
+    Point low[201], high[201]; Peak a[MAX_PEAKS], b[MAX_PEAKS];
+    int na = 0, nb = 0;
+    fill_peakfinder_trace(low, 201, 1.0);
+    fill_peakfinder_trace(high, 201, 10.0);
+    run_peak_finder(low, 201, 0.0, 2.0, 3, 25, 4.0, a, &na);
+    run_peak_finder(high, 201, 0.0, 2.0, 3, 25, 4.0, b, &nb);
+    CHECK_INT("picchi con baseline 1", na, 1);
+    CHECK_INT("picchi con baseline 10", nb, na);
+    if (na && nb) CHECK_DBL("frequenza invariata", b[0].x, a[0].x, 1e-6);
+    DONE();
+}
+
+/* The noise span is a real input to both the estimator and the committed UI
+   value: it is clamped to the points actually visible, never ignored. */
+static int test_peakfinder_noise_window_used(void) {
+    Point pts[41]; Peak out[MAX_PEAKS]; int n = 0;
+    fill_peakfinder_trace(pts, 41, 3.0);
+    run_peak_finder(pts, 41, 0.0, 0.4, 2, 3, 3.0, out, &n);
+    CHECK(n >= 0, "il finder con finestra rumore corta non termina");
+    AppState *s = new_state();
+    s->current_pts = pts; s->n_pts = 41; s->vxmin = 0.0; s->vxmax = 0.4;
+    s->input_state = INPUT_PF_NOISE;
+    snprintf(s->text_input_buf, sizeof(s->text_input_buf), "999");
+    commit_text_input(s);
+    CHECK_INT("finestra rumore limitata alla vista", s->pf_noise_pts, 41);
+    DONE();
+}
+
+/* T-24's memory-safety part: invalid width values cannot make i-k/i+k leave
+   the visible data range, whether supplied through the field or API. */
+static int test_peakfinder_width_bounds(void) {
+    Point pts[9]; Peak out[MAX_PEAKS]; int n = -1;
+    fill_peakfinder_trace(pts, 9, 1.0);
+    run_peak_finder(pts, 9, 0.0, 0.08, 0, -4, 3.0, out, &n);
+    CHECK(n >= 0 && n <= MAX_PEAKS, "numero picchi non valido: %d", n);
+    AppState *s = new_state();
+    s->current_pts = pts; s->n_pts = 9; s->vxmin = 0.0; s->vxmax = 0.08;
+    s->input_state = INPUT_PF_SIG;
+    snprintf(s->text_input_buf, sizeof(s->text_input_buf), "-4");
+    commit_text_input(s);
+    CHECK_INT("larghezza negativa rifiutata", s->pf_sig_pts, 1);
+    s->input_state = INPUT_PF_SIG;
+    snprintf(s->text_input_buf, sizeof(s->text_input_buf), "100");
+    commit_text_input(s);
+    CHECK_INT("larghezza limitata alla vista", s->pf_sig_pts, 9);
+    DONE();
+}
+
+/* U-04: the Find button receives display coordinates, then translates them
+   back to the raw spectrum coordinates before storing a peak. */
+static int test_find_peaks_respects_offset(void) {
+    Point pts[201];
+    fill_peakfinder_trace(pts, 201, 1.0);
+    AppState *s = new_state();
+    s->current_pts = pts; s->n_pts = 201; s->data_loaded = 1;
+    s->vxmin = 9.2; s->vxmax = 11.8; s->exp_offset = 10.0;
+    s->pf_sig_pts = 3; s->pf_noise_pts = 25; s->pf_thresh = 4.0;
+    run_visible_peak_finder(s);
+    CHECK_INT("un picco con offset", s->n_peaks, 1);
+    if (s->n_peaks) CHECK_DBL("picco in MHz grezzi", s->peaks[0].x, 1.0, 1e-6);
+    DONE();
+}
+
 /* R-31, ascending part: the right drag measures the weak line under the
    pointer, not the strong one 1 MHz away. */
 static int test_baseline_right_drag_ascending(void) {
@@ -1835,6 +1909,10 @@ static const Test TESTS[] = {
     {"test_remove_spectrum_keeps_active",     test_remove_spectrum_keeps_active},
     {"test_drop_many_files_loads_all",        test_drop_many_files_loads_all},
     {"test_calculate_and_drop_same_frame",    test_calculate_and_drop_same_frame},
+    {"test_peakfinder_baseline_invariant",    test_peakfinder_baseline_invariant},
+    {"test_peakfinder_noise_window_used",     test_peakfinder_noise_window_used},
+    {"test_peakfinder_width_bounds",          test_peakfinder_width_bounds},
+    {"test_find_peaks_respects_offset",       test_find_peaks_respects_offset},
     {"test_baseline_right_drag_ascending",     test_baseline_right_drag_ascending},
     {"test_descending_spectrum_same_results",  test_descending_spectrum_same_results},
     {"test_nonmonotonic_spectrum_rejected",    test_nonmonotonic_spectrum_rejected},

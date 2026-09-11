@@ -24,6 +24,7 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
 static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
+static void run_visible_peak_finder(AppState *s);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
@@ -409,8 +410,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     snprintf(s->text_input_buf, 32, "%.1f", s->pf_thresh);
                     input_focus(s, INPUT_PF_THRESH, mx);
                 } else if (point_in_rect(mx, my, ui_pf_find(w))) {
-                    run_peak_finder(s->current_pts, s->n_pts, s->vxmin, s->vxmax,
-                                    s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh, s->peaks, &s->n_peaks);
+                    run_visible_peak_finder(s);
                 } else if (point_in_rect(mx, my, ui_pf_export(w))) {
                     char path[600];
                     settings_data_file(s, "linelist.csv", path, sizeof(path));
@@ -913,6 +913,15 @@ static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1)
     }
 }
 
+/* The displayed trace is translated by exp_offset, unlike the sample array
+   and peak list.  Keep that conversion in one callable path for the Find UI. */
+static void run_visible_peak_finder(AppState *s) {
+    run_peak_finder(s->current_pts, s->n_pts,
+                    s->vxmin - s->exp_offset, s->vxmax - s->exp_offset,
+                    s->pf_sig_pts, s->pf_noise_pts, s->pf_thresh,
+                    s->peaks, &s->n_peaks);
+}
+
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int) {
     if (s->n_selected <= 0) return;
 
@@ -962,6 +971,16 @@ static void clamp_assignment_scroll(AppState *s) {
     if (s->assignments_scroll > max_scroll) s->assignments_scroll = max_scroll;
 }
 
+static int peakfinder_view_points(const AppState *s) {
+    if (!s->current_pts || s->n_pts <= 0) return 1;
+    double xmin = s->vxmin - s->exp_offset;
+    double xmax = s->vxmax - s->exp_offset;
+    int first = binary_search_lower(s->current_pts, s->n_pts, xmin);
+    int last = binary_search_upper(s->current_pts, s->n_pts, xmax);
+    int count = last - first;
+    return count > 0 ? count : 1;
+}
+
 static void commit_text_input(AppState *s) {
     if (s->input_state == INPUT_NONE) return;
 
@@ -970,9 +989,18 @@ static void commit_text_input(AppState *s) {
     if (s->input_state == INPUT_KBETA) s->kaiser_beta = atof(s->text_input_buf);
     if (s->input_state == INPUT_KCEROS) { int c = atoi(s->text_input_buf); s->kaiser_ceros = c > 0 ? c : 1; }
     if (s->input_state == INPUT_KINTR) { double v = atof(s->text_input_buf); s->kaiser_intrinsic = v >= 0 ? v : 0; }
-    else if (s->input_state == INPUT_PF_SIG) s->pf_sig_pts = atoi(s->text_input_buf);
-    else if (s->input_state == INPUT_PF_NOISE) s->pf_noise_pts = atoi(s->text_input_buf);
-    else if (s->input_state == INPUT_PF_THRESH) s->pf_thresh = atof(s->text_input_buf);
+    else if (s->input_state == INPUT_PF_SIG) {
+        int value = atoi(s->text_input_buf), limit = peakfinder_view_points(s);
+        s->pf_sig_pts = value < 1 ? 1 : value > limit ? limit : value;
+    }
+    else if (s->input_state == INPUT_PF_NOISE) {
+        int value = atoi(s->text_input_buf), limit = peakfinder_view_points(s);
+        s->pf_noise_pts = value < 1 ? 1 : value > limit ? limit : value;
+    }
+    else if (s->input_state == INPUT_PF_THRESH) {
+        double value = atof(s->text_input_buf);
+        s->pf_thresh = isfinite(value) && value >= 0.0 ? value : 0.0;
+    }
     else if (s->input_state == INPUT_AVG_PTS) {
         s->rolling_avg_window = atoi(s->text_input_buf);
         if(s->rolling_avg_active) {

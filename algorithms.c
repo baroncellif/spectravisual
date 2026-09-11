@@ -3,6 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static int compare_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
 // --- BINARY SEARCH IMPLEMENTATIONS ---
 
 int binary_search_lower(Point *pts, int n, double val) {
@@ -75,30 +80,74 @@ void run_peak_finder(Point *pts, int npts, double vxmin, double vxmax,
                      Peak *out_peaks, int *n_peaks) 
 {
     *n_peaks = 0;
+    if (!pts || npts < 3 || !out_peaks) return;
     
     // Only search in current view
     int start_idx = binary_search_lower(pts, npts, vxmin);
-    int end_idx   = binary_search_upper(pts, npts, vxmax);
+    int end_idx   = binary_search_upper(pts, npts, vxmax) - 1;
     if(start_idx < 0) start_idx = 0;
     if(end_idx >= npts) end_idx = npts - 1;
+    if (end_idx < start_idx) return;
 
-    // 1. Calculate RMS Noise of the visible region
-    double sum_sq = 0;
-    int count = 0;
-    for(int i = start_idx; i <= end_idx; i++) {
-        sum_sq += pts[i].y * pts[i].y;
-        count++;
+    int visible = end_idx - start_idx + 1;
+    if (sig_pts < 1) sig_pts = 1;
+    if (sig_pts * 2 >= visible) sig_pts = (visible - 1) / 2;
+    if (sig_pts < 1) return;
+    if (noise_pts < 1) noise_pts = 1;
+    if (noise_pts <= sig_pts) noise_pts = sig_pts + 1;
+    if (noise_pts > visible) noise_pts = visible;
+    if (!isfinite(threshold) || threshold < 0.0) threshold = 0.0;
+
+    /* A peak is judged above its nearby baseline.  The two noise windows sit
+       outside the local-maximum guard area, so a constant (or slowly varying)
+       offset does not become part of either signal or noise. */
+    double *prefix = calloc((size_t)visible + 1, sizeof(*prefix));
+    double *residual = malloc((size_t)visible * sizeof(*residual));
+    double *scratch = malloc((size_t)visible * sizeof(*scratch));
+    if (!prefix || !residual || !scratch) {
+        free(prefix); free(residual); free(scratch);
+        return;
     }
-    double rms = (count > 0) ? sqrt(sum_sq / count) : 1.0;
-    double cut_level = rms * threshold;
+    for (int k = 0; k < visible; k++) prefix[k + 1] = prefix[k] + pts[start_idx + k].y;
+    for (int k = 0; k < visible; k++) {
+        int i = start_idx + k;
+        int left0 = i - noise_pts, left1 = i - sig_pts - 1;
+        int right0 = i + sig_pts + 1, right1 = i + noise_pts;
+        if (left0 < start_idx) left0 = start_idx;
+        if (left1 > end_idx) left1 = end_idx;
+        if (right0 < start_idx) right0 = start_idx;
+        if (right1 > end_idx) right1 = end_idx;
+        double sum = 0.0;
+        int count = 0;
+        if (left0 <= left1) {
+            sum += prefix[left1 - start_idx + 1] - prefix[left0 - start_idx];
+            count += left1 - left0 + 1;
+        }
+        if (right0 <= right1) {
+            sum += prefix[right1 - start_idx + 1] - prefix[right0 - start_idx];
+            count += right1 - right0 + 1;
+        }
+        residual[k] = count ? pts[i].y - sum / count : 0.0;
+        scratch[k] = residual[k];
+    }
 
-    printf("RMS: %.2e | Threshold: %.2e | SigPts: %d\n", rms, cut_level, sig_pts);
+    qsort(scratch, (size_t)visible, sizeof(*scratch), compare_double);
+    double median = (visible & 1) ? scratch[visible / 2]
+                                  : 0.5 * (scratch[visible / 2 - 1] + scratch[visible / 2]);
+    for (int k = 0; k < visible; k++) scratch[k] = fabs(residual[k] - median);
+    qsort(scratch, (size_t)visible, sizeof(*scratch), compare_double);
+    double mad = (visible & 1) ? scratch[visible / 2]
+                               : 0.5 * (scratch[visible / 2 - 1] + scratch[visible / 2]);
+    double noise = 1.4826 * mad;
+    double cut_level = noise * threshold;
+
+    printf("Noise: %.2e | Threshold: %.2e | SigPts: %d\n", noise, cut_level, sig_pts);
 
     // 2. Scan for peaks
     for (int i = start_idx + sig_pts; i <= end_idx - sig_pts; i++) {
         
         // Threshold check
-        if (pts[i].y > cut_level) {
+        if (residual[i - start_idx] > cut_level) {
             
             // Local Maximum Check (in +/- sig_pts window)
             int is_max = 1;
@@ -136,5 +185,6 @@ void run_peak_finder(Point *pts, int npts, double vxmin, double vxmax,
             }
         }
     }
+    free(prefix); free(residual); free(scratch);
     printf("Found %d peaks.\n", *n_peaks);
 }
