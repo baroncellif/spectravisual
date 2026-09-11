@@ -238,26 +238,23 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
   avvio CON .cat    lista da data_dir/assignments.txt: frequenze e intensità presenti; fit=1 per tutte (esclusione persa)
   ```
 - Esito: bug B-15, B-16.
-- **Dopo il passo #2** ([restore.log](repro/logs/restore.log) rigenerato): senza `.cat` la
-  lista viene da `data_dir/assignments.txt`, con frequenze calcolate e intensità, e
-  l'esclusione è conservata (dal `.lin`); con `.cat` la lista è la stessa ma
-  l'esclusione è persa (B-16, passo #8). Test: `test_restore_reads_data_dir_list`.
+- **Dopo il passo #8**: senza e con `.cat` la lista viene da
+  `data_dir/assignments.txt`; `.fit/exclusions.txt` applica la stessa esclusione
+  per identità NQN + QN. Test: `test_restore_reads_data_dir_list`,
+  `test_exclusions_persist_by_identity`.
 
 ### R-14 — Undo dopo una modifica della lista ([undo.log](repro/logs/undo.log))
 - Azioni: esclusione di `4 0 4 <- 3 0 3`, Fit, cancellazione della riga 0, Undo.
 - Oracolo: dopo l'Undo l'esclusione resta sulla stessa transizione.
-- Osservato: dopo l'Undo `4 0 4` è incluso e `5 1 5 <- 4 1 4` è escluso. Undo esegue solo SPCAT.
-  Bug B-17.
+- **Dopo il passo #8**: Undo conserva solo l'identità esclusa sulle righe ancora
+  presenti; non ricrea la riga cancellata. Test: `test_undo_exclusions_by_identity`.
 
 ### R-15 — Sentinella 90000 MHz e incertezza `.lin` ([sent001.log](repro/logs/sent001.log), [sent05.log](repro/logs/sent05.log))
 - Azioni: una riga esclusa; Fit con incertezza 0,01 MHz e con 0,5 MHz.
 - Oracolo: la riga esclusa non entra nel fit per nessun valore ammesso dell'incertezza.
-- Osservato:
-  ```text
-  0.01 MHz   "***** NEXT LINE NOT USED IN FIT", RMS 0.000354 MHz
-  0.5  MHz   riga 93139 MHz usata; "Fit Diverging"; RMS ~30000 MHz; A 1151.36 -> 24198.65 MHz; C -> 7385.9 MHz
-  ```
-- Esito: bug B-09.
+- **Dopo il passo #8**: con entrambe le incertezze il `.lin` ha una riga in
+  meno e NLINE conta solo le incluse: SPFIT non può leggere l'esclusa. Test:
+  `test_excluded_rows_absent_from_lin`.
 
 ### R-16 — Restore di `.int` e specie ([rint.log](repro/logs/rint.log))
 - Precondizioni: specie attiva 1 con Tred=5 K e μ=(0,4 0,3 0,5); TCAT esplicita 1 K; FQLIM e MAXV automatici.
@@ -447,8 +444,8 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
 - Azione: assignment escluso (`fit_enabled = 0`, come in Advanced › Lines), poi
   assegnato a un altro picco con lo stesso percorso della UI.
 - Oracolo: resta escluso.
-- Osservato: `fit_enabled = 1`.
-- Esito: bug B-47.
+- **Dopo il passo #8**: `fit_enabled = 0`; riassegnare aggiorna soltanto i
+  valori della transizione. Test: `test_reassign_keeps_exclusion`.
 
 ### R-37 — Tempo di caricamento di `assignments.txt` ([perf.log](repro/logs/perf.log))
 - Azione: file con 250, 500, 1000 e 2000 righe distinte; `load_existing_assignments`.
@@ -504,10 +501,10 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | `test_blend_pair_survives_reload` |
 | T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | `test_selection_cleared_on_catalog_change`, `test_selection_indices_in_bounds` |
 | T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato; NVIB insufficiente rifiutato prima di ogni file Pickett | `test_nvib_typed_value_kept`, `test_nvib_too_small_rejected`, `test_option_line_other_tokens_kept` |
-| T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
+| T-12 | Calculate → Fit → cancellazione → Undo | modello 1 specie | = lista assignment; = flag di esclusione per transizione | `test_undo_exclusions_by_identity` |
 | T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |
-| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | `test_restore_reads_data_dir_list` |
-| T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit | — |
+| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = lista ed esclusioni per identità | `test_restore_reads_data_dir_list`, `test_exclusions_persist_by_identity` |
+| T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit | `test_excluded_rows_absent_from_lin` |
 | T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito; = `model.lin` non scritto | `test_fit_rejects_nqn_mismatch` |
 | T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
 | T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T | — |
@@ -532,7 +529,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-37 | Incertezza `.lin` dopo il riavvio | R-33 | = valore digitato | — |
 | T-38 | Colonna ERR di `model.cat` dopo Fit e dopo Calculate | R-34 | = ERR coerente con le incertezze fittate, o dichiaratamente a priori | — |
 | T-39 | Aree con baseline da 0 a 10 % | R-35 | = T rot entro l'errore statistico | — |
-| T-40 | Riassegnazione di una riga esclusa | R-36 | = esclusione conservata | — |
+| T-40 | Riassegnazione di una riga esclusa | R-36 | = esclusione conservata | `test_reassign_keeps_exclusion` |
 | T-41 | Caricamento di 5000 righe | R-37 | = tempo lineare (meno di 1 s) | — |
 | T-42 | Tasti e testo in Advanced e Settings | R-38 | = stato della finestra principale invariato | — |
 | T-43 | Avvio `spettro.txt catalogo.cat` con y ≪ 1 | R-39 | = asse Y sull'intervallo dello spettro | — |

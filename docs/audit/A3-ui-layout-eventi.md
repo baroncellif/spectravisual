@@ -360,9 +360,10 @@ per il render sia per l'hit-test; colonne in frazioni della larghezza (`adv_col`
 | | + parameter | `add_parameter` [1346-1351](../../predfit.c#L1346-L1351) | nuova riga id 0 in modifica |
 | | Calculate | `predfit_calculate_all_species` | SPCAT |
 | | .lin uncertainty | [1640-1641](../../predfit.c#L1640-L1641) → commit [1263-1270](../../predfit.c#L1263-L1270) | `line_error_mhz` (qualsiasi valore > 0: vedi [B-09](README.md#b-09)) |
-| Lines (1) | riga | [1689-1693](../../predfit.c#L1689-L1693) | inverte `assignments[row].fit_enabled` |
+| Lines (1) | riga | `predfit_handle_advanced_event` | inverte `assignments[row].fit_enabled` e salva `.fit/exclusions.txt` per identità |
+| | × riga | `delete_assignment` condivisa | elimina l'assignment dalla lista e rigenera il sidecar; non è un'esclusione |
 | Fitting (2) | Fit / Undo fit | [1695-1698](../../predfit.c#L1695-L1698) | `predfit_fit` / `predfit_undo_last_fit` |
-| | righe | [1689-1693](../../predfit.c#L1689-L1693) | inverte `fit_enabled` |
+| | riga / × riga | `predfit_handle_advanced_event` / `delete_assignment` | include/esclude dal Fit oppure elimina la stessa riga ovunque |
 | Species (3) | 10 celle `.int` | [1646-1653](../../predfit.c#L1646-L1653) → `advanced_begin_int_edit` [1108-1125](../../predfit.c#L1108-L1125) → commit [1203-1227](../../predfit.c#L1203-L1227) | `int_settings` (QROT sola lettura) |
 | | USE | `select_species` [585-593](../../predfit.c#L585-L593) | cambia specie attiva, pubblica intensità |
 | | PRED | [1666-1667](../../predfit.c#L1666-L1667) | `predict_enabled` (solo `.int` multi-stato) |
@@ -370,13 +371,10 @@ per il render sia per l'hit-test; colonne in frazioni della larghezza (`adv_col`
 | | × specie | [1658-1663](../../predfit.c#L1658-L1663) | rimuove la riga; **non** rimuove i parametri `…vv` della specie; NVIB ricalcolato |
 | | + species | `add_species` [595-627](../../predfit.c#L595-L627) | nuovo stato v, parametri A/B/C con suffisso `11·v`, NVIB forzato |
 
-La tabella *Fitting* associa la riga *i* della lista assignment all'osservazione
-*i+1* del `model.fit` ([predfit.c:1954](../../predfit.c#L1954)): la corrispondenza è
-per **posizione**, protetta solo dal confronto della frequenza osservata entro
-1e-5 MHz (`observation_is_current` [1475-1477](../../predfit.c#L1475-L1477)). Le righe
-escluse (scritte come 90000+f) risultano sempre "reassigned — run Fit"
-([1992-1993](../../predfit.c#L1992-L1993)) e le righe rifiutate da SPFIT come
-"Bad Line" risultano "not fitted yet" [RIPR `pfmix.log`].
+La tabella *Fitting* associa le osservazioni del `model.fit` ai QN delle righe
+conservate in `model.lin`, non alla posizione della lista corrente. Le righe
+escluse non sono nel `.lin` e sono esplicitamente mostrate come tali; una
+cancellazione o un riordino non sposta più un residuo su un'altra transizione.
 
 ---
 

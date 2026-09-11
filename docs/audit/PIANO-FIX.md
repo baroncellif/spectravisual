@@ -489,7 +489,15 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Bloccato da**: D3 (dove salvare), D8 (portata di Undo).
 - **Documentazione**: report executive summary punto 5, §5.8, §6.3, schede
   B-09/B-16/B-17/B-47; A4 R-14, R-15, R-36.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `5986dc6` —
+  D3: `.fit/exclusions.txt`, file versionato e atomico con NQN + 12 QN;
+  righe malformate ignorate senza toccare gli assignment. D8: Undo ripristina
+  solo modello ed esclusioni per identità, mai la lista. Advanced › Lines e
+  › Fitting distinguono clic (include/esclude dal Fit) e × (elimina dalla lista
+  e da `assignments.txt`). Test aggiunti: `test_excluded_rows_absent_from_lin`,
+  `test_exclusions_persist_by_identity`, `test_undo_exclusions_by_identity`,
+  `test_reassign_keeps_exclusion`, `test_malformed_exclusions_are_safe`
+  (suite 40/40 PASS).
 
 ### #9 — Intensità: una sola funzione di ricalcolo, nessuna propagazione verso Pred&Fit, fit fallito senza effetti
 

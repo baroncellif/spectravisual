@@ -97,11 +97,12 @@ Appendici: [A1 funzioni e call graph](A1-funzioni.md) ·
    modifica della lista è salvata subito (file temporaneo, `rename`, copia `.bak`).
    **Dal passo #4** `exp_int` di una riga letta è 0 e il file ha un'intestazione con
    la versione del formato, da cui il lettore lo riconosce.
-5. **Esclusione e Undo fragili — P1.** L'esclusione "90000 + f" funziona solo
-   perché ERRTST vale 1e6 (`calpgm/calfit.c:448`): con un'incertezza `.lin`
-   ≥ 0,09 MHz la riga "esclusa" entra nel fit e SPFIT diverge (A da 1151 a
-   24 199 MHz) [RIPR R-15]. Undo ripristina i flag di esclusione per posizione
-   ([predfit.c:477-478](../../predfit.c#L477-L478)) [RIPR R-14].
+5. **Esclusione e Undo — risolti al passo #8.** Una riga esclusa non viene
+   scritta in `model.lin`, quindi SPFIT non può leggerla qualunque sia
+   l'incertezza. Le esclusioni temporanee sono in `.fit/exclusions.txt`, con
+   chiave NQN + QN; `assignments.txt` resta la lista completa. Undo ripristina
+   il modello e quelle chiavi, non la lista né le sue posizioni [RIPR R-14,
+   R-15, R-36].
 6. **Il fit delle intensità scrive dentro Pred&Fit — P2.** `intensity_fit_run`
    aggiorna T rot e μ red e li spinge nella specie attiva di Pred&Fit
    ([intensity_fit.c:310-311](../../intensity_fit.c#L310-L311) →
@@ -161,7 +162,7 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 | # | Vincolo | Stato | Dove |
 |---|---|---|---|
 | 1 | Qualsiasi `.cat` si apre e si assegna senza Pred&Fit | **violato** | B-37 (`.CAT` maiuscolo aperto come spettro); risolti al passo #1: B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10) |
-| 2 | Flusso catalogo → assignment → `assignments.txt` autonomo | **violato** | la stessa lista è ricostruita da `import_fit_lines` (dal passo #2 a partire dal file di `data_dir`: B-15 risolto), deduplicata da `write_inputs`, modificata da Undo (B-17); la modalità di avvio dipende dall'esistenza di `.fit/model.cat`; B-40 (lista ricostruita male che sovrascrive `assignments.txt`) risolto al passo #2 |
+| 2 | Flusso catalogo → assignment → `assignments.txt` autonomo | **parzialmente rispettato** | `assignments.txt` è la lista completa in entrambi gli avvii; esclusioni Fit sono un sidecar distinto per identità e Undo non ricrea la lista (passo #8). Restano fuori ambito le righe solo-`.lin` e l'avvio automatico da `.fit/model.cat`. |
 | 3 | NQN proprietà della riga CAT | rispettato nel modello dati ([types.h:66](../../types.h#L66)), **violato** nel restore da `.lin` ([predfit.c:936](../../predfit.c#L936)); il parser (B-01) è corretto dal passo #1 e il fallback `nq=3` del writer (B-05, [controller.c:304](../../controller.c#L304)) è tolto al passo #4 |
 | 4 | Pred&Fit opt-in | **violato** | avvio senza `.cat` + `.fit/model.cat` presente → restore automatico ([main.c:401](../../main.c#L401)); `.fit/spectravisual.state` scritto a ogni caricamento di spettro e all'uscita ([main.c:450](../../main.c#L450), [545](../../main.c#L545)); Pred&Fit pubblica T/μ nell'Intensity analysis; con un `.cat` sulla riga di comando il salvataggio all'avvio riscrive la sessione Pred&Fit con i default (B-39) |
 | 5 | Fit intensità indipendente | **violato** | B-11, B-13, B-20, B-21; B-32 (un fit rifiutato modifica comunque intensità e μ red) |
@@ -257,11 +258,11 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `dipole_cat[3]` | provenienza del catalogo | `AppState` | `set_predictions` (=0), campi μ cat, `predfit_adopt_generated_catalog` (= μ della specie attiva) | `rescale_*`, fit intensità | processo | un solo set di dipoli per un catalogo multi-specie (B-21) |
 | `dipole_red[3]` | μ della specie attiva | `AppState` | campi μ red, `predfit_publish_shared_state`, `intensity_fit_run` | `rescale_*`, fit intensità, `predfit_adopt_shared_state` | processo | il fit delle intensità lo modifica (B-13) |
 | `pred_min/max_log_int`, filtri `filt_*` | presentazione | `AppState` | init, default, campi | `pred_passes_filter` | processo | il filtro decide la selezionabilità |
-| `assignments[]`, `n_assignments` | route assignment | `AppState`, array fisso di 5000 | `add_or_update_assignment`, `deduplicate_assignments`, `delete_assignment`, `import_fit_lines`, `free_dataset`, `restore_fit_snapshot`, Advanced (flag) | pannello, *Save all*, `write_inputs`, fit intensità, Advanced, status bar | memoria; su disco a ogni modifica (dal passo #2) e con *Save all*; implicitamente con Fit (`model.lin`) | quattro route scrivono, due formati salvano (B-15, B-16) |
+| `assignments[]`, `n_assignments` | route assignment | `AppState`, array fisso di 5000 | `add_or_update_assignment`, `deduplicate_assignments`, `delete_assignment`, `import_fit_lines`, `free_dataset`; × Advanced usa `delete_assignment` | pannello, *Save all*, `write_inputs`, fit intensità, Advanced, status bar | memoria; `assignments.txt` a ogni modifica | la lista rimane completa; Delete la rimuove ovunque, Exclude la conserva (passo #8) |
 | `Assignment.pred` | copia della riga CAT al momento dell'assegnazione | `Assignment` | `add_or_update_assignment` (copia per valore), lettori di file | tabella, `write_inputs`, *Save all* (fallback), fit intensità (chiave di ricerca) | come l'assignment | frequenza e intensità diventano stantie dopo ricalcoli e fit |
 | `Assignment.exp_freq` | osservazione | `Assignment` | `add_or_update_assignment`, lettori, `import_fit_lines` | tutti | salvato in entrambi i file | — |
 | `Assignment.exp_int` | altezza del picco osservato | `Assignment` | `add_or_update_assignment` (altezza **o** CalcInt al riavvio) | nessuno | non salvato | significato scambiato (B-07) |
-| `Assignment.fit_enabled` | Pred&Fit | `Assignment` | `add_or_update_assignment` (=1), `import_fit_lines`, Advanced, `restore_fit_snapshot` | `write_inputs` (sentinella), Advanced | solo nel `.lin` | perso con avvio con `.cat`; Undo per indice (B-16, B-17) |
+| `Assignment.fit_enabled` | Pred&Fit | `Assignment` | Advanced Lines/Fitting, `predfit_load_exclusions`, `restore_fit_snapshot`; la riassegnazione lo conserva | `write_inputs` filtra le righe, Advanced | `.fit/exclusions.txt` atomico, NQN + 12 QN | un'esclusione non cancella l'assignment e sopravvive ai due avvii (passo #8) |
 | `selected_indices[]`, `n_selected` | selezione grafica | `AppState` | clic [controller.c:674-690](../../controller.c#L674-L690), assegnazione (=0), cambio spettro, `free_dataset` | render, assegnazione | memoria | indici in `pred_lines`: dal passo #3 `set_predictions` li azzera (B-10 risolto) |
 | `selected_assignment`, `assignments_scroll` | UI | `AppState` | pannello, rotella, PageUp/Down, assegnazione | pannello | memoria | ultima riga invisibile (U-01) |
 | `PredLine.n_qn` | riga CAT (QNFMT % 10) | `PredLine` | `parse_cat_quantum_numbers`, `parse_assignment_lin_order`, lettore legacy, `import_fit_lines` (`slot/2`) | identità ×3, writer ×2, mappatura delle specie, display | per caricamento | corrotto (B-01); dedotto dal `.lin` (B-16) |
@@ -275,10 +276,10 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `predfit.int_settings` | scheda `.int` | `PredFitState` | init, sessione (`int2`), `import_int_settings`, Advanced, Undo | `write_int_header`, Q rot, render | sessione + `model.int` | al restore vince `model.int` (B-18) |
 | `predfit.line_error_mhz` | Pred&Fit | `PredFitState` | init, default di Settings, Advanced, Undo | writer `.lin` | **non salvato** in sessione | soglia della sentinella (B-09) |
 | `predfit.generated_catalog_pending/active` | provenienza del catalogo | `PredFitState` | Calculate, Fit, restore, `adopt`, `set_predictions` | `adopt`, `publish` | memoria | ignorati da `commit_text_input` (B-11) |
-| `predfit.history`, `history_count` | Undo | heap | `push_fit_snapshot`, Undo, dispose | Undo | solo RAM | flag per indice (B-17) |
+| `predfit.history`, `history_count` | Undo | heap | `push_fit_snapshot`, Undo, dispose | Undo | solo RAM | snapshot di modello e identità escluse; non ripristina la lista (passo #8) |
 | `predfit.work_dir` | cartella di lavoro | `PredFitState` | `predfit_init`, `predfit_refresh_work_dir`, `prepare_fit_dir`, restore | `work_file`, `system()` | memoria | dopo Settings iniziale coincide con `data_dir/.fit` (B-35 risolto) |
 | `predfit.status` | messaggi | `PredFitState` | molti | render | memoria | dal passo #6 include NQN incompatibili e quattro diagnostiche SPFIT (B-12/B-22 risolti) |
-| `g_report` (static) | cache di `model.fit` | predfit.c | `report_refresh`/`report_invalidate` | Advanced | per `mtime` | associazione per indice |
+| `g_report` (static) | cache di `model.fit` | predfit.c | `report_refresh`/`report_invalidate` | Advanced | per `mtime` | osservazioni associate ai QN di `model.lin`, non alla posizione corrente |
 | `g_lin_rows` (static) | righe di `model.lin` | predfit.c | `read_lin_rows` | `import_fit_lines` | transitorio | — |
 | `intfit_*`, `intfit_lines[]` | fit intensità | `AppState` | `intensity_fit_run`, `fit_relative_dipoles`, init, campi | pannello, export | memoria | indicizzati per posizione dell'assignment |
 | `PickettSpecies.concentration` | specie | `PredFitState` | `add_species` (1), Advanced, sessione | `rescale_by_species`, sessione | sessione | usata solo dal percorso per specie |
@@ -477,18 +478,20 @@ assignment su model.cat: come flusso 1 (NQN 4 con NVIB>1; NQN corrotto per J ≥
 Fit (pannello [controller.c:545], Advanced Fitting [1696], Cmd/Ctrl+F [997])
   → predfit_fit [994-1019]
       n_assignments > 0 [996] (conta anche le righe escluse)
-      predfit_publish_shared_state; push_fit_snapshot [433-461] (modello + fit_enabled per indice)
+      predfit_publish_shared_state; push_fit_snapshot (modello + identità delle righe escluse)
       write_inputs(for_fit=1): deduplicate_assignments sulla lista in memoria;
         legge NQN dal `model.cat` associato alla riga opzioni corrente: se manca o è vecchio richiede Calculate;
         ogni assignment PRED incluso con NQN diverso blocca il Fit, elencando le righe, prima di `model.lin` (B-12 risolto; conversione rinviata a D2)
-        model.lin: per assignment nq = n_qn QN superiori e inferiori, riempimento a 36 colonne,
-          frequenza (o 90000 + |f| se escluso), incertezza line_error_mhz, peso 1.0 [688-707]
-        NLINE = n_assignments (anche le escluse) [666]
+        model.lin: solo gli assignment inclusi, nq = n_qn QN superiori e inferiori,
+          riempimento a 36 colonne, ObsFreq, incertezza line_error_mhz, peso 1.0
+        NLINE = numero di righe incluse; `.fit/exclusions.txt` conserva le escluse
+          con chiave NQN + QN e viene scritto atomically
       system spfit [1006-1007] → model.fit/.par/.var/.bak; report_invalidate [1008]
       import_fitted_parameters [1009] ← model.var (valori; gli errori a priori restano quelli dell'utente)
       system spcat [1010-1011] → model.cat; pending_pred_path; generated_catalog_pending; status = fit_summary [743-764]
   → ciclo: set_predictions(model.cat) + adopt (come sopra); selezione azzerata (dal passo #3)
-  → Advanced > Fitting: report_refresh [1420-1465] rilegge model.fit per mtime; osservazione i+1 ↔ assignment i
+  → Advanced > Fitting: report_refresh rilegge model.fit per mtime; osservazioni
+    associate ai QN del `model.lin`, anche dopo una cancellazione o un riordino
 ```
 
 Rami ed errori: SPCAT/SPFIT mancanti → messaggio in `status` e storia
@@ -513,8 +516,8 @@ riscalamento: rescale_predicted_intensities_by_species [loader.c:390-427]
 
 Undo (pannello [controller.c:546], Advanced [1697], Cmd/Ctrl+B [998])
   → predfit_undo_last_fit [1021-1032]
-      restore_fit_snapshot [463-479]: parametri, riga opzioni, specie, .int, incertezza
-        fit_enabled[i] ← snapshot[i] per i < min(n_snapshot, n_attuale)  (per posizione, B-17)
+      restore_fit_snapshot: parametri, riga opzioni, specie, `.int`, incertezza
+        applica le identità escluse alle righe ancora presenti; non ricrea né riordina assignment
       predfit_calculate (solo SPCAT, nessun SPFIT) → model.cat ricaricato
   storia solo in RAM [types.h:110-111]: chiudere l'app la cancella
 
@@ -567,7 +570,8 @@ Che cosa viene salvato, e quando:
 | Dato | File | Writer | Momento |
 |---|---|---|---|
 | lista assignment (QN, NQN, ObsFreq, CalcFreq, CalcInt) | `data_dir/assignments.txt` (+ `assignments.txt.bak`) | `save_assignments` | *Save all* e, dal passo #2, ogni aggiunta, riassegnazione e cancellazione |
-| lista assignment per SPFIT (QN, frequenza o sentinella, incertezza) | `data_dir/.fit/model.lin` | `write_inputs(1)` | a ogni Fit |
+| input assignment per SPFIT (solo righe incluse: QN, frequenza, incertezza) | `data_dir/.fit/model.lin` | `write_inputs(1)` | a ogni Fit |
+| esclusioni temporanee dal Fit (NQN + 12 QN) | `data_dir/.fit/exclusions.txt` | `predfit_save_exclusions` | cambio include/escludi, Delete, Fit, Undo |
 | modello (parametri, riga opzioni, `.int`) | `.fit/model.var/.par/.int` | `write_inputs` | a ogni Calculate/Fit |
 | parametri adattati | `.fit/model.var/.par/.bak/.fit` | SPFIT | a ogni Fit |
 | sessione v3 (errori dei parametri, riga opzioni, `int2`, specie, vista, spettri) | `.fit/spectravisual.state` | `predfit_save_session` | caricamento/selezione/rimozione di spettri, Calculate/Fit, uscita |
@@ -575,7 +579,8 @@ Che cosa viene salvato, e quando:
 
 Mai salvati: percorso del CAT esterno, Tcat/μ cat dell'Intensity analysis,
 impostazioni e risultati del fit intensità, allargamento, filtri, picchi,
-selezione, esclusioni dal fit (solo nel `.lin`), incertezza `.lin`, storia Undo.
+selezione, incertezza `.lin`, storia Undo. Le esclusioni sono invece salvate nel
+sidecar del Fit e non cambiano la lista assignment.
 
 ```text
 riapertura senza argomenti, .fit/model.cat presente
@@ -971,7 +976,7 @@ flowchart TB
     d1 --> c10
     d5["predfit_undo_last_fit"] --> d6["restore_fit_snapshot"]
     d5 --> c1
-    d6 -.->|"W fit_enabled per indice"| s_asg
+    d6 -.->|"W fit_enabled per identità; lista invariata"| s_asg
   end
   subgraph R5["R5 intensità"]
     e1["commit_text_input T, μ"] --> e2["predfit_adopt_shared_state"]
@@ -1070,8 +1075,8 @@ flowchart TB
   E_PROG{"E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005"} -->|"no"| E_PROGN["status: Set the SPCAT/SPFIT program"]
   E_RC{"E_RC exit code ≠ 0?<br/>predfit.c:717-721"} -->|"sì"| E_RCN["status ... failed; history_count--"]
   E_SPFITBAD{"E_SPFITBAD Bad Line, rifiutate, non usate o divergenza?"} -->|"sì"| E_SILENT["conteggi nello status; Bad Line marcate nella tabella Fitting (B-22 risolto)"]
-  E_SENT{"E_SENT riga esclusa: 90000+f"} -->|"err · 1e6 ≥ 90000 MHz"| E_SENTBAD["riga usata nel fit, divergenza (B-09)"]
-  E_SENT -->|"err · 1e6 < 90000 MHz"| E_SENTOK["NEXT LINE NOT USED IN FIT"]
+  E_EXCL{"E_EXCL Assignment escluso?"} -->|"sì"| E_EXCLOK["omesso da model.lin; chiave NQN+QN in exclusions.txt"]
+  E_EXCL -->|"no"| E_LINOK["riga normale in model.lin"]
   E_FOPEN{"E_FOPEN fopen fallita"} -->|"assignments.txt, linelist.csv"| E_FOPENS["errore in error_message, file precedente intatto, dal passo 2"]
   E_FOPEN -->|"file Pred-Fit"| E_FOPENPF["status Cannot write Pickett working files"]
   E_SESS{"E_SESS riga di sessione non riconosciuta"} -->|"ignorata"| E_SESSN["valori di default; specie assenti → Species 1<br/>predfit.c:350-353"]
@@ -1082,7 +1087,7 @@ flowchart TB
   E_SEL -->|"render"| E_SELR["ignorato, dal passo 3<br/>view.c:1817-1818"]
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
-  class E_SILENT,E_SENTBAD,E_RESTY bad
+  class E_SILENT,E_RESTY bad
 ```
 
 Altri rami rilevanti: `read_data_alloc` riconosce il separatore dalla prima riga
@@ -1104,12 +1109,14 @@ flowchart LR
   SRC_TXT["FILE_ASG data_dir/assignments.txt"] -->|"P·R avvio CON .cat<br/>ensure_aux_loaded"| S_ASG
   SRC_TXT -->|"P·R avvio SENZA .cat<br/>import_fit_lines, dal passo 2"| F_IMPORT["F_IMPORT import_fit_lines<br/>predfit.c:900-971"]
   SRC_LIN["FILE_LIN .fit/model.lin"] -->|"P·R read_lin_rows"| F_IMPORT
-  F_IMPORT -->|"D·OVW azzera e ricostruisce;<br/>flag da .lin; righe solo-.lin accodate"| S_ASG["S_ASG lista in memoria"]
+  F_IMPORT -->|"D·OVW azzera e ricostruisce;<br/>righe solo-.lin accodate"| S_ASG["S_ASG lista in memoria"]
   S_ASG -->|"D·OVW deduplicate_assignments<br/>Save all, write_inputs, add_or_update"| S_ASG
   S_ASG -->|"P·OVW save_assignments: Save all e ogni modifica<br/>senza flag né exp_int"| SRC_TXT
-  S_ASG -->|"P·OVW write_inputs a ogni Fit<br/>con flag, senza CalcFreq né CalcInt"| SRC_LIN
-  F_UNDO["F_UNDO restore_fit_snapshot"] -->|"S·OVW fit_enabled per indice"| S_ASG
-  F_ADVL["UI_A_LIN Advanced Lines"] -->|"S·UPD fit_enabled"| S_ASG
+  S_ASG -->|"P·OVW write_inputs: solo righe incluse"| SRC_LIN
+  S_ASG -->|"P·OVW predfit_save_exclusions: NQN+QN"| SRC_EXCL["FILE_EXCL exclusions.txt"]
+  SRC_EXCL -->|"P·R predfit_load_exclusions"| S_ASG
+  F_UNDO["F_UNDO restore_fit_snapshot"] -->|"S·OVW fit_enabled per identità"| S_ASG
+  F_ADVL["UI_A_LIN Advanced Lines"] -->|"S·UPD fit_enabled oppure × delete"| S_ASG
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
   class S_ASG,F_IMPORT bad
@@ -1318,7 +1325,7 @@ funzioni non elencate hanno la loro riga in [A1](A1-funzioni.md).
 | K-12 | `S_TMU` → `S_PRED` | D·TR | `rescale_predicted_intensities` | T e dipoli richiesti | campi T/μ, Run fit, caricamento | intensità di tutte le righe | filtro di intensità, normalizzazione, CalcInt salvata |
 | K-13 | `FILE_INT` → `S_SPECIES` | P·OVW | `import_int_settings` + `store_active_species` | restore del modello | avvio senza `.cat` | specie attiva, campi `.int` | `.int` e intensità successive (B-18) |
 | K-14 | `S_PRED` ⇢ `S_SEL` | INV | `set_predictions` (dal passo #3) | la selezione è fatta di indici del catalogo corrente | ogni cambio di catalogo | `n_selected = 0` | prima del passo #3 mancava: assegnazione della transizione sbagliata (B-10) |
-| K-15 | `F_UNDO` → `S_ASG` | S·OVW | `restore_fit_snapshot` | annullare il fit | Undo | `fit_enabled` per indice | esclusioni spostate (B-17) |
+| K-15 | `F_UNDO` → `S_ASG` | S·OVW | `restore_fit_snapshot` | annullare il fit | Undo | `fit_enabled` per identità; lista invariata | B-17 risolto al passo #8 |
 
 ---
 
@@ -1438,7 +1445,7 @@ non sono rappresentati.
 | | Writer dell'app [predfit.c:688-707](../../predfit.c#L688-L707) | Reader SPFIT `calpgm/ulib.c:793-846` (`getlin`) | Reader dell'app `read_lin_rows` [predfit.c:814-841](../../predfit.c#L814-L841) |
 |---|---|---|---|
 | QN | NQN **dell'assignment** × `%3d` sup., × `%3d` inf., spazi fino a 12 campi | 12 × I3 (36 colonne) se NQN ≤ 6; superiori = campi 1..NQN, inferiori = NQN+1..2·NQN, con **NQN del `.par`** (`deflin`, `calpgm/ulib.c:772-791`; `setfmt`, `calpgm/calfit.c:147-153`) | 12 × 3 colonne; `slot` = ultimo campo non vuoto; NQN = slot/2; righe con < 6 slot scartate |
-| FREQ | `%15.6f`: ObsFreq, oppure 90000 + |ObsFreq| se escluso | formato libero | `atof(line+36)`; ≥ 90000 → esclusa, −90000 |
+| FREQ | `%15.6f`: sempre ObsFreq delle sole righe incluse | formato libero | `atof(line+36)`; la sentinella storica ≥ 90000 è letta solo per migrare un workspace precedente |
 | ERR | `%10.6f` = `line_error_mhz` | |ERR| < 1e-7 → 1e-7 | ignorato |
 | WT | `1.0` | < 1e-30 → 1e-30 | ignorato |
 
@@ -1447,20 +1454,29 @@ blend (`calpgm/calfit.c:941-951`); una riga è usata solo se
 |(obs − calc)/err| < ERRTST (`calpgm/calfit.c:448`). L'ordine delle righe è
 l'ordine della lista assignment: due transizioni assegnate allo stesso picco in
 momenti diversi non sono consecutive e non vengono trattate come blend [INF].
-`NLINE` nel `.par` conta anche le righe escluse ([predfit.c:666](../../predfit.c#L666)).
-Divergenze residue: sentinella che dipende da ERRTST × ERR (**B-09**) e NQN
-dedotto dagli slot al restore (B-16). Dal passo #6 un NQN dell'assignment
-diverso da quello del modello corrente blocca il Fit prima di `.lin` (B-12
-risolto).
+`NLINE` nel `.par` conta solo le righe incluse. Dal passo #8 una riga esclusa
+non esiste nel `.lin`, quindi ERRTST × ERR non può reinserirla nel Fit (B-09
+risolto). Dal passo #6 un NQN dell'assignment diverso da quello del modello
+corrente blocca il Fit prima di `.lin` (B-12 risolto).
 `pred.lin`, `assigned.lin`, `assignment.txt` nella radice sono `.lin` dell'utente
 in varianti diverse (3 o 4 QN, spaziature diverse) e non sono scritti dall'app.
+
+### 6.3.1 `.fit/exclusions.txt`
+
+File opzionale e versionato, scritto con file temporaneo e `rename`. Ogni riga
+non-commento è `NQN` seguito dai 12 QN (superiori poi inferiori). È l'unica
+persistenza della scelta temporanea *Exclude from Fit*: una riga assente dal
+file resta inclusa. Righe malformate vengono ignorate; non eliminano né
+modificano `assignments.txt`. Delete rigenera il file dalla lista residua, così
+non lascia chiavi stale. Un vecchio `model.lin` con sentinella è migrato al primo
+restore senza cambiare la lista.
 
 ### 6.4 `.par` e `.var`
 
 | Riga | Writer [predfit.c:667-675](../../predfit.c#L667-L675) | Reader SPFIT `calpgm/calfit.c:104-156` | Reader dell'app |
 |---|---|---|---|
 | 1 | titolo `SpectraVisual Pred&Fit quick model` | titolo | — |
-| 2 | `%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f`: NPAR, NLINE (`n_assignments` per il Fit, 0 per Calculate), NITR (50 in `.par`, 0 in `.var`), NXPAR 0, MARQP 0, ERRTST 1e6, PARFAC 1, FQFAC 1 | NPAR, NLINE (negativo → formato QN esteso), NITR, NXPAR, MARQP, ERRTST (se ~0 → 1e6, `calfit.c:218-219`), PARFAC, FQFAC | — |
+| 2 | `%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f`: NPAR, NLINE (solo assignment inclusi per il Fit, 0 per Calculate), NITR (50 in `.par`, 0 in `.var`), NXPAR 0, MARQP 0, ERRTST 1e6, PARFAC 1, FQFAC 1 | NPAR, NLINE (negativo → formato QN esteso), NITR, NXPAR, MARQP, ERRTST (se ~0 → 1e6, `calfit.c:218-219`), PARFAC, FQFAC | — |
 | 3 | `hamiltonian_line`, invariata (B-02 risolto) | riga opzioni: CHR SPIND **NVIB** KNMIN … (`calpgm/spinv.c:2244-2400`; NVIB ≤ 0 → 1) | per Fit `current_model_nqn` confronta questa riga con `hamiltonian_line` prima di fidarsi di `model.cat`; l'app valida NVIB ≥ massimo stato PRED prima di scrivere |
 | 4… | `%12d % .15E % .8E /label/` | ID BCD, valore, errore a priori | `import_fitted_parameters` [723-741](../../predfit.c#L723-L741): solo righe con `/`, solo **valore** da `model.var` |
 
@@ -1554,7 +1570,7 @@ analysis, allargamento, filtri.
 | deduplicazione e riassegnazione | NQN + 12 QN | [loader.c:522-528](../../loader.c#L522-L528) | sì | sì, zeri fittizi inclusi | no | NQN corrotto → identità corrotta; stessa transizione da cataloghi con NQN diverso = due assignment |
 | assignment ↔ CAT corrente (*Save all*) | NQN + 12 QN | [controller.c:37-50](../../controller.c#L37-L50) | sì | sì | no | con NQN diverso ricade sulla copia |
 | assignment ↔ `.lin` al restore | passata 0: Δf < 1e-4 + primi 3 QN + QN 4..6 fino a NQN della riga; passata 1: **solo** Δf < 1e-4 | [predfit.c:899-924](../../predfit.c#L899-L924) | no | parziale | sì | blend allo stesso picco: la seconda passata sposta il flag su un'altra transizione; NQN dedotto dagli slot |
-| righe del `.fit` ↔ righe mostrate | posizione (osservazione i+1 = assignment i) + |obs − exp| < 1e-5 | [predfit.c:1467-1477](../../predfit.c#L1467-L1477), [1954](../../predfit.c#L1954) | no | no | sì | dopo delete, dedup o restore la posizione cambia; blend con la stessa ObsFreq possono mostrare il residuo dell'altro |
+| righe del `.fit` ↔ righe mostrate | NQN + 12 QN del `model.lin`, poi frequenza osservata per verificarne l'attualità | `report_line_for_assignment`, `observation_is_current` | sì | sì | sì | Delete, dedup o esclusioni non spostano più il residuo su un'altra riga |
 | fit intensità | ricerca binaria sulla frequenza della copia, ±3 posizioni con NQN + 12 QN, poi Δf < 1e-5 | [intensity_fit.c:56-76](../../intensity_fit.c#L56-L76) | sì | sì | sì | dopo un fit o un restore la frequenza della copia è vecchia → riga persa (B-20) |
 | riga → specie | stato = `M1u` se NQN ≥ 4, altrimenti 0 | [loader.c:403](../../loader.c#L403) | sì | sì | no | con QN di spin (QNFMT 304) `M1u` è F (B-19) |
 | SPFIT | QN letti con il NQN del `.par` | `calpgm/ulib.c:793-846` | NQN del modello | sì | no | l'app blocca prima del Fit gli assignment inclusi con NQN diverso (B-12 risolto) |
@@ -1795,17 +1811,11 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-09"></a>
 ### B-09 — L'esclusione dal fit funziona solo se incertezza × ERRTST < 90000 MHz
 
+- **Stato: risolto** al passo #8 — `write_inputs(1)` omette le righe escluse e
+  `NLINE` conta solo quelle incluse. Nessun valore di `line_error_mhz` può più
+  trasformare un'esclusione in un'osservazione SPFIT. Test:
+  `test_excluded_rows_absent_from_lin` (0,001 e 5 MHz).
 - **Gravità** alta · **P1** · [FATTO] + [RIPR R-15]
-- **Dove**: sentinella [predfit.c:690](../../predfit.c#L690); ERRTST 1e6
-  [667-670](../../predfit.c#L667-L670); incertezza modificabile senza limite
-  superiore [1263-1270](../../predfit.c#L1263-L1270) e fino a 5 MHz in Settings
-  ([settings.c:508](../../settings.c#L508)); test di SPFIT `calpgm/calfit.c:448`.
-- **Causa**: la riga "esclusa" è una riga vera con frequenza 90000 + f: SPFIT la
-  scarta solo perché |obs − calc|/err supera ERRTST.
-- **Prova**: incertezza 0,5 MHz → la riga a 93139 MHz entra nel fit, "Fit
-  Diverging", RMS ~30 000 MHz, A 1151,36 → 24 198,65 MHz.
-- **Correzione minima**: non scrivere nel `.lin` le righe escluse (e aggiornare
-  NLINE), conservando l'esclusione altrove (vedi B-16).
 
 <a id="b-10"></a>
 ### B-10 — Selezione stantia dopo un cambio di catalogo
@@ -1906,8 +1916,9 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 - **Stato: risolto** in `04e2e6f` — nuova logica: `import_fit_lines`
   ([predfit.c:900-971](../../predfit.c#L900-L971)) apre `assignments.txt` con
   `settings_data_file`, come *Save all* e l'avvio con un `.cat`: le due modalità di
-  avvio partono dallo stesso file (le esclusioni restano nel solo `.lin` fino al
-  passo #8, B-16). Test: `test_restore_reads_data_dir_list`; R-13 rieseguito.
+  avvio partono dallo stesso file; dal passo #8 le esclusioni arrivano dal
+  sidecar per identità. Test: `test_restore_reads_data_dir_list`,
+  `test_exclusions_persist_by_identity`; R-13 rieseguito.
 - **Gravità** alta · **P1** · [FATTO] + [RIPR R-13]
 - **Dove**: `import_fit_lines` [predfit.c:893](../../predfit.c#L893) usa il nome
   letterale `"assignments.txt"`; *Save all* e `ensure_aux_loaded` usano
@@ -1923,25 +1934,19 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-16"></a>
 ### B-16 — Esclusioni e righe solo-`.lin` nel restore
 
+- **Stato: risolto** al passo #8 — `.fit/exclusions.txt` salva NQN + 12 QN;
+  `set_predictions` e `predfit_restore_latest` lo applicano alla lista completa
+  di `assignments.txt`. Il vecchio sentinel è letto esclusivamente per una
+  migrazione compatibile. Test: `test_exclusions_persist_by_identity`.
 - **Gravità** media · **P1** · [FATTO] + [RIPR R-13]
-- **Dove**: [predfit.c:899-943](../../predfit.c#L899-L943).
-- **Causa**: `fit_enabled` esiste solo nel `.lin` (sentinella); la seconda passata
-  assegna il flag alla prima riga con la stessa frequenza, qualunque siano i QN; le
-  righe presenti solo nel `.lin` ricevono `n_qn = slot/2` (in contrasto con il
-  commento [915-919](../../predfit.c#L915-L919)) e frequenza/intensità calcolate 0.
-- **Correzione minima**: salvare le esclusioni per identità di transizione in un
-  file di Pred&Fit ([§12](#12-domande-bloccanti), D3).
 
 <a id="b-17"></a>
 ### B-17 — Undo ripristina le esclusioni per posizione
 
+- **Stato: risolto** al passo #8 — lo snapshot contiene le identità escluse;
+  Undo le applica solo alle righe ancora presenti e non ripristina mai la lista.
+  Test: `test_undo_exclusions_by_identity`.
 - **Gravità** media · **P1** · [FATTO] + [RIPR R-14]
-- **Dove**: `push_fit_snapshot` [predfit.c:457-459](../../predfit.c#L457-L459),
-  `restore_fit_snapshot` [477-478](../../predfit.c#L477-L478); Undo esegue solo
-  Calculate [1029](../../predfit.c#L1029).
-- **Prova**: esclusione di `4 0 4`, Fit, cancellazione della riga 0, Undo →
-  `4 0 4` incluso e `5 1 5` escluso.
-- **Correzione minima**: salvare nello snapshot la chiave di identità (NQN + QN).
 
 <a id="b-18"></a>
 ### B-18 — Il restore sovrascrive T e dipoli della specie attiva e fissa i campi automatici
@@ -2504,15 +2509,10 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-47"></a>
 ### B-47 — Riassegnare una transizione esclusa la reinclude nel fit
 
+- **Stato: risolto** al passo #8 — l'aggiornamento conserva `fit_enabled`; la
+  frequenza osservata e la riga CAT si aggiornano senza mutare la scelta Fit.
+  Test: `test_reassign_keeps_exclusion`.
 - **Gravità** media · **P0/P1** · [FATTO] + [RIPR R-36]
-- **Dove**: `add_or_update_assignment` [loader.c:554-561](../../loader.c#L554-L561) (riga
-  [559](../../loader.c#L559)).
-- **Causa**: il ramo di aggiornamento imposta `fit_enabled = 1`.
-- **Prova**: transizione esclusa in Advanced › Lines, spostata su un altro picco →
-  `fit_enabled = 1` [RIPR R-36].
-- **Effetti**: una riga che l'utente aveva escluso rientra nel Fit successivo senza avviso.
-- **Origine**: `c6d1974`.
-- **Correzione minima** [PROP]: conservare `fit_enabled` nell'aggiornamento.
 
 <a id="b-48"></a>
 ### B-48 — Caricamento di `assignments.txt` con costo cubico
@@ -2628,7 +2628,7 @@ regressioni sono possibili.
 | B-01, B-03, B-04 (risolti al passo #1, con B-25) | `parse_cat_record`, `parse_qn2`, controllo di lunghezza | `read_pred_cat(_alloc)` ← `set_predictions` (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di `n_qn`: `same_assignment_transition`, `current_assignment_prediction`, `same_qn`, `rescale_by_species`, `write_inputs` (controllo e writer), *Save all*, `format_pred_qn`, `format_assignment_qn`; file `assignments.txt` esistenti con righe troncate | le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT | T-01..T-07 |
 | B-02 (risolto al passo #5) | `hamiltonian_nvib`, `included_state_count`, `write_inputs` | `write_multi_state_int` (ID per v ≥ NVIB), QNFMT di `model.cat`, identità delle righe, sessione (`hamiltonian`) | un NVIB minore del massimo stato PRED rifiuta Calculate/Fit prima di creare `.fit`; la riga digitata non è mai normalizzata | T-11, R-08 |
 | B-05, B-06, B-08 (risolti al passo #4, con B-07) | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
-| B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |
+| B-09, B-16 (risolti al passo #8) | writer e reader del `.lin`, persistenza delle esclusioni | `.fit/exclusions.txt`; `write_inputs` filtra; report per identità | NLINE e mappa report seguono le sole righe incluse | T-12, T-15 |
 | B-10 (risolto al passo #3) | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
 | B-11, B-13, B-21, B-27 | `commit_text_input`, *Run fit*, `predfit_adopt_shared_state`, `intensity_fit_run` | intensità mostrate, filtro di intensità (righe selezionabili), Shift+Tab, CalcIntensity salvata, `.int` del Calculate successivo | intensità mostrate diverse da prima per chi usava i campi della command bar su cataloghi generati | T-17, T-18 |
 | B-12, B-22 (risolti al passo #6) | `current_model_nqn`, `write_inputs`, `fit_summary`, report | ogni Fit; liste miste esistenti | Fit rifiutato prima di `.lin` se il modello non è corrente o NQN non coincide; le diagnostiche SPFIT restano visibili | T-16, R-11 |
