@@ -130,7 +130,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #15 | Validazione di parametri e dipoli | B-38, B-51, B-33, U-15 | medio | D10 (parziale) |
 | #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | fatto `656a1ab` |
 | #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | fatto |
-| #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | — |
+| #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | parziale `b98d08f` |
 | #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | — |
 | #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | — |
 | #21 | Pred&Fit opt-in | B-26 | medio (vincolo 4) | D7 |
@@ -765,7 +765,15 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_exports_go_to_data_dir` (M-06).
 - **Documentazione**: report §5.7, §6.4, §6.8, schede B-36/B-44/B-45, M-06; A3
   U-16; A4 R-25, R-33, R-34.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ◐ fix parziale il 2026-09-12 — commit codice: `b98d08f` — test
+  aggiunti: `test_restore_defaults_keeps_paths`, `test_line_error_persists`,
+  `test_calculate_after_fit_keeps_fitted_var`, `test_exports_go_to_data_dir`
+  (suite 55/55 PASS). *Restore defaults* mantiene SPCAT/SPFIT/cartella dati;
+  l’incertezza delle osservazioni `.lin` è serializzata nella sessione; un
+  Calculate con modello invariato conserva le incertezze stimate da SPFIT in
+  `model.var`; gli export correnti usano `data_dir`. Rimane intenzionalmente
+  separato N-02: il salvataggio della sessione deve diventare solo esplicito,
+  tramite il futuro pulsante **Save session** richiesto dall’utente.
 
 ### #19 — Percorsi con spazi ed esito dei processi esterni
 
