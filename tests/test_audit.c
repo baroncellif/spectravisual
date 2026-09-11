@@ -852,6 +852,45 @@ static int test_autosave_on_assign_update_delete(void) {
     DONE();
 }
 
+/* ================================= #3 selection cleared on catalogue change */
+
+/* T-10, R-10: a line selected on one catalogue must not assign a row of the
+   catalogue loaded after it (drop of a .cat, or model.cat after Calculate/Fit). */
+static int test_selection_cleared_on_catalog_change(void) {
+    const double pk[1] = {5999.25};
+    write_spectrum(work_path("peak.txt"), pk, NULL, 1);
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    add_spectrum(s, work_path("peak.txt"));
+    CHECK_INT("righe selezionate in cat3_303", click_select(s, 5999.2867), 1);
+    CHECK_INT("indice selezionato in cat3_303", s->selected_indices[0], 2);
+    set_predictions(s, fx("cat4_1404.cat"));
+    CHECK_INT("righe selezionate dopo il cambio di catalogo", s->n_selected, 0);
+    right_drag(s, 5999.15, 5999.35);
+    CHECK_INT("assignment creati dal picco dopo il cambio di catalogo", s->n_assignments, 0);
+    if (s->n_assignments > 0)
+        CHECK(0, "assegnata la transizione di cat4_1404 J %d <- %d a %.4f MHz", s->assignments[0].pred.Ju,
+              s->assignments[0].pred.Jl, s->assignments[0].pred.freq_mhz);
+    DONE();
+}
+
+/* No selected index outlives the catalogue it points into. */
+static int test_selection_indices_in_bounds(void) {
+    AppState *s = new_state();
+    set_predictions(s, fixture("pred_reference.cat"));
+    const int picked[3] = {5, 2000, 2311};                /* = a Cmd-click selection, controller.c:681-693 */
+    for (int k = 0; k < 3; k++) s->selected_indices[k] = picked[k];
+    s->n_selected = 3;
+    const char *next[3] = {"cat3_303.cat", "cat4_1404.cat", "cat6_306.cat"};
+    for (int c = 0; c < 3; c++) {
+        set_predictions(s, fx(next[c]));
+        for (int k = 0; k < s->n_selected; k++)
+            CHECK(s->selected_indices[k] >= 0 && s->selected_indices[k] < s->n_pred,
+                  "dopo %s: indice selezionato %d, atteso minore di n_pred = %d", next[c], s->selected_indices[k], s->n_pred);
+    }
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -872,6 +911,8 @@ static const Test TESTS[] = {
     {"test_save_all_after_restore_no_loss",    test_save_all_after_restore_no_loss},
     {"test_save_all_reports_write_error",      test_save_all_reports_write_error},
     {"test_autosave_on_assign_update_delete",  test_autosave_on_assign_update_delete},
+    {"test_selection_cleared_on_catalog_change", test_selection_cleared_on_catalog_change},
+    {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

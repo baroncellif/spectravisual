@@ -303,6 +303,9 @@ static int set_predictions(AppState *state, const char *path) {
     free(state->pred_lines);
     state->pred_lines = pred;
     state->n_pred = n;
+    /* The selection is a list of indices into pred_lines: in another catalogue
+       they point at other transitions, so a new one starts with none selected. */
+    state->n_selected = 0;
     state->pxmin = pxmin; state->pxmax = pxmax;
     /* Only model.cat created in the Pred&Fit workspace has a known Tcat and
        per-species settings.  An arbitrary .cat remains a standalone file. */

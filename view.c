@@ -1813,8 +1813,10 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         if (card.x < l->pred_x + 10) card.x = l->pred_x + 10;
         snprintf(buf, sizeof(buf), "%d line%s selected", state->n_selected, state->n_selected == 1 ? "" : "s");
         ui_card(ren, card, buf, UI_TEXT, "ctrl-click to add");
-        for (int i = 0; i < show_n; i++)
-            ui_card_row(ren, card, i, &state->pred_lines[state->selected_indices[i]]);
+        for (int i = 0; i < show_n; i++) {
+            int idx = state->selected_indices[i];
+            if (idx >= 0 && idx < state->n_pred) ui_card_row(ren, card, i, &state->pred_lines[idx]);
+        }
         return;
     }
 

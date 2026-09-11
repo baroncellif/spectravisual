@@ -176,6 +176,11 @@ Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/lo
 - Oracolo: dopo il cambio di catalogo la selezione è vuota oppure punta ancora alla stessa transizione.
 - Osservato: l'indice 2 punta a `6033.5894 12 2 10 2 <- 11 2 9 2` di B; l'assignment
   creato a 5999.25 MHz porta quella transizione. Bug B-10.
+- **Dopo il passo #3** ([stale.log](repro/logs/stale.log) rigenerato): dopo il caricamento
+  di B `n_selected = 0` e il picco non crea alcun assignment. La riga "now points to" del
+  log è solo la lettura della vecchia cella dell'array fatta dall'harness: l'app non la
+  usa più. Test: `test_selection_cleared_on_catalog_change`,
+  `test_selection_indices_in_bounds`.
 
 ### R-11 — Pred&Fit consuma assignment di un CAT esterno con NVIB=3 ([pfmix.log](repro/logs/pfmix.log))
 - Precondizioni: 3 specie (NVIB forzato 3), Calculate con SPCAT reale (11167 righe, tutte `n_qn=4`);
@@ -482,7 +487,7 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt | `test_baseline_roundtrip_qnfmt1404` (solo QNFMT 1404) |
 | T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment | `test_baseline_reassign_updates_obsfreq` |
 | T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | — |
-| T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | — |
+| T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | `test_selection_cleared_on_catalog_change`, `test_selection_indices_in_bounds` |
 | T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza | — |
 | T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
 | T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |

@@ -273,7 +273,7 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     cancellazione il file su disco coincide con la lista in memoria, senza *Save all*.
 - **Documentazione**: report §4 (flussi 1, 2, 8), §5.7, §6.2, schede
   B-15/B-23/B-40; A3 U-06; A4 R-13 e R-29.
-- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #3 —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `04e2e6f` —
   test aggiunti: `test_restore_reads_data_dir_list`, `test_restore_keeps_short_lin_rows`,
   `test_save_all_after_restore_no_loss`, `test_save_all_reports_write_error`,
   `test_autosave_on_assign_update_delete` (suite 16/16 PASS). Unico writer
@@ -301,7 +301,12 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_selection_indices_in_bounds`: dopo ogni `set_predictions` nessun indice
     selezionato è ≥ `n_pred`.
 - **Documentazione**: report §4 flusso 4, §5.2, scheda B-10; A4 R-10.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #4 —
+  test aggiunti: `test_selection_cleared_on_catalog_change`,
+  `test_selection_indices_in_bounds` (suite 18/18 PASS). Scelta: azzerare la
+  selezione in `set_predictions` (non rimapparla); il controllo `idx < n_pred`
+  c'era già in `assign_selected_predictions`, aggiunto nella card del render
+  (`view.c`). R-10 rieseguito.
 
 ### #4 — Integrità di `assignments.txt`: niente NQN inventati, niente fusioni silenziose, formato riconoscibile
 

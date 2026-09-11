@@ -287,7 +287,8 @@ Selezione [FATTO]: tolleranza ±5 px convertiti in MHz sull'asse della prevision
 ([controller.c:676-678](../../controller.c#L676-L678)); vengono selezionate **tutte**
 le righe entro la tolleranza (due righe sovrapposte, come la coppia a
 392.7959 MHz di `pred.cat`, entrano insieme [RIPR `rtpred.log`]). La selezione è
-un **indice** in `pred_lines`, non una copia della transizione.
+un **indice** in `pred_lines`, non una copia della transizione. Dal passo #3
+`set_predictions` la azzera a ogni cambio di catalogo (B-10).
 
 ---
 
@@ -419,7 +420,7 @@ flowchart LR
 
 Dati di dominio letti dal render: `linear_int`/`lgint` (già riscalati),
 `pred_global_max`, `pred_scale`, `pred_passes_filter`, `selected_indices`
-(accesso **senza controllo di limite** in [view.c:1815](../../view.c#L1815)),
+(dal passo #3 con controllo di limite, [view.c:1817-1818](../../view.c#L1817-L1818); prima senza, [view.c:1815](../../view.c#L1815)),
 `peaks[]`, `lin_data[]` (marcatori verdi "assegnati" presi da `assigned.lin`/ini
 nella CWD, **non** dalla lista assignment: [main.c:165-167](../../main.c#L165-L167),
 [loader.c:121-152](../../loader.c#L121-L152), [view.c:559-576](../../view.c#L559-L576), [826-842](../../view.c#L826-L842)).

@@ -246,7 +246,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 
 | Campo / struttura | Proprietario logico | Memoria fisica | Writer | Reader | Durata | Rischio |
 |---|---|---|---|---|---|---|
-| `pred_lines`, `n_pred` | catalogo caricato | `AppState` | `set_predictions` [main.c:297-299](../../main.c#L297-L299), `free_dataset` [183-191](../../main.c#L183-L191); intensità in-place: `rescale_*` | render, selezione [controller.c:681-693](../../controller.c#L681-L693), assegnazione [842-844](../../controller.c#L842-L844), *Save all*, fit intensità, Shift+Tab | fino al prossimo caricamento | condiviso da tre route; sostituito sotto una selezione attiva (B-10); due formule d'intensità (B-11) |
+| `pred_lines`, `n_pred` | catalogo caricato | `AppState` | `set_predictions` [main.c:297-299](../../main.c#L297-L299), `free_dataset` [183-191](../../main.c#L183-L191); intensità in-place: `rescale_*` | render, selezione [controller.c:681-693](../../controller.c#L681-L693), assegnazione [842-844](../../controller.c#L842-L844), *Save all*, fit intensità, Shift+Tab | fino al prossimo caricamento | condiviso da tre route; due formule d'intensità (B-11); dal passo #3 la sostituzione azzera la selezione (B-10 risolto) |
 | `pred_path` | catalogo | `AppState` | `set_predictions` [313](../../main.c#L313) | barra titolo, export fit | processo | il percorso di un CAT esterno **non è salvato** in sessione |
 | `pending_pred_path`, `pending_load`, `pending_spec_path`, `pending_session_load` | coda di caricamento | `AppState` | drop [controller.c:218-226](../../controller.c#L218-L226), Calculate [predfit.c:987-988](../../predfit.c#L987-L988), Fit [1013-1014](../../predfit.c#L1013-L1014), restore [961-962](../../predfit.c#L961-L962), `reopen_predfit_session` | ciclo [main.c:514-522](../../main.c#L514-L522) | un frame | slot unico (B-14) |
 | `pred_global_max`, `pred_scale` | presentazione | `AppState` | ogni `rescale_*`; `R`, Shift+Tab, Shift+W/Z/↑↓ | render | processo | il massimo cambia a ogni ricalcolo |
@@ -260,7 +260,7 @@ fisica" è dove sta. La matrice completa writer/reader generata dall'AST è in
 | `Assignment.exp_freq` | osservazione | `Assignment` | `add_or_update_assignment`, lettori, `import_fit_lines` | tutti | salvato in entrambi i file | — |
 | `Assignment.exp_int` | altezza del picco osservato | `Assignment` | `add_or_update_assignment` (altezza **o** CalcInt al riavvio) | nessuno | non salvato | significato scambiato (B-07) |
 | `Assignment.fit_enabled` | Pred&Fit | `Assignment` | `add_or_update_assignment` (=1), `import_fit_lines`, Advanced, `restore_fit_snapshot` | `write_inputs` (sentinella), Advanced | solo nel `.lin` | perso con avvio con `.cat`; Undo per indice (B-16, B-17) |
-| `selected_indices[]`, `n_selected` | selezione grafica | `AppState` | clic [controller.c:674-690](../../controller.c#L674-L690), assegnazione (=0), cambio spettro, `free_dataset` | render, assegnazione | memoria | indici in `pred_lines` non invalidati da `set_predictions` (B-10) |
+| `selected_indices[]`, `n_selected` | selezione grafica | `AppState` | clic [controller.c:674-690](../../controller.c#L674-L690), assegnazione (=0), cambio spettro, `free_dataset` | render, assegnazione | memoria | indici in `pred_lines`: dal passo #3 `set_predictions` li azzera (B-10 risolto) |
 | `selected_assignment`, `assignments_scroll` | UI | `AppState` | pannello, rotella, PageUp/Down, assegnazione | pannello | memoria | ultima riga invisibile (U-01) |
 | `PredLine.n_qn` | riga CAT (QNFMT % 10) | `PredLine` | `parse_cat_quantum_numbers`, `parse_assignment_lin_order`, lettore legacy, `import_fit_lines` (`slot/2`) | identità ×3, writer ×2, mappatura delle specie, display | per caricamento | corrotto (B-01); dedotto dal `.lin` (B-16) |
 | `PredLine` QN `Ju…M3l` | riga CAT | `PredLine` | come sopra | identità, filtro, writer, display | per caricamento | codici lettera persi (B-04) |
@@ -325,6 +325,7 @@ drop del CAT esterno
         qsort per frequenza
       predfit_is_generated_catalog [predfit.c:28-42] = falso → generated_catalog_pending = active = 0
       cat_temp_k = 0; dipole_cat = 0; rescale_predicted_intensities (Tcat non valida → intensità del catalogo) [loader.c:348-360]
+      dal passo #3 n_selected = 0: la selezione vale solo per il catalogo in cui è stata fatta
       pred_path; ensure_aux_loaded (già eseguita: nessun effetto)
   → predfit_adopt_generated_catalog [predfit.c:420-431]: pending = 0 → ritorna
   → render: draw_prediction_view [view.c:712-864]; header "N lines in view" [1055-1070]
@@ -359,7 +360,8 @@ Rami: se `.fit/model.cat` esiste l'avvio "senza Pred&Fit" non è possibile
 (Pred&Fit ripristina catalogo e lista, [flusso 8](#flusso-8)); se il CAT ha
 QNFMT a tre cifre e J ≥ 10 il writer troncava i QN (B-01, risolto al passo #1; B-05); se `data_dir`
 non esiste il salvataggio fallisce, dal passo #2 con un errore nella barra del titolo; se si carica un altro
-catalogo tra selezione e picco viene assegnata la riga sbagliata (B-10).
+catalogo tra selezione e picco la selezione viene azzerata (dal passo #3; prima veniva
+assegnata la riga sbagliata, B-10).
 Violazione del vincolo 4: la cartella `.fit/` e il file di sessione Pred&Fit
 vengono scritti durante un normale caricamento di spettro.
 
@@ -421,7 +423,7 @@ drop di pred.cat
   → set_predictions: generated_catalog_pending = active = 0 [main.c:303-306]; cat_temp_k = 0; dipole_cat = 0
       rot_temp_k e dipole_red NON azzerati: restano i valori pubblicati da Pred&Fit [predfit.c:366-367]
       rescale_predicted_intensities: Tcat non valida → intensità grezze del CAT
-      selected_indices NON azzerati → puntano a righe di pred.cat (B-10)
+      selected_indices azzerati dal passo #3 (prima puntavano a righe di pred.cat, B-10)
   → predfit_adopt_generated_catalog: pending = 0 → ritorna
 effetti residui:
   - Intensity analysis mostra T rot e μ red di Pred&Fit con T cat vuota; appena si digita T cat, il riscalamento
@@ -477,7 +479,7 @@ Fit (pannello [controller.c:545], Advanced Fitting [1696], Cmd/Ctrl+F [997])
       system spfit [1006-1007] → model.fit/.par/.var/.bak; report_invalidate [1008]
       import_fitted_parameters [1009] ← model.var (valori; gli errori a priori restano quelli dell'utente)
       system spcat [1010-1011] → model.cat; pending_pred_path; generated_catalog_pending; status = fit_summary [743-764]
-  → ciclo: set_predictions(model.cat) + adopt (come sopra); selected_indices non azzerati
+  → ciclo: set_predictions(model.cat) + adopt (come sopra); selezione azzerata (dal passo #3)
   → Advanced > Fitting: report_refresh [1420-1465] rilegge model.fit per mtime; osservazione i+1 ↔ assignment i
 ```
 
@@ -749,7 +751,7 @@ stateDiagram-v2
   ST_CAT --> ST_DATI : drop spettro
   ST_DATI --> ST_SEL : clic nel pannello previsione
   ST_SEL --> ST_ASG : trascinamento destro su un picco
-  ST_SEL --> ST_SEL : nuovo catalogo, indici stantii (B-10)
+  ST_SEL --> ST_DATI : nuovo catalogo, selezione azzerata dal passo 3 (prima indici stantii, B-10)
   ST_ASG --> ST_ASG : Save all, Delete, riassegnazione
   ST_DATI --> ST_CALC : Calculate
   ST_ASG --> ST_CALC : Calculate
@@ -1067,10 +1069,10 @@ flowchart TB
   E_RESTORE{"E_RESTORE .fit/model.cat esiste?"} -->|"no"| E_RESTN["restore saltato"]
   E_RESTORE -->|"sì"| E_RESTY["Pred-Fit ripristinato senza richiesta (vincolo 4)"]
   E_SEL{"E_SEL indice selezionato ≥ n_pred?"} -->|"assegnazione"| E_SELA["ignorato<br/>controller.c:842"]
-  E_SEL -->|"render"| E_SELR["lettura fuori limite<br/>view.c:1815"]
+  E_SEL -->|"render"| E_SELR["ignorato, dal passo 3<br/>view.c:1817-1818"]
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
-  class E_NQNBAD,E_ASGNEW,E_ASGOLD,E_SILENT,E_SENTBAD,E_RESTY,E_SELR bad
+  class E_NQNBAD,E_ASGNEW,E_ASGOLD,E_SILENT,E_SENTBAD,E_RESTY bad
 ```
 
 Altri rami rilevanti: `read_data_alloc` riconosce il separatore dalla prima riga
@@ -1121,7 +1123,7 @@ flowchart LR
   F_CATREAD -->|"D·TR NQN da QNFMT (B-01), QN, ordinamento"| S_PRED["S_PRED pred_lines"]
   F_CATREAD -->|"C set_predictions: flag generato"| S_GEN["S_GEN generated_catalog_*"]
   S_PRED -->|"D·R indice ± 5 px, filtro"| S_SEL["S_SEL selected_indices"]
-  F_CATREAD -.->|"INV mancante: indici non azzerati (B-10)"| S_SEL
+  F_CATREAD -.->|"INV set_predictions azzera la selezione, dal passo 3"| S_SEL
   S_SEL -->|"D·CP riga intera"| S_ASGP["S_ASGP Assignment.pred"]
   S_ASGP -->|"D·R identità NQN + 12 QN"| F_DEDUP["F_DEDUP deduplicate_assignments"]
   S_PRED -->|"D·R stesso NQN e QN"| F_CURRENT["F_CURRENT current_assignment_prediction"]
@@ -1131,7 +1133,7 @@ flowchart LR
   F_RESCALE -->|"D·TR intensità"| S_PRED
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
-  class F_CATREAD,S_SEL bad
+  class F_CATREAD bad
 ```
 
 #### D9c — assignment + parametri + Hamiltoniano + `.int` → SPFIT/SPCAT → stato
@@ -1296,13 +1298,13 @@ funzioni non elencate hanno la loro riga in [A1](A1-funzioni.md).
 | K-05 | `FILE_ASG_CWD` + `FILE_LIN` → `S_ASG` | P·OVW | `import_fit_lines` | ripristinare lista e flag dopo un fit | avvio senza `.cat` con `model.cat`, drop della sessione | intera lista | Save all successivo, Fit (B-15, B-16) |
 | K-06 | `S_ASG` → `FILE_LIN` | D·TR | `write_inputs(1)` | input di SPFIT | ogni Fit | `model.lin` | lettura SPFIT con NQN del modello (B-12), restore |
 | K-07 | `FILE_LIN` → `X_SPFIT` | D·R | SPFIT `getlin` | fit | ogni Fit | — | righe "Bad Line"/rifiutate silenziose (B-22) |
-| K-08 | `X_SPCAT` → `FILE_MODELCAT` → `S_PRED` | P·OVW, D·R | SPCAT, coda di caricamento | aggiornare la previsione | Calculate, Fit, Undo, restore | tutto il catalogo, flag generato | indici di selezione stantii (B-10), riscalamento per specie |
+| K-08 | `X_SPCAT` → `FILE_MODELCAT` → `S_PRED` | P·OVW, D·R | SPCAT, coda di caricamento | aggiornare la previsione | Calculate, Fit, Undo, restore | tutto il catalogo, flag generato | selezione azzerata (dal passo #3; prima indici stantii, B-10), riscalamento per specie |
 | K-09 | `S_PF` → `S_TMU` | S·OVW | `predfit_publish_shared_state` | mostrare nell'Intensity analysis T e μ della specie attiva | Calculate, Fit, campi Pred&Fit, specie | Trot, μ red, Tcat (se generato), intensità | riscalamento del catalogo mostrato |
 | K-10 | `S_TMU` → `S_PF` | S·OVW | `predfit_adopt_shared_state` | idem, direzione opposta | T rot, μ red, Run fit | `predfit.temp_k/mu`, specie attiva | `.int` del prossimo Calculate (B-13) |
 | K-11 | `F_INTFIT` → `S_TMU` | S·OVW | `intensity_fit_run`, `fit_relative_dipoles` | applicare il risultato | Run fit | Trot, μ red | K-10, poi riscalamento a specie singola (B-11) |
 | K-12 | `S_TMU` → `S_PRED` | D·TR | `rescale_predicted_intensities` | T e dipoli richiesti | campi T/μ, Run fit, caricamento | intensità di tutte le righe | filtro di intensità, normalizzazione, CalcInt salvata |
 | K-13 | `FILE_INT` → `S_SPECIES` | P·OVW | `import_int_settings` + `store_active_species` | restore del modello | avvio senza `.cat` | specie attiva, campi `.int` | `.int` e intensità successive (B-18) |
-| K-14 | `S_PRED` ⇢ `S_SEL` | INV mancante | — | — | ogni cambio di catalogo | — | assegnazione della transizione sbagliata (B-10) |
+| K-14 | `S_PRED` ⇢ `S_SEL` | INV | `set_predictions` (dal passo #3) | la selezione è fatta di indici del catalogo corrente | ogni cambio di catalogo | `n_selected = 0` | prima del passo #3 mancava: assegnazione della transizione sbagliata (B-10) |
 | K-15 | `F_UNDO` → `S_ASG` | S·OVW | `restore_fit_snapshot` | annullare il fit | Undo | `fit_enabled` per indice | esclusioni spostate (B-17) |
 
 ---
@@ -1518,7 +1520,7 @@ analysis, allargamento, filtri.
 
 | Contesto | Chiave | Codice | NQN? | QN oltre il 3°? | Frequenza? | Problemi |
 |---|---|---|---|---|---|---|
-| selezione grafica | **indice** in `pred_lines` + distanza < 5 px | [controller.c:676-693](../../controller.c#L676-L693) | no | no | sì (pixel) | indice non stabile tra cataloghi (B-10); righe sovrapposte selezionate insieme |
+| selezione grafica | **indice** in `pred_lines` + distanza < 5 px | [controller.c:676-693](../../controller.c#L676-L693) | no | no | sì (pixel) | indice non stabile tra cataloghi: dal passo #3 la selezione è azzerata a ogni cambio di catalogo (B-10); righe sovrapposte selezionate insieme |
 | deduplicazione e riassegnazione | NQN + 12 QN | [loader.c:522-528](../../loader.c#L522-L528) | sì | sì, zeri fittizi inclusi | no | NQN corrotto → identità corrotta; stessa transizione da cataloghi con NQN diverso = due assignment |
 | assignment ↔ CAT corrente (*Save all*) | NQN + 12 QN | [controller.c:37-50](../../controller.c#L37-L50) | sì | sì | no | con NQN diverso ricade sulla copia |
 | assignment ↔ `.lin` al restore | passata 0: Δf < 1e-4 + primi 3 QN + QN 4..6 fino a NQN della riga; passata 1: **solo** Δf < 1e-4 | [predfit.c:899-924](../../predfit.c#L899-L924) | no | parziale | sì | blend allo stesso picco: la seconda passata sposta il flag su un'altra transizione; NQN dedotto dagli slot |
@@ -1743,6 +1745,15 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-10"></a>
 ### B-10 — Selezione stantia dopo un cambio di catalogo
 
+- **Stato: risolto** in (commit del passo #3) — nuova logica: `set_predictions` azzera
+  la selezione quando sostituisce il catalogo ([main.c:306-308](../../main.c#L306-L308)):
+  dopo un drop di `.cat`, Calculate, Fit, Undo o restore nessun indice selezionato
+  punta a un'altra transizione (scelta fatta: azzerare, non rimappare per identità).
+  `assign_selected_predictions` ignorava già gli indici ≥ `n_pred`
+  ([controller.c:888](../../controller.c#L888)); la card delle righe selezionate ora fa
+  lo stesso ([view.c:1817-1818](../../view.c#L1817-L1818)). Test:
+  `test_selection_cleared_on_catalog_change`, `test_selection_indices_in_bounds`; R-10
+  rieseguito.
 - **Gravità** alta · **P0/P1** · [FATTO] + [RIPR R-10]
 - **Dove**: `set_predictions` [main.c:288-329](../../main.c#L288-L329) non azzera
   `n_selected`; `assign_selected_predictions` [controller.c:841-844](../../controller.c#L841-L844)
@@ -1822,7 +1833,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-15"></a>
 ### B-15 — Due fonti di verità per la lista e percorso CWD nel restore
 
-- **Stato: risolto** in (commit del passo #2) — nuova logica: `import_fit_lines`
+- **Stato: risolto** in `04e2e6f` — nuova logica: `import_fit_lines`
   ([predfit.c:900-971](../../predfit.c#L900-L971)) apre `assignments.txt` con
   `settings_data_file`, come *Save all* e l'avvio con un `.cat`: le due modalità di
   avvio partono dallo stesso file (le esclusioni restano nel solo `.lin` fino al
@@ -1928,7 +1939,7 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-23"></a>
 ### B-23 — Nessun salvataggio automatico della lista; errori di scrittura silenziosi
 
-- **Stato: risolto** in (commit del passo #2) — nuova logica: un solo writer,
+- **Stato: risolto** in `04e2e6f` — nuova logica: un solo writer,
   `save_assignments` ([controller.c:93-122](../../controller.c#L93-L122)), chiamato da
   *Save all* e dopo ogni aggiunta o riassegnazione ([899](../../controller.c#L899)) e
   cancellazione ([921](../../controller.c#L921)); scrive un file temporaneo, tiene la
@@ -2253,7 +2264,7 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
 <a id="b-40"></a>
 ### B-40 — Riavvio da un'altra cartella + *Save all*: assignment persi in modo permanente
 
-- **Stato: risolto** in (commit del passo #2) — nuova logica: il restore legge la lista
+- **Stato: risolto** in `04e2e6f` — nuova logica: il restore legge la lista
   da `data_dir` (B-15); `read_lin_rows` ([predfit.c:834](../../predfit.c#L834)) tiene
   le righe con almeno un QN per stato e `import_fit_lines` importa quelle con meno di 3
   marcate da riassegnare (`Assignment.needs_reassign`, righe in ambra nel pannello
@@ -2533,7 +2544,7 @@ regressioni sono possibili.
 | B-02 | `update_hamiltonian_nstates` e i suoi 5 chiamanti | `write_multi_state_int` (ID per v ≥ NVIB), `int_maxv_at`, `rescale_by_species` (stato da `M1u`), QNFMT di `model.cat`, identità degli assignment su `model.cat`, sessione (`hamiltonian`) | un NVIB minore del numero di specie produce parametri e dipoli per stati inesistenti; cambia NQN delle righe generate | T-11, T-13 |
 | B-05, B-06, B-08 | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
 | B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |
-| B-10 | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
+| B-10 (risolto al passo #3) | `set_predictions` (azzerare la selezione), `view.c:1815` | tutti i chiamanti di `set_predictions` | nessuna attesa; la selezione si perde dopo Calculate/Fit (comportamento voluto) | T-10 |
 | B-11, B-13, B-21, B-27 | `commit_text_input`, *Run fit*, `predfit_adopt_shared_state`, `intensity_fit_run` | intensità mostrate, filtro di intensità (righe selezionabili), Shift+Tab, CalcIntensity salvata, `.int` del Calculate successivo | intensità mostrate diverse da prima per chi usava i campi della command bar su cataloghi generati | T-17, T-18 |
 | B-12, B-22 | `write_inputs`, `fit_summary`, report | ogni Fit; liste miste esistenti | un Fit che prima "riusciva" in silenzio ora rifiuta righe: comportamento voluto, va comunicato | T-16 |
 | B-15, B-23 (risolti al passo #2), B-26 | `import_fit_lines`, `main` (restore), salvataggio automatico | avvio con e senza `.cat`; `data_dir`; sessione | l'avvio senza `.cat` smetterebbe di mostrare `model.cat` automaticamente se il restore diventa esplicito | T-14 |
