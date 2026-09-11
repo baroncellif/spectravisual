@@ -185,14 +185,19 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 - [makefile](../../makefile): `SRCS` esplicito ([makefile:6](../../makefile#L6)), ImGui/ImPlot
   ([10-19](../../makefile#L10-L19)), dipendenza da tutti gli header
   ([22-28](../../makefile#L22-L28), [70-74](../../makefile#L70-L74)), firma ad-hoc
-  ([65](../../makefile#L65)), `deploy` in `../` ([87-90](../../makefile#L87-L90)).
-  `clean` non rimuove gli oggetti C++ ([77-78](../../makefile#L77-L78)).
+  ([65](../../makefile#L65)); target `test` della suite di regressione
+  ([76-89](../../makefile#L76-L89)). Il target `deploy`, che copiava il binario in
+  `../`, è stato rimosso al passo #0 di [PIANO-FIX.md](PIANO-FIX.md): il binario nel
+  PATH è `./spectravisual`, già firmato dalla regola di link.
+  `clean` non rimuove gli oggetti C++ ([92-94](../../makefile#L92-L94)).
 - Librerie: SDL2, SDL2_ttf, Dear ImGui (solo backend renderer), ImPlot (compilato, non usato per i pannelli).
 - Programmi esterni: SPCAT e SPFIT, lanciati con `system("cd <work_dir> && <prog> model")`
   ([predfit.c:717-721](../../predfit.c#L717-L721), [985](../../predfit.c#L985), [1006](../../predfit.c#L1006), [1010](../../predfit.c#L1010)); percorsi da Settings o ricerca automatica ([settings.c:248-284](../../settings.c#L248-L284)); `osascript` per colori e percorsi ([settings.c:333-387](../../settings.c#L333-L387)).
-- `tests/test_core`: **solo binario**; il sorgente `tests/test_core.c` e le fixture
-  `tests/fixtures/{spectrum_basic.csv,prediction_basic.cat}` citate nei simboli di
-  debug non sono nel repository [FATTO]: il test non è ricompilabile né verificabile.
+- Test: al commit `1f4df65` c'era solo `tests/test_core`, un binario senza
+  sorgente (`tests/test_core.c` e le fixture `tests/fixtures/{spectrum_basic.csv,prediction_basic.cat}`
+  citate nei simboli di debug non erano nel repository) e quindi non ricompilabile.
+  Dal passo #0 è stato rimosso; la suite è [tests/test_audit.c](../../tests/test_audit.c),
+  eseguita con `make test` ([A4.1](A4-riproduzioni.md#a41-come-è-costruito-lharness)).
 
 ### 2.3 File di dati e di stato nella radice del repository
 

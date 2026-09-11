@@ -38,6 +38,14 @@ To clean the build:
 
 make clean
 
+To build and run the regression suite (docs/audit/PIANO-FIX.md):
+
+make test
+
+./tests/test_audit <test name> runs a single test. The tests work in temporary folders and never write into the repository.
+
+The binary on the PATH is ./spectravisual in this folder; make signs it, so there is no separate deploy step.
+
 ⸻
 
 Controls and commands

@@ -474,7 +474,13 @@ specie produce <code>model.cat</code>;</li>
 <li><code>make test</code> funziona partendo da un clone pulito.</li>
 </ul>
 </li>
-<li><strong>Stato</strong>: ☐ non fatto — commit: —</li>
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #1 —
+test aggiunti: <code>test_baseline_cat1404_nqn4</code>, <code>test_baseline_roundtrip_qnfmt1404</code>,
+<code>test_baseline_reassign_updates_obsfreq</code>, <code>test_baseline_right_drag_ascending</code>,
+<code>test_baseline_calculate_single_species</code> (5 PASS, anche su una copia pulita
+dell&#39;indice git). <code>deploy</code> rimosso dal <code>makefile</code>, <code>tests/test_core</code> rimosso dal
+repository. <code>run_all.sh</code> sul codice invariato: log uguali a quelli dell&#39;audit
+salvo date di SPCAT/SPFIT, percorsi temporanei e tempi di <code>perf</code>.</li>
 </ul>
 <h3 id="piano-1--parser-dei-cataloghi-nqn-qn-in-codice-lettera-righe-corte-campi-a-larghezza-fissa"><a class="hlink" href="#piano-1--parser-dei-cataloghi-nqn-qn-in-codice-lettera-righe-corte-campi-a-larghezza-fissa">#</a>#1 — Parser dei cataloghi: NQN, QN in codice lettera, righe corte, campi a larghezza fissa</h3>
 <ul>
@@ -1444,14 +1450,19 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 <li><a class="src" href="../../makefile" title="apre il sorgente">makefile</a>: <code>SRCS</code> esplicito (<a class="src" href="../../makefile#L6" title="apre il sorgente">makefile:6</a>), ImGui/ImPlot
 (<a class="src" href="../../makefile#L10-L19" title="apre il sorgente">10-19</a>), dipendenza da tutti gli header
 (<a class="src" href="../../makefile#L22-L28" title="apre il sorgente">22-28</a>, <a class="src" href="../../makefile#L70-L74" title="apre il sorgente">70-74</a>), firma ad-hoc
-(<a class="src" href="../../makefile#L65" title="apre il sorgente">65</a>), <code>deploy</code> in <code>../</code> (<a class="src" href="../../makefile#L87-L90" title="apre il sorgente">87-90</a>).
-<code>clean</code> non rimuove gli oggetti C++ (<a class="src" href="../../makefile#L77-L78" title="apre il sorgente">77-78</a>).</li>
+(<a class="src" href="../../makefile#L65" title="apre il sorgente">65</a>); target <code>test</code> della suite di regressione
+(<a class="src" href="../../makefile#L76-L89" title="apre il sorgente">76-89</a>). Il target <code>deploy</code>, che copiava il binario in
+<code>../</code>, è stato rimosso al passo #0 di <a href="#piano-top">PIANO-FIX.md</a>: il binario nel
+PATH è <code>./spectravisual</code>, già firmato dalla regola di link.
+<code>clean</code> non rimuove gli oggetti C++ (<a class="src" href="../../makefile#L92-L94" title="apre il sorgente">92-94</a>).</li>
 <li>Librerie: SDL2, SDL2_ttf, Dear ImGui (solo backend renderer), ImPlot (compilato, non usato per i pannelli).</li>
 <li>Programmi esterni: SPCAT e SPFIT, lanciati con <code>system(&quot;cd &lt;work_dir&gt; &amp;&amp; &lt;prog&gt; model&quot;)</code>
 (<a class="src" href="../../predfit.c#L717-L721" title="apre il sorgente">predfit.c:717-721</a>, <a class="src" href="../../predfit.c#L985" title="apre il sorgente">985</a>, <a class="src" href="../../predfit.c#L1006" title="apre il sorgente">1006</a>, <a class="src" href="../../predfit.c#L1010" title="apre il sorgente">1010</a>); percorsi da Settings o ricerca automatica (<a class="src" href="../../settings.c#L248-L284" title="apre il sorgente">settings.c:248-284</a>); <code>osascript</code> per colori e percorsi (<a class="src" href="../../settings.c#L333-L387" title="apre il sorgente">settings.c:333-387</a>).</li>
-<li><code>tests/test_core</code>: <strong>solo binario</strong>; il sorgente <code>tests/test_core.c</code> e le fixture
-<code>tests/fixtures/{spectrum_basic.csv,prediction_basic.cat}</code> citate nei simboli di
-debug non sono nel repository <span class="tag tag-fatto">FATTO</span>: il test non è ricompilabile né verificabile.</li>
+<li>Test: al commit <code>1f4df65</code> c&#39;era solo <code>tests/test_core</code>, un binario senza
+sorgente (<code>tests/test_core.c</code> e le fixture <code>tests/fixtures/{spectrum_basic.csv,prediction_basic.cat}</code>
+citate nei simboli di debug non erano nel repository) e quindi non ricompilabile.
+Dal passo #0 è stato rimosso; la suite è <a class="src" href="../../tests/test_audit.c" title="apre il sorgente">tests/test_audit.c</a>,
+eseguita con <code>make test</code> (<a href="#a4-a41-come-è-costruito-lharness">A4.1</a>).</li>
 </ul>
 <h3 id="readme-23-file-di-dati-e-di-stato-nella-radice-del-repository"><a class="hlink" href="#readme-23-file-di-dati-e-di-stato-nella-radice-del-repository">#</a>2.3 File di dati e di stato nella radice del repository</h3>
 <div class="table-wrap"><table><thead><tr>
@@ -15833,6 +15844,32 @@ SPCAT a larghezza fissa come in <code>calcat.c:700-709</code> (vedi <a href="#re
 <code>$FIXTURES</code>, <code>$REPO</code>).</li>
 <li>Indice AST: <a href="repro/ast_index.py">repro/ast_index.py</a> genera
 <a href="#a1-top">A1</a> e <a href="#a2-top">A2</a> dall&#39;AST JSON di clang.</li>
+<li><strong>Suite di regressione</strong> (dal passo #0 di <a href="#piano-top">PIANO-FIX.md</a>):
+<a class="src" href="../../tests/test_audit.c" title="apre il sorgente">tests/test_audit.c</a> è costruito come l&#39;harness
+(include <code>main.c</code>, <code>controller.c</code>, <code>predfit.c</code> con <code>#define main sv_app_main</code>,
+linka gli altri <code>.c</code> dell&#39;app e <a class="src" href="../../tests/plotgpu_stub.c" title="apre il sorgente">tests/plotgpu_stub.c</a>).<ul>
+<li><code>make test</code> compila <code>tests/test_audit</code> ed esegue tutti i test;
+<code>./tests/test_audit &lt;nome&gt; …</code> esegue solo quelli indicati; <code>-v</code> mostra anche
+ciò che l&#39;app scrive su stdout. Per ogni test la suite stampa PASS, FAIL o
+SKIP e, sotto, le righe &quot;atteso …, ottenuto …&quot;; il codice d&#39;uscita è ≠ 0 se
+c&#39;è almeno un FAIL.</li>
+<li>Isolamento: ogni test gira in un processo figlio, in una cartella creata con
+<code>mkdtemp</code> che è sia la cartella corrente sia <code>settings.data_dir</code>; il
+repository è solo letto. La cartella di un test fallito resta su disco e il
+suo percorso viene stampato.</li>
+<li>Fixture: all&#39;avvio <a class="src" href="../../tests/gen_fixtures.py" title="apre il sorgente">tests/gen_fixtures.py</a>
+genera i CAT sintetici (gli stessi di <a href="repro/gen_fixtures.py">repro/gen_fixtures.py</a>)
+in una cartella temporanea; <a class="src" href="../../tests/fixtures/pred_reference.cat" title="apre il sorgente">tests/fixtures/pred_reference.cat</a>
+è la copia di <code>pred.cat</code> e <a class="src" href="../../tests/fixtures/lin_with_nqn.txt" title="apre il sorgente">tests/fixtures/lin_with_nqn.txt</a>
+quella di <code>assignments_backup.txt</code> (i nomi <code>pred.*</code> sono esclusi da <code>.gitignore</code>).</li>
+<li>SPCAT e SPFIT sono quelli trovati da <code>autodetect_program</code>; se mancano, i test
+che li richiedono risultano SKIP.</li>
+<li>Come nell&#39;harness, il layout (<code>compute_layout</code>) e il consumo delle code
+(<code>pump</code>) sono copie di <code>main.c</code>; clic, trascinamento destro e <em>Save all</em>
+passano da <code>handle_mouse_down/motion/up</code> con coordinate calcolate dalla
+geometria dell&#39;app.</li>
+</ul>
+</li>
 <li><strong>Sanitizer</strong>: tutti gli scenari sono stati rieseguiti con UBSan
 (<code>-fsanitize=undefined,float-divide-by-zero,float-cast-overflow</code>): l&#39;unico errore è
 la divisione per zero di <a class="src" href="../../controller.c#L1062" title="apre il sorgente">controller.c:1062</a> (B-31)
@@ -16215,276 +16252,323 @@ da 0,0001 MHz, &quot;roll-over at K&quot;, stato &quot;SPCAT complete&quot;; l&#
 <h2 id="a4-a43-matrice-di-regressione-proposta"><a class="hlink" href="#a4-a43-matrice-di-regressione-proposta">#</a>A4.3 Matrice di regressione proposta</h2>
 <p>Ogni riga è un test automatizzabile con lo stesso harness (o con test unitari
 su <code>loader.c</code>) e ha un oracolo esplicito. &quot;=&quot; significa <em>deve restare identico</em>,
-&quot;Δ&quot; <em>deve cambiare come indicato</em>.</p>
+&quot;Δ&quot; <em>deve cambiare come indicato</em>. La colonna <em>Test</em> riporta la funzione di
+<a class="src" href="../../tests/test_audit.c" title="apre il sorgente">tests/test_audit.c</a> che copre il caso; è aggiornata a
+ogni passo di <a href="#piano-top">PIANO-FIX.md</a>.</p>
 <div class="table-wrap"><table><thead><tr>
 <th>#</th>
 <th>Caso</th>
 <th>Input</th>
 <th>Oracolo</th>
+<th>Test</th>
 </tr>
 </thead><tbody><tr>
 <td>T-01</td>
 <td>CAT esterno 3 QN, J&lt;10 e J≥10</td>
 <td><code>cat3_303.cat</code>, <code>pred.cat</code></td>
 <td>= <code>n_qn</code> 3 su tutte le righe; = QN interi</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-02</td>
 <td>CAT 4 QN (spin, QNFMT 304) e (stato, 1404)</td>
 <td><code>cat4_304.cat</code>, <code>cat4_1404.cat</code></td>
 <td>= <code>n_qn</code> 4; = F / v nel quarto campo</td>
+<td><code>test_baseline_cat1404_nqn4</code> (solo QNFMT 1404)</td>
 </tr>
 <tr>
 <td>T-03</td>
 <td>CAT 5/6 QN</td>
 <td><code>cat5_305.cat</code>, <code>cat6_306.cat</code></td>
 <td>= <code>n_qn</code> 5/6</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-04</td>
 <td>QN ≥ 100 e ≤ −10 (codice lettera)</td>
 <td><code>cat_letter.cat</code> + riga con <code>a1</code></td>
 <td>= J 105; = −11</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-05</td>
 <td>Righe senza spazi finali</td>
 <td><code>cat_trim.cat</code></td>
 <td>= numero di righe lette</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-06</td>
 <td>Transizioni uguali nei primi 3 QN, diverse nei successivi</td>
 <td><code>cat4_304</code> (F), <code>cat4_1404</code> (v), <code>cat5_305</code></td>
 <td>= due assignment distinti dopo save/reopen</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-07</td>
 <td>Save/reopen <code>assignments.txt</code></td>
 <td>R-02..R-07</td>
 <td>= QN, NQN, ObsFreq, CalcFreq, CalcInt</td>
+<td><code>test_baseline_roundtrip_qnfmt1404</code> (solo QNFMT 1404)</td>
 </tr>
 <tr>
 <td>T-08</td>
 <td>Riassegnazione della stessa transizione a un altro picco</td>
 <td>2 picchi, 1 transizione</td>
 <td>Δ solo ObsFreq; = numero di assignment</td>
+<td><code>test_baseline_reassign_updates_obsfreq</code></td>
 </tr>
 <tr>
 <td>T-09</td>
 <td>Blend: due transizioni allo stesso picco</td>
 <td>coppia 392.7959 di <code>pred.cat</code></td>
 <td>= 2 assignment con la stessa ObsFreq; righe consecutive nel <code>.lin</code></td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-10</td>
 <td>CAT esterno prima e dopo Pred&amp;Fit</td>
 <td><code>pred.cat</code> dopo Calculate</td>
 <td>= <code>cat_temp_k</code>=0 e intensità grezze; = selezione vuota dopo il cambio</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-11</td>
 <td>Riga opzioni <code>.par</code>: NVIB 1, 2, 3, 5 con 1 e 3 specie</td>
 <td>Advanced</td>
 <td>= valore digitato, oppure errore esplicito di incoerenza</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-12</td>
 <td>Calculate → Fit → Undo → Fit</td>
 <td>modello 1 specie</td>
 <td>= lista assignment; = flag di esclusione per transizione</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-13</td>
 <td>Più specie, specie esclusa (PRED off), rimozione specie</td>
 <td>3 specie</td>
 <td>= <code>.int</code> coerente; = parametri della specie rimossa gestiti in modo esplicito</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-14</td>
 <td>Restore con e senza <code>.cat</code> sulla riga di comando, <code>data_dir</code> ≠ CWD</td>
 <td>R-13</td>
 <td>= stessa lista nelle due modalità</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-15</td>
 <td>Incertezza <code>.lin</code> 0,001–5 MHz con righe escluse</td>
 <td>R-15</td>
 <td>= righe escluse fuori dal fit</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-16</td>
 <td>Assignment di CAT diverso dal modello → Fit</td>
 <td>R-11</td>
 <td>Δ rifiuto esplicito (o conversione documentata); = nessuna riga &quot;Bad Line&quot; silenziosa</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-17</td>
 <td>Fit intensità con CAT esterno, senza Pred&amp;Fit</td>
 <td><code>pred.cat</code> + spettro</td>
 <td>= modello Pred&amp;Fit invariato</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-18</td>
 <td>Fit intensità con <code>model.cat</code> multi-specie</td>
 <td>R-12</td>
 <td>= concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-19</td>
 <td>Restore <code>.int</code> con specie attiva ≠ 0</td>
 <td>R-16</td>
 <td>= Tred e μ di ogni specie; = campi automatici</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-20</td>
 <td>Legacy <code>assignments.txt</code> a 14/16 campi</td>
 <td>R-09</td>
 <td>= campi letti correttamente o riga rifiutata con messaggio</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-21</td>
 <td><code>data_dir</code> con spazi e metacaratteri di shell</td>
 <td>R-18</td>
 <td>= Calculate e Fit riusciti; = nessuna parte del percorso interpretata dalla shell</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-22</td>
 <td>Rimozione di uno spettro prima e dopo quello attivo</td>
 <td>R-19</td>
 <td>= spettro attivo per identità, con offset e smoothing</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-23</td>
 <td>Find peaks con baseline 0 e 10, rumore noto, larghezza ≤ 0</td>
 <td>R-20</td>
 <td>= stessi picchi al variare della baseline; Δ larghezza ≤ 0 rifiutata; = nessuna lettura fuori limite con Guard Malloc</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-24</td>
 <td>Pan verticale con la sola previsione</td>
 <td>R-21</td>
 <td>= <code>vymin</code>/<code>vymax</code> finiti; = nessun errore UBSan</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-25</td>
 <td><em>Run fit</em> che fallisce</td>
 <td>R-22</td>
 <td>= intensità, μ red, T rot e specie di Pred&amp;Fit invariati</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-26</td>
 <td>μ = 0 e μ &lt; 0 nei tre campi</td>
 <td>R-23</td>
 <td>= stessa regola e stesso messaggio in tutti i campi</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-27</td>
 <td>Drop di N file in un gesto</td>
 <td>R-24</td>
 <td>= N file caricati</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-28</td>
 <td><code>data_dir</code> impostata, avvio con <code>.cat</code></td>
 <td>R-25</td>
 <td>= <code>work_dir</code> = <code>data_dir/.fit</code> prima del primo Calculate</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-29</td>
 <td><em>Restore defaults</em></td>
 <td>R-25</td>
 <td>= programmi SPCAT/SPFIT e <code>data_dir</code> invariati, oppure richiesta esplicita</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-30</td>
 <td>Estensioni <code>.CAT</code> e <code>.Cat</code></td>
 <td>R-26</td>
 <td>= aperti come cataloghi</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-31</td>
 <td>Parametro con ID 0 o duplicato</td>
 <td>R-27</td>
 <td>Δ rifiuto con messaggio; = <code>.par</code> senza righe non valide</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-32</td>
 <td>Avvio con <code>.cat</code> dopo un Fit, poi Calculate</td>
 <td>R-28</td>
 <td>= parametri e incertezze (anche &quot;fissato&quot;) di <code>model.var</code>; = <code>model.var</code> mai riscritto con i default</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-33</td>
 <td>Riavvio da CWD ≠ <code>data_dir</code>, poi <em>Save all</em></td>
 <td>R-29</td>
 <td>= numero e contenuto delle righe di <code>assignments.txt</code></td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-34</td>
 <td>Export del fit delle intensità dopo una cancellazione</td>
 <td>R-30</td>
 <td>Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-35</td>
 <td>Spettro in ordine decrescente</td>
 <td>R-31</td>
 <td>= stessa frequenza misurata e stesse aree del file crescente</td>
+<td><code>test_baseline_right_drag_ascending</code> (solo file crescente)</td>
 </tr>
 <tr>
 <td>T-36</td>
 <td>Rimozione di una specie prima dell&#39;attiva; <em>+ species</em> dopo una rimozione</td>
 <td>R-32</td>
 <td>= specie attiva per identità; = seme preso dalla specie attiva, o eredità dichiarata</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-37</td>
 <td>Incertezza <code>.lin</code> dopo il riavvio</td>
 <td>R-33</td>
 <td>= valore digitato</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-38</td>
 <td>Colonna ERR di <code>model.cat</code> dopo Fit e dopo Calculate</td>
 <td>R-34</td>
 <td>= ERR coerente con le incertezze fittate, o dichiaratamente a priori</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-39</td>
 <td>Aree con baseline da 0 a 10 %</td>
 <td>R-35</td>
 <td>= T rot entro l&#39;errore statistico</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-40</td>
 <td>Riassegnazione di una riga esclusa</td>
 <td>R-36</td>
 <td>= esclusione conservata</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-41</td>
 <td>Caricamento di 5000 righe</td>
 <td>R-37</td>
 <td>= tempo lineare (meno di 1 s)</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-42</td>
 <td>Tasti e testo in Advanced e Settings</td>
 <td>R-38</td>
 <td>= stato della finestra principale invariato</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-43</td>
 <td>Avvio <code>spettro.txt catalogo.cat</code> con y ≪ 1</td>
 <td>R-39</td>
 <td>= asse Y sull&#39;intervallo dello spettro</td>
+<td>—</td>
 </tr>
 <tr>
 <td>T-44</td>
 <td>Cancellazione della riga A</td>
 <td>R-40</td>
 <td>Δ Calculate rifiutato o riga ricreata; = valore mostrato uguale al valore usato</td>
+<td>—</td>
 </tr>
 </tbody></table></div>
 

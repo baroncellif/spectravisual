@@ -9,6 +9,11 @@ liveplot_sdl
 liveplot_sdl.backup
 plotter.exe
 last_spectravisual
+tests/test_audit
+
+# strumenti della documentazione di audit (npm install)
+docs/audit/tools/node_modules/
+docs/audit/tools/package-lock.json
 
 # dati di esempio / output di lavoro (tenuti fuori dal repo)
 .fit

@@ -73,20 +73,31 @@ $(TARGET): $(OBJS) $(CXXOBJS)
 %.o: %.cpp $(HDRS)
 	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -c $< -o $@
 
+# --- Regression suite (docs/audit/PIANO-FIX.md) ---
+# tests/test_audit.c #includes main.c, controller.c and predfit.c, so it is
+# linked against every other source except the ImGui renderer, which the tests
+# never use (tests/plotgpu_stub.c).  `make test` builds and runs all of it;
+# `./tests/test_audit <name>` runs a single test.
+TEST_BIN  = tests/test_audit
+TEST_SRCS = loader.c algorithms.c layout.c settings.c ui_icons.c intensity_fit.c view.c tests/plotgpu_stub.c
+
+$(TEST_BIN): tests/test_audit.c main.c controller.c predfit.c $(TEST_SRCS) $(HDRS)
+	$(CC) -g -O0 -Wall -Wno-unused-function $(SDL_CFLAGS) -I. -DSV_TESTS_DIR='"$(CURDIR)/tests"' \
+	    -o $@ tests/test_audit.c $(TEST_SRCS) $(SDL_LDFLAGS) $(LDFLAGS)
+
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
 # Clean up build files
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(TEST_BIN)
+	rm -rf $(TEST_BIN).dSYM
 
 # Helper to run the app quickly (adjust arguments as needed)
 run: $(TARGET)
 	./$(TARGET) exp.csv pred.cat
 
-# Deploy the latest build to the parent liveplot/ (the PATH copy) and RE-SIGN it
-# there. A plain `cp` invalidates the ad-hoc signature -> macOS SIGKILLs it.
-# Use `make deploy` instead of copying by hand.
-deploy: $(TARGET)
-	cp $(TARGET) ../$(TARGET)
-	codesign --force --sign - ../$(TARGET)
-	@echo "Deployed + signed: ../$(TARGET)"
+# There is no deploy step: the binary on the PATH is ./spectravisual in this
+# folder, and the link rule above already signs it.
 
-.PHONY: all clean run deploy
+.PHONY: all clean run test

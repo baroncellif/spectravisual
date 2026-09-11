@@ -184,7 +184,13 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_baseline_calculate_single_species`: Calculate con un modello a una
     specie produce `model.cat`;
   - `make test` funziona partendo da un clone pulito.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #1 —
+  test aggiunti: `test_baseline_cat1404_nqn4`, `test_baseline_roundtrip_qnfmt1404`,
+  `test_baseline_reassign_updates_obsfreq`, `test_baseline_right_drag_ascending`,
+  `test_baseline_calculate_single_species` (5 PASS, anche su una copia pulita
+  dell'indice git). `deploy` rimosso dal `makefile`, `tests/test_core` rimosso dal
+  repository. `run_all.sh` sul codice invariato: log uguali a quelli dell'audit
+  salvo date di SPCAT/SPFIT, percorsi temporanei e tempi di `perf`.
 
 ### #1 — Parser dei cataloghi: NQN, QN in codice lettera, righe corte, campi a larghezza fissa
 

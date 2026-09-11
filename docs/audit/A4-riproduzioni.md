@@ -40,6 +40,30 @@ affermazione marcata **[RIPR]** nel resto dell'audit.
   `$FIXTURES`, `$REPO`).
 - Indice AST: [repro/ast_index.py](repro/ast_index.py) genera
   [A1](A1-funzioni.md) e [A2](A2-campi.md) dall'AST JSON di clang.
+- **Suite di regressione** (dal passo #0 di [PIANO-FIX.md](PIANO-FIX.md)):
+  [tests/test_audit.c](../../tests/test_audit.c) è costruito come l'harness
+  (include `main.c`, `controller.c`, `predfit.c` con `#define main sv_app_main`,
+  linka gli altri `.c` dell'app e [tests/plotgpu_stub.c](../../tests/plotgpu_stub.c)).
+  - `make test` compila `tests/test_audit` ed esegue tutti i test;
+    `./tests/test_audit <nome> …` esegue solo quelli indicati; `-v` mostra anche
+    ciò che l'app scrive su stdout. Per ogni test la suite stampa PASS, FAIL o
+    SKIP e, sotto, le righe "atteso …, ottenuto …"; il codice d'uscita è ≠ 0 se
+    c'è almeno un FAIL.
+  - Isolamento: ogni test gira in un processo figlio, in una cartella creata con
+    `mkdtemp` che è sia la cartella corrente sia `settings.data_dir`; il
+    repository è solo letto. La cartella di un test fallito resta su disco e il
+    suo percorso viene stampato.
+  - Fixture: all'avvio [tests/gen_fixtures.py](../../tests/gen_fixtures.py)
+    genera i CAT sintetici (gli stessi di [repro/gen_fixtures.py](repro/gen_fixtures.py))
+    in una cartella temporanea; [tests/fixtures/pred_reference.cat](../../tests/fixtures/pred_reference.cat)
+    è la copia di `pred.cat` e [tests/fixtures/lin_with_nqn.txt](../../tests/fixtures/lin_with_nqn.txt)
+    quella di `assignments_backup.txt` (i nomi `pred.*` sono esclusi da `.gitignore`).
+  - SPCAT e SPFIT sono quelli trovati da `autodetect_program`; se mancano, i test
+    che li richiedono risultano SKIP.
+  - Come nell'harness, il layout (`compute_layout`) e il consumo delle code
+    (`pump`) sono copie di `main.c`; clic, trascinamento destro e *Save all*
+    passano da `handle_mouse_down/motion/up` con coordinate calcolate dalla
+    geometria dell'app.
 - **Sanitizer**: tutti gli scenari sono stati rieseguiti con UBSan
   (`-fsanitize=undefined,float-divide-by-zero,float-cast-overflow`): l'unico errore è
   la divisione per zero di [controller.c:1062](../../controller.c#L1062) (B-31)
@@ -422,51 +446,53 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
 
 Ogni riga è un test automatizzabile con lo stesso harness (o con test unitari
 su `loader.c`) e ha un oracolo esplicito. "=" significa *deve restare identico*,
-"Δ" *deve cambiare come indicato*.
+"Δ" *deve cambiare come indicato*. La colonna *Test* riporta la funzione di
+[tests/test_audit.c](../../tests/test_audit.c) che copre il caso; è aggiornata a
+ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 
-| # | Caso | Input | Oracolo |
-|---|---|---|---|
-| T-01 | CAT esterno 3 QN, J<10 e J≥10 | `cat3_303.cat`, `pred.cat` | = `n_qn` 3 su tutte le righe; = QN interi |
-| T-02 | CAT 4 QN (spin, QNFMT 304) e (stato, 1404) | `cat4_304.cat`, `cat4_1404.cat` | = `n_qn` 4; = F / v nel quarto campo |
-| T-03 | CAT 5/6 QN | `cat5_305.cat`, `cat6_306.cat` | = `n_qn` 5/6 |
-| T-04 | QN ≥ 100 e ≤ −10 (codice lettera) | `cat_letter.cat` + riga con `a1` | = J 105; = −11 |
-| T-05 | Righe senza spazi finali | `cat_trim.cat` | = numero di righe lette |
-| T-06 | Transizioni uguali nei primi 3 QN, diverse nei successivi | `cat4_304` (F), `cat4_1404` (v), `cat5_305` | = due assignment distinti dopo save/reopen |
-| T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt |
-| T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment |
-| T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` |
-| T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio |
-| T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza |
-| T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione |
-| T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito |
-| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità |
-| T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit |
-| T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito (o conversione documentata); = nessuna riga "Bad Line" silenziosa |
-| T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato |
-| T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T |
-| T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici |
-| T-20 | Legacy `assignments.txt` a 14/16 campi | R-09 | = campi letti correttamente o riga rifiutata con messaggio |
-| T-21 | `data_dir` con spazi e metacaratteri di shell | R-18 | = Calculate e Fit riusciti; = nessuna parte del percorso interpretata dalla shell |
-| T-22 | Rimozione di uno spettro prima e dopo quello attivo | R-19 | = spettro attivo per identità, con offset e smoothing |
-| T-23 | Find peaks con baseline 0 e 10, rumore noto, larghezza ≤ 0 | R-20 | = stessi picchi al variare della baseline; Δ larghezza ≤ 0 rifiutata; = nessuna lettura fuori limite con Guard Malloc |
-| T-24 | Pan verticale con la sola previsione | R-21 | = `vymin`/`vymax` finiti; = nessun errore UBSan |
-| T-25 | *Run fit* che fallisce | R-22 | = intensità, μ red, T rot e specie di Pred&Fit invariati |
-| T-26 | μ = 0 e μ < 0 nei tre campi | R-23 | = stessa regola e stesso messaggio in tutti i campi |
-| T-27 | Drop di N file in un gesto | R-24 | = N file caricati |
-| T-28 | `data_dir` impostata, avvio con `.cat` | R-25 | = `work_dir` = `data_dir/.fit` prima del primo Calculate |
-| T-29 | *Restore defaults* | R-25 | = programmi SPCAT/SPFIT e `data_dir` invariati, oppure richiesta esplicita |
-| T-30 | Estensioni `.CAT` e `.Cat` | R-26 | = aperti come cataloghi |
-| T-31 | Parametro con ID 0 o duplicato | R-27 | Δ rifiuto con messaggio; = `.par` senza righe non valide |
-| T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default |
-| T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` |
-| T-34 | Export del fit delle intensità dopo una cancellazione | R-30 | Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta |
-| T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente |
-| T-36 | Rimozione di una specie prima dell'attiva; *+ species* dopo una rimozione | R-32 | = specie attiva per identità; = seme preso dalla specie attiva, o eredità dichiarata |
-| T-37 | Incertezza `.lin` dopo il riavvio | R-33 | = valore digitato |
-| T-38 | Colonna ERR di `model.cat` dopo Fit e dopo Calculate | R-34 | = ERR coerente con le incertezze fittate, o dichiaratamente a priori |
-| T-39 | Aree con baseline da 0 a 10 % | R-35 | = T rot entro l'errore statistico |
-| T-40 | Riassegnazione di una riga esclusa | R-36 | = esclusione conservata |
-| T-41 | Caricamento di 5000 righe | R-37 | = tempo lineare (meno di 1 s) |
-| T-42 | Tasti e testo in Advanced e Settings | R-38 | = stato della finestra principale invariato |
-| T-43 | Avvio `spettro.txt catalogo.cat` con y ≪ 1 | R-39 | = asse Y sull'intervallo dello spettro |
-| T-44 | Cancellazione della riga A | R-40 | Δ Calculate rifiutato o riga ricreata; = valore mostrato uguale al valore usato |
+| # | Caso | Input | Oracolo | Test |
+|---|---|---|---|---|
+| T-01 | CAT esterno 3 QN, J<10 e J≥10 | `cat3_303.cat`, `pred.cat` | = `n_qn` 3 su tutte le righe; = QN interi | — |
+| T-02 | CAT 4 QN (spin, QNFMT 304) e (stato, 1404) | `cat4_304.cat`, `cat4_1404.cat` | = `n_qn` 4; = F / v nel quarto campo | `test_baseline_cat1404_nqn4` (solo QNFMT 1404) |
+| T-03 | CAT 5/6 QN | `cat5_305.cat`, `cat6_306.cat` | = `n_qn` 5/6 | — |
+| T-04 | QN ≥ 100 e ≤ −10 (codice lettera) | `cat_letter.cat` + riga con `a1` | = J 105; = −11 | — |
+| T-05 | Righe senza spazi finali | `cat_trim.cat` | = numero di righe lette | — |
+| T-06 | Transizioni uguali nei primi 3 QN, diverse nei successivi | `cat4_304` (F), `cat4_1404` (v), `cat5_305` | = due assignment distinti dopo save/reopen | — |
+| T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt | `test_baseline_roundtrip_qnfmt1404` (solo QNFMT 1404) |
+| T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment | `test_baseline_reassign_updates_obsfreq` |
+| T-09 | Blend: due transizioni allo stesso picco | coppia 392.7959 di `pred.cat` | = 2 assignment con la stessa ObsFreq; righe consecutive nel `.lin` | — |
+| T-10 | CAT esterno prima e dopo Pred&Fit | `pred.cat` dopo Calculate | = `cat_temp_k`=0 e intensità grezze; = selezione vuota dopo il cambio | — |
+| T-11 | Riga opzioni `.par`: NVIB 1, 2, 3, 5 con 1 e 3 specie | Advanced | = valore digitato, oppure errore esplicito di incoerenza | — |
+| T-12 | Calculate → Fit → Undo → Fit | modello 1 specie | = lista assignment; = flag di esclusione per transizione | — |
+| T-13 | Più specie, specie esclusa (PRED off), rimozione specie | 3 specie | = `.int` coerente; = parametri della specie rimossa gestiti in modo esplicito | — |
+| T-14 | Restore con e senza `.cat` sulla riga di comando, `data_dir` ≠ CWD | R-13 | = stessa lista nelle due modalità | — |
+| T-15 | Incertezza `.lin` 0,001–5 MHz con righe escluse | R-15 | = righe escluse fuori dal fit | — |
+| T-16 | Assignment di CAT diverso dal modello → Fit | R-11 | Δ rifiuto esplicito (o conversione documentata); = nessuna riga "Bad Line" silenziosa | — |
+| T-17 | Fit intensità con CAT esterno, senza Pred&Fit | `pred.cat` + spettro | = modello Pred&Fit invariato | — |
+| T-18 | Fit intensità con `model.cat` multi-specie | R-12 | = concentrazioni delle altre specie; = stesso risultato qualunque sia il campo usato per T | — |
+| T-19 | Restore `.int` con specie attiva ≠ 0 | R-16 | = Tred e μ di ogni specie; = campi automatici | — |
+| T-20 | Legacy `assignments.txt` a 14/16 campi | R-09 | = campi letti correttamente o riga rifiutata con messaggio | — |
+| T-21 | `data_dir` con spazi e metacaratteri di shell | R-18 | = Calculate e Fit riusciti; = nessuna parte del percorso interpretata dalla shell | — |
+| T-22 | Rimozione di uno spettro prima e dopo quello attivo | R-19 | = spettro attivo per identità, con offset e smoothing | — |
+| T-23 | Find peaks con baseline 0 e 10, rumore noto, larghezza ≤ 0 | R-20 | = stessi picchi al variare della baseline; Δ larghezza ≤ 0 rifiutata; = nessuna lettura fuori limite con Guard Malloc | — |
+| T-24 | Pan verticale con la sola previsione | R-21 | = `vymin`/`vymax` finiti; = nessun errore UBSan | — |
+| T-25 | *Run fit* che fallisce | R-22 | = intensità, μ red, T rot e specie di Pred&Fit invariati | — |
+| T-26 | μ = 0 e μ < 0 nei tre campi | R-23 | = stessa regola e stesso messaggio in tutti i campi | — |
+| T-27 | Drop di N file in un gesto | R-24 | = N file caricati | — |
+| T-28 | `data_dir` impostata, avvio con `.cat` | R-25 | = `work_dir` = `data_dir/.fit` prima del primo Calculate | — |
+| T-29 | *Restore defaults* | R-25 | = programmi SPCAT/SPFIT e `data_dir` invariati, oppure richiesta esplicita | — |
+| T-30 | Estensioni `.CAT` e `.Cat` | R-26 | = aperti come cataloghi | — |
+| T-31 | Parametro con ID 0 o duplicato | R-27 | Δ rifiuto con messaggio; = `.par` senza righe non valide | — |
+| T-32 | Avvio con `.cat` dopo un Fit, poi Calculate | R-28 | = parametri e incertezze (anche "fissato") di `model.var`; = `model.var` mai riscritto con i default | — |
+| T-33 | Riavvio da CWD ≠ `data_dir`, poi *Save all* | R-29 | = numero e contenuto delle righe di `assignments.txt` | — |
+| T-34 | Export del fit delle intensità dopo una cancellazione | R-30 | Δ export rifiutato o ricalcolato; = aree associate alla transizione giusta | — |
+| T-35 | Spettro in ordine decrescente | R-31 | = stessa frequenza misurata e stesse aree del file crescente | `test_baseline_right_drag_ascending` (solo file crescente) |
+| T-36 | Rimozione di una specie prima dell'attiva; *+ species* dopo una rimozione | R-32 | = specie attiva per identità; = seme preso dalla specie attiva, o eredità dichiarata | — |
+| T-37 | Incertezza `.lin` dopo il riavvio | R-33 | = valore digitato | — |
+| T-38 | Colonna ERR di `model.cat` dopo Fit e dopo Calculate | R-34 | = ERR coerente con le incertezze fittate, o dichiaratamente a priori | — |
+| T-39 | Aree con baseline da 0 a 10 % | R-35 | = T rot entro l'errore statistico | — |
+| T-40 | Riassegnazione di una riga esclusa | R-36 | = esclusione conservata | — |
+| T-41 | Caricamento di 5000 righe | R-37 | = tempo lineare (meno di 1 s) | — |
+| T-42 | Tasti e testo in Advanced e Settings | R-38 | = stato della finestra principale invariato | — |
+| T-43 | Avvio `spettro.txt catalogo.cat` con y ≪ 1 | R-39 | = asse Y sull'intervallo dello spettro | — |
+| T-44 | Cancellazione della riga A | R-40 | Δ Calculate rifiutato o riga ricreata; = valore mostrato uguale al valore usato | — |
