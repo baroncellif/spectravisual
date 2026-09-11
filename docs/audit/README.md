@@ -148,8 +148,9 @@ R-18…R-40 di [A4](A4-riproduzioni.md)). I più gravi:
   mescolate, prima che possano raggiungere le ricerche binarie [RIPR R-31].
 - **B-28, cartella dati con spazi.** SPCAT e SPFIT non partono perché `cd` riceve
   il percorso senza virgolette [RIPR R-18].
-- **B-49, tastiera tra finestre.** Testo e Invio digitati in Advanced o Settings
-  confermano il campo attivo della finestra principale (Offset = 12 MHz) [RIPR R-38].
+- **B-49, tastiera tra finestre.** Risolto: testo e tasti da Advanced/Settings
+  non raggiungono più la finestra principale; Cmd/Ctrl+F e Cmd/Ctrl+B restano
+  scorciatoie globali esplicite [RIPR R-38].
 
 Gli altri riguardano il peak finder (B-30, compresa una lettura fuori dal buffer),
 gli effetti di un *Run fit* fallito (B-32), la validazione di parametri e dipoli
@@ -2540,7 +2541,7 @@ Per l'origine è indicato il commit dell'ultima modifica della riga chiave
   indice per identità.
 
 <a id="b-49"></a>
-### B-49 — Testo e Invio digitati in Advanced o Settings finiscono nel campo attivo della finestra principale
+### B-49 — Testo e Invio digitati in Advanced o Settings finivano nel campo attivo della finestra principale
 
 - **Gravità** media · UI · [FATTO] + [RIPR R-38]
 - **Dove**: `handle_app_events` [controller.c:150-161](../../controller.c#L150-L161),

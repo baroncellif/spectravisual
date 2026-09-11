@@ -128,7 +128,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #14 | Specie | B-43, B-24, B-19 | medio | D1 |
 | #14b | Specie come molecole distinte | richiesta di D1 | medio | conferma del progetto |
 | #15 | Validazione di parametri e dipoli | B-38, B-51, B-33, U-15 | medio | D10 (parziale) |
-| #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | — |
+| #16 | Tastiera e testo tra finestre | B-49, U-03, U-13, U-02 | medio | fatto `656a1ab` |
 | #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | — |
 | #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | — |
 | #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | — |
@@ -711,7 +711,9 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_cmd_modified_keys_not_plain_actions` (U-02).
 - **Documentazione**: report §5.4, scheda B-49; A3 A3.8, A3.9, U-02, U-03, U-13;
   A4 R-38.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-12 — commit codice: `656a1ab` — test aggiunti:
+  `test_text_from_secondary_window_ignored`, `test_keys_from_secondary_window_ignored`,
+  `test_cmd_modified_keys_not_plain_actions` (suite 48/48 PASS).
 
 ### #17 — Spettro attivo e coda di caricamento
 

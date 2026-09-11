@@ -465,7 +465,8 @@ a `handle_app_events`, lo stesso gestore del ciclo principale.
   (a) Offset principale = 12.0000 MHz
   (b) Advanced e Settings: n_peaks 2 -> 1; Intensity analysis 0 -> 1; vista 2999.900-3000.100 -> 2999.000-3001.000
   ```
-- Esito: bug B-49, U-03.
+- Esito dopo il passo #16: corretto; testo e tasti secondari non raggiungono la
+  finestra principale, salvo Cmd/Ctrl+F e Cmd/Ctrl+B dichiarati globali.
 
 ### R-39 — Vista iniziale con catalogo e spettro ([yrange.log](repro/logs/yrange.log))
 - Azione: spettro con y tra 1e-6 e 3,1e-5 e `cat3_303.cat` nei due ordini (riga di
@@ -533,6 +534,6 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 | T-39 | Aree con baseline da 0 a 10 % | R-35 | = T rot entro l'errore statistico | — |
 | T-40 | Riassegnazione di una riga esclusa | R-36 | = esclusione conservata | `test_reassign_keeps_exclusion` |
 | T-41 | Caricamento di 5000 righe | R-37 | = tempo lineare (meno di 1 s) | — |
-| T-42 | Tasti e testo in Advanced e Settings | R-38 | = stato della finestra principale invariato | — |
+| T-42 | Tasti e testo in Advanced e Settings | R-38 | = stato della finestra principale invariato | `test_text_from_secondary_window_ignored`, `test_keys_from_secondary_window_ignored`, `test_cmd_modified_keys_not_plain_actions` |
 | T-43 | Avvio `spettro.txt catalogo.cat` con y ≪ 1 | R-39 | = asse Y sull'intervallo dello spettro | — |
 | T-44 | Cancellazione della riga A | R-40 | Δ Calculate rifiutato o riga ricreata; = valore mostrato uguale al valore usato | — |
