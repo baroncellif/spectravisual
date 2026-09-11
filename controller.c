@@ -239,6 +239,25 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         if (predfit_handle_advanced_event(state, &e)) continue;
         if (settings_handle_event(state, &e)) continue;
 
+        Uint32 window_id = 0;
+        if (e.type == SDL_TEXTINPUT) window_id = e.text.windowID;
+        else if (e.type == SDL_KEYDOWN) window_id = e.key.windowID;
+        else if (e.type == SDL_WINDOWEVENT) window_id = e.window.windowID;
+        int secondary = window_id != 0 &&
+            (window_id == state->predfit.advanced_window_id || window_id == state->settings.window_id);
+        if (secondary && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
+            state->input_state != INPUT_NONE) {
+            state->input_last = (int)state->input_state;
+            commit_text_input(state);
+        }
+        if (secondary && e.type == SDL_TEXTINPUT) continue;
+        if (secondary && e.type == SDL_KEYDOWN) {
+            SDL_Keycode key = e.key.keysym.sym;
+            SDL_Keymod mod = e.key.keysym.mod;
+            int global = (mod & (KMOD_GUI | KMOD_CTRL)) && (key == SDLK_f || key == SDLK_b);
+            if (!global) continue;
+        }
+
         if (state->input_state != INPUT_NONE) {
             if (e.type == SDL_TEXTINPUT) {
                 handle_text_input_event(state, e.text.text);

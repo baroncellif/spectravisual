@@ -1300,6 +1300,52 @@ static int test_calculate_requires_abc(void) {
     DONE();
 }
 
+static void queue_secondary_text(Uint32 window_id, const char *text) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_TEXTINPUT; e.text.windowID = window_id;
+    snprintf(e.text.text, sizeof(e.text.text), "%s", text);
+    SDL_PushEvent(&e);
+}
+
+static void queue_secondary_key(Uint32 window_id, SDL_Keycode key, SDL_Keymod mod) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_KEYDOWN; e.key.windowID = window_id; e.key.keysym.sym = key; e.key.keysym.mod = mod;
+    SDL_PushEvent(&e);
+}
+
+static int test_text_from_secondary_window_ignored(void) {
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    AppState *s = new_state(); Layout L = {0}; int running = 1;
+    s->predfit.advanced_window_id = 9001;
+    s->input_state = INPUT_OFFSET;
+    snprintf(s->text_input_buf, sizeof(s->text_input_buf), "12");
+    queue_secondary_text(9001, "9");
+    handle_app_events(s, &L, &running);
+    CHECK(strcmp(s->text_input_buf, "12") == 0, "testo secondario inoltrato: '%s'", s->text_input_buf);
+    CHECK_INT("campo principale ancora attivo", s->input_state, INPUT_OFFSET);
+    DONE();
+}
+
+static int test_keys_from_secondary_window_ignored(void) {
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    AppState *s = new_state(); Layout L = {0}; int running = 1;
+    s->settings.window_id = 9002; s->data_loaded = 1;
+    queue_secondary_key(9002, SDLK_x, KMOD_NONE);
+    handle_app_events(s, &L, &running);
+    CHECK_INT("X secondaria non esporta", s->export_requested, 0);
+    DONE();
+}
+
+static int test_cmd_modified_keys_not_plain_actions(void) {
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    AppState *s = new_state(); Layout L = {0}; int running = 1;
+    s->settings.window_id = 9003; s->data_loaded = 1;
+    queue_secondary_key(9003, SDLK_x, KMOD_CTRL);
+    handle_app_events(s, &L, &running);
+    CHECK_INT("Cmd/Ctrl+X secondaria non esporta", s->export_requested, 0);
+    DONE();
+}
+
 /* ========================================================= #6 Fit and NQN */
 
 /* T-16, R-11: the current model catalogue is the authority for the SPFIT
@@ -1626,6 +1672,9 @@ static const Test TESTS[] = {
     {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
     {"test_param_id_zero_or_duplicate_rejected", test_param_id_zero_or_duplicate_rejected},
     {"test_calculate_requires_abc",            test_calculate_requires_abc},
+    {"test_text_from_secondary_window_ignored", test_text_from_secondary_window_ignored},
+    {"test_keys_from_secondary_window_ignored", test_keys_from_secondary_window_ignored},
+    {"test_cmd_modified_keys_not_plain_actions", test_cmd_modified_keys_not_plain_actions},
     {"test_fit_rejects_nqn_mismatch",          test_fit_rejects_nqn_mismatch},
     {"test_fit_status_counts_spfit_diagnostics", test_fit_status_counts_spfit_diagnostics},
     {"test_fitting_tab_row_states",            test_fitting_tab_row_states},
