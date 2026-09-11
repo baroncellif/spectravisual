@@ -397,8 +397,16 @@ static void session_set_parameter(PredFitState *p, int id, double value, double 
     parameter_label(x);
 }
 
-void predfit_load_session(AppState *s) {
+typedef struct {
+    int has_int_settings;
+} SessionRestoreInfo;
+
+/* The public entry point is used during normal startup.  Restore also needs
+   to know whether a modern session supplied the complete INT settings, so its
+   private path receives that small bit of provenance. */
+static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
     PredFitState *p = &s->predfit;
+    if (restore_info) memset(restore_info, 0, sizeof(*restore_info));
     char path[600]; session_path(s, path, sizeof(path));
     FILE *fp = fopen(path, "r");
     if (!fp) return;
@@ -439,8 +447,10 @@ void predfit_load_session(AppState *s) {
             PickettIntSettings x = p->int_settings;
             if (sscanf(line + 5, "%d %d %d %d %lf %lf %lf %d %lf",
                        &x.flags, &x.tag, &x.fbegin, &x.fend, &x.intensity_cutoff,
-                       &x.fqlim_ghz, &x.temp_k, &x.maxv, &x.sigma) == 9)
+                       &x.fqlim_ghz, &x.temp_k, &x.maxv, &x.sigma) == 9) {
                 p->int_settings = x;
+                if (restore_info) restore_info->has_int_settings = 1;
+            }
             continue;
         }
         if (strncmp(line, "molecule2 ", 10) == 0) {
@@ -522,6 +532,10 @@ void predfit_load_session(AppState *s) {
     if (p->active_species < 0 || p->active_species >= p->n_species) p->active_species = 0;
     load_active_species(p);
     sync_basic_from_parameters(p);
+}
+
+void predfit_load_session(AppState *s) {
+    load_session(s, NULL);
 }
 
 /* Trot and the requested (red) dipoles describe the active molecular
@@ -999,14 +1013,18 @@ static void fit_summary(PredFitState *p, char *out, size_t outsz) {
    999.99999 placeholder for those, which is not a residual to colour. */
 typedef struct { int found, used; double obs, calc, diff, unc; } FitObservation;
 
-static void import_int_settings(PredFitState *p) {
+/* model.int is a generated work file, not the session's source of truth.
+   It can seed INT settings for old/no-session restores, but it must never
+   replace the active species' temperature or dipoles. */
+static void import_int_settings(PredFitState *p, int session_has_int_settings) {
     char path[600]; work_file(p,"model.int",path,sizeof(path));
     FILE *fp=fopen(path,"r"); if (!fp) return;
     char line[256];
     if (!fgets(line,sizeof(line),fp) || !fgets(line,sizeof(line),fp)) { fclose(fp); return; }
     int flags=0, tag=0;
     double ignored_qrot=0, fbegin_raw=0, fend_raw=0, s0=0, s1=0, limit=0, temp=0, maxv_raw=-1;
-    if (sscanf(line,"%d %d %lf %lf %lf %lf %lf %lf %lf %lf",
+    if (!session_has_int_settings &&
+        sscanf(line,"%d %d %lf %lf %lf %lf %lf %lf %lf %lf",
                &flags,&tag,&ignored_qrot,&fbegin_raw,&fend_raw,&s0,&s1,&limit,&temp,&maxv_raw)==10) {
         p->int_settings.flags = flags;
         p->int_settings.tag = tag;
@@ -1019,13 +1037,6 @@ static void import_int_settings(PredFitState *p) {
         p->int_settings.fqlim_ghz = limit;
         p->int_settings.temp_k = temp;
         p->int_settings.maxv = (int)lround(maxv_raw);
-        if (temp > 0.0) p->temp_k=temp;
-        if (limit > 0.0) p->fmax_ghz=limit;
-    }
-    while (fgets(line,sizeof(line),fp)) {
-        int id=0; double mu=0;
-        if (sscanf(line,"%d %lf",&id,&mu)!=2) continue;
-        if (id>=1 && id<=3) p->mu[id-1]=mu;
     }
     fclose(fp);
 }
@@ -1222,10 +1233,10 @@ int predfit_restore_latest(AppState *s) {
     fclose(flat);
     snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
     import_fitted_parameters(p);
-    predfit_load_session(s);
+    SessionRestoreInfo restore_info;
+    load_session(s, &restore_info);
     sync_basic_from_parameters(p);
-    import_int_settings(p);
-    store_active_species(p);
+    import_int_settings(p, restore_info.has_int_settings);
     int ignored_exclusions = 0;
     int marked = import_fit_lines(s, &ignored_exclusions);
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));

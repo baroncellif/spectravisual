@@ -743,6 +743,47 @@ static int test_restore_keeps_short_lin_rows(void) {
     DONE();
 }
 
+/* T-19, R-16: model.int is a disposable generated input.  On restore, the
+   saved species and its automatic INT values must survive even when that file
+   contains the default 1 K / fixed FQLIM values of another run. */
+static int test_restore_int_keeps_species_and_auto_fields(void) {
+    AppState *saved = new_state();
+    PredFitState *p = &saved->predfit;
+    mono_model(p);
+    add_species(saved);                                  /* active state 1 */
+    p->temp_k = 5.0;
+    p->mu[0] = 0.4; p->mu[1] = 0.3; p->mu[2] = 0.5;
+    store_active_species(p);
+    p->int_settings.fqlim_ghz = 0.0;                     /* automatic */
+    p->int_settings.maxv = -1;                           /* automatic */
+    predfit_save_session(saved);
+    copy_path(fx("cat3_303.cat"), work_path(".fit/model.cat"));
+
+    FILE *fp = fopen(work_path(".fit/model.int"), "w");
+    CHECK(fp != NULL, "impossibile preparare model.int conflittuale");
+    if (fp) {
+        fputs("stale generated input\n", fp);
+        fputs("0 1 123 7 40 -20 -20 8 1 1\n", fp);
+        fputs("001 .75\n002 .21\n003 1.14\n", fp);
+        fclose(fp);
+    }
+
+    AppState *restored = new_state();
+    CHECK_INT("ripristino", predfit_restore_latest(restored), 1);
+    PredFitState *r = &restored->predfit;
+    CHECK_INT("numero specie", r->n_species, 2);
+    CHECK_INT("specie attiva", r->active_species, 1);
+    CHECK_DBL("T della specie attiva", r->temp_k, 5.0, 1e-9);
+    CHECK_DBL("mu_a della specie attiva", r->mu[0], 0.4, 1e-9);
+    CHECK_DBL("mu_b della specie attiva", r->mu[1], 0.3, 1e-9);
+    CHECK_DBL("mu_c della specie attiva", r->mu[2], 0.5, 1e-9);
+    CHECK_DBL("FQLIM automatico", r->int_settings.fqlim_ghz, 0.0, 1e-9);
+    CHECK_INT("MAXV automatico", r->int_settings.maxv, -1);
+    add_species(restored);
+    CHECK_INT("MAXV resta automatico dopo + specie", r->int_settings.maxv, -1);
+    DONE();
+}
+
 /* T-33, R-29: restart from another folder, then Save all: no row is lost and
    the previous file is kept as assignments.txt.bak. */
 static int test_save_all_after_restore_no_loss(void) {
@@ -1482,6 +1523,7 @@ static const Test TESTS[] = {
     {"test_cat_invalid_nqn_reported",          test_cat_invalid_nqn_reported},
     {"test_restore_reads_data_dir_list",       test_restore_reads_data_dir_list},
     {"test_restore_keeps_short_lin_rows",      test_restore_keeps_short_lin_rows},
+    {"test_restore_int_keeps_species_and_auto_fields", test_restore_int_keeps_species_and_auto_fields},
     {"test_save_all_after_restore_no_loss",    test_save_all_after_restore_no_loss},
     {"test_save_all_reports_write_error",      test_save_all_reports_write_error},
     {"test_autosave_on_assign_update_delete",  test_autosave_on_assign_update_delete},
