@@ -1,4 +1,5 @@
 #include "predfit.h"
+#include "controller.h"
 #include "layout.h"
 #include "loader.h"
 #include "ui_theme.h"
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "settings.h"
@@ -52,6 +54,118 @@ static int have_program(const char *path) {
 static int state_count(const PredFitState *p);
 static void parameter_label(PickettParameter *x);
 static void sync_basic_from_parameters(PredFitState *p);
+
+static void exclusion_key_from_pred(FitExclusionKey *key, const PredLine *line) {
+    const int qn[12] = {line->Ju, line->Kau, line->Kcu, line->M1u, line->M2u, line->M3u,
+                        line->Jl, line->Kal, line->Kcl, line->M1l, line->M2l, line->M3l};
+    key->n_qn = line->n_qn;
+    memcpy(key->qn, qn, sizeof(key->qn));
+}
+
+static int exclusion_key_matches(const FitExclusionKey *key, const PredLine *line) {
+    FitExclusionKey candidate;
+    exclusion_key_from_pred(&candidate, line);
+    return key->n_qn == candidate.n_qn &&
+           memcmp(key->qn, candidate.qn, sizeof(key->qn)) == 0;
+}
+
+static void exclusions_path(const AppState *s, char *out, size_t size) {
+    char root[600];
+    fit_root(s, root, sizeof(root));
+    snprintf(out, size, "%s/exclusions.txt", root);
+}
+
+/* One small, versioned sidecar holds the transient fitting choice.  The
+   write is atomic: a failed save leaves the previous good set untouched. */
+int predfit_save_exclusions(AppState *s) {
+    PredFitState *p = &s->predfit;
+    char root[600], path[700], tmp[740];
+    int excluded = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (!s->assignments[i].fit_enabled) excluded++;
+    exclusions_path(s, path, sizeof(path));
+    /* No stale file to clear and no workspace yet: avoid creating .fit only
+       because every assignment happens to be included. */
+    if (!excluded && access(path, F_OK) != 0) return 1;
+    fit_root(s, root, sizeof(root));
+    if (mkdir(root, 0700) != 0 && errno != EEXIST) {
+        snprintf(p->status, sizeof(p->status), "Cannot create %s for fit exclusions.", root);
+        return 0;
+    }
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *fp = fopen(tmp, "w");
+    if (!fp) {
+        snprintf(p->status, sizeof(p->status), "Cannot save fit exclusions.");
+        return 0;
+    }
+    fprintf(fp, "# SpectraVisual fit exclusions, format 1: NQN then upper/lower QNs\n");
+    for (int i = 0; i < s->n_assignments; i++) {
+        if (s->assignments[i].fit_enabled) continue;
+        FitExclusionKey key;
+        exclusion_key_from_pred(&key, &s->assignments[i].pred);
+        fprintf(fp, "%d", key.n_qn);
+        for (int q = 0; q < 12; q++) fprintf(fp, " %d", key.qn[q]);
+        fputc('\n', fp);
+    }
+    int failed = ferror(fp);
+    if (fclose(fp) != 0 || failed || rename(tmp, path) != 0) {
+        remove(tmp);
+        snprintf(p->status, sizeof(p->status), "Cannot save fit exclusions.");
+        return 0;
+    }
+    return 1;
+}
+
+static int parse_exclusion_key(const char *line, FitExclusionKey *out) {
+    long values[13];
+    const char *at = line;
+    for (int i = 0; i < 13; i++) {
+        char *end = NULL;
+        errno = 0;
+        values[i] = strtol(at, &end, 10);
+        if (end == at || errno == ERANGE || values[i] < INT_MIN || values[i] > INT_MAX) return 0;
+        at = end;
+    }
+    while (isspace((unsigned char)*at)) at++;
+    if (*at && *at != '#') return 0;
+    if (values[0] < 1 || values[0] > 6) return 0;
+    out->n_qn = (int)values[0];
+    for (int i = 0; i < 12; i++) out->qn[i] = (int)values[i + 1];
+    return 1;
+}
+
+/* Absence is a valid empty exclusion set.  Malformed records are ignored,
+   never interpreted as a request to remove assignments. */
+static int load_fit_exclusions(AppState *s) {
+    char path[700];
+    exclusions_path(s, path, sizeof(path));
+    FILE *fp = fopen(path, "r");
+    if (!fp) return 0;
+    for (int i = 0; i < s->n_assignments; i++) s->assignments[i].fit_enabled = 1;
+    int ignored = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), fp)) {
+        const char *at = line;
+        while (isspace((unsigned char)*at)) at++;
+        if (!*at || *at == '#') continue;
+        FitExclusionKey key;
+        if (!parse_exclusion_key(at, &key)) { ignored++; continue; }
+        for (int i = 0; i < s->n_assignments; i++)
+            if (exclusion_key_matches(&key, &s->assignments[i].pred)) s->assignments[i].fit_enabled = 0;
+    }
+    fclose(fp);
+    return ignored;
+}
+
+int predfit_load_exclusions(AppState *s) {
+    return load_fit_exclusions(s);
+}
+
+static int fit_exclusions_file_exists(const AppState *s) {
+    char path[700];
+    exclusions_path(s, path, sizeof(path));
+    return access(path, F_OK) == 0;
+}
 
 static double qrot_at(const PredFitState *p, double temp_k) {
     if (!(p->a > 0 && p->b > 0 && p->c > 0 && temp_k > 0)) return 0.0;
@@ -509,9 +623,12 @@ static int push_fit_snapshot(AppState *s) {
     snap->n_species=p->n_species;
     snap->active_species=p->active_species;
     memcpy(snap->species,p->species,sizeof(snap->species));
-    snap->n_assignments=s->n_assignments;
-    for (int i=0; i<s->n_assignments; i++)
-        snap->assignment_fit_enabled[i]=(unsigned char)(s->assignments[i].fit_enabled != 0);
+    snap->n_exclusions = 0;
+    for (int i = 0; i < s->n_assignments && snap->n_exclusions < MAX_ASSIGNMENTS; i++) {
+        if (s->assignments[i].fit_enabled) continue;
+        exclusion_key_from_pred(&snap->exclusions[snap->n_exclusions++],
+                                &s->assignments[i].pred);
+    }
     return 1;
 }
 
@@ -529,8 +646,17 @@ static void restore_fit_snapshot(AppState *s, const PredFitSnapshot *snap) {
     p->active_species=snap->active_species;
     memcpy(p->species,snap->species,sizeof(p->species));
     load_active_species(p);
-    int n=snap->n_assignments < s->n_assignments ? snap->n_assignments : s->n_assignments;
-    for (int i=0; i<n; i++) s->assignments[i].fit_enabled=snap->assignment_fit_enabled[i];
+    /* Undo concerns the model and its temporary Fit choices, never the
+       assignment list.  Match the saved exclusions by identity so deleting
+       or reordering a row cannot move the exclusion to another transition. */
+    for (int i = 0; i < s->n_assignments; i++) s->assignments[i].fit_enabled = 1;
+    for (int i = 0; i < s->n_assignments; i++)
+        for (int k = 0; k < snap->n_exclusions; k++)
+            if (exclusion_key_matches(&snap->exclusions[k], &s->assignments[i].pred)) {
+                s->assignments[i].fit_enabled = 0;
+                break;
+            }
+    predfit_save_exclusions(s);
 }
 
 void predfit_init(AppState *s) {
@@ -700,7 +826,10 @@ static int write_inputs(AppState *s, int for_fit) {
     store_active_species(p);
     /* A .lin must contain one observation per quantum-number transition.
        This also repairs any duplicate rows produced by older app versions. */
-    if (for_fit) deduplicate_assignments(s->assignments, &s->n_assignments);
+    if (for_fit) {
+        deduplicate_assignments(s->assignments, &s->n_assignments);
+        if (!predfit_save_exclusions(s)) return 0;
+    }
     if (for_fit) {
         for (int i = 0; i < s->n_assignments; i++) {
             int n = s->assignments[i].pred.n_qn;
@@ -753,9 +882,11 @@ static int write_inputs(AppState *s, int for_fit) {
         snprintf(p->status, sizeof(p->status), "Cannot write Pickett working files.");
         return 0;
     }
-    /* NLINE is the number of physical rows in the .lin.  The 90000+ sentinel
-       excludes individual observations, but they remain rows in that file. */
-    int nline = for_fit ? s->n_assignments : 0;
+    /* NLINE and model.lin contain only observations SPFIT may actually use.
+       Temporary exclusions live in .fit/exclusions.txt, keyed by transition. */
+    int nline = 0;
+    if (for_fit) for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].fit_enabled) nline++;
     fprintf(var, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
             p->n_param, nline, 0, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
     if (par) fprintf(par, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
@@ -779,7 +910,7 @@ static int write_inputs(AppState *s, int for_fit) {
     }
     if (lin) for (int i = 0; i < s->n_assignments; i++) {
         Assignment *a = &s->assignments[i]; PredLine *q = &a->pred;
-        double freq = a->fit_enabled ? a->exp_freq : 90000.0 + fabs(a->exp_freq);
+        if (!a->fit_enabled) continue;
         /* SPFIT's basic, spin-free record is three upper followed immediately
            by three lower QNs.  Do not emit the zero-valued M placeholders:
            they turn a no-spin record into a malformed 12-QN one.  If an
@@ -795,7 +926,7 @@ static int write_inputs(AppState *s, int for_fit) {
         /* The first 36 characters are the complete 12-I3 QN field, even
            when the molecule only uses six of those slots. */
         for (int k = 2 * nq; k < 12; k++) fputs("   ", lin);
-        fprintf(lin, "%15.6f %10.6f 1.0\n", freq, p->line_error_mhz);
+        fprintf(lin, "%15.6f %10.6f 1.0\n", a->exp_freq, p->line_error_mhz);
     }
     fclose(var); fclose(in); if (par) fclose(par); if (lin) fclose(lin);
     return 1;
@@ -979,14 +1110,10 @@ static void format_assignment_qn(char *out, size_t size, const PredLine *q) {
     }
 }
 
-/* Restores the assignment list of the saved session.
- *
- * model.lin is not a record of the work: SPFIT only needs the quantum numbers,
- * the measured frequency and whether to use the line.  The predicted frequency
- * and calculated line intensity - everything that ties an assignment back to
- * the selected catalogue - live in assignments.txt.  So that file is the source,
- * and the .lin is read only for the 90000 sentinel that marks the lines
- * excluded from the fit. */
+/* Restores the assignment list of the saved session. assignments.txt is the
+ * source of its rich CAT data; model.lin can only contribute old observations
+ * which were never saved.  Fit inclusion is read from exclusions.txt, never
+ * inferred from a special observed-frequency value in model.lin. */
 /* The QN of a .lin row as two six-field states; fields past the row's own NQN
    are 0, like the unused slots of a catalogue row. */
 static void lin_row_states(const LinRow *row, int upper[6], int lower[6]) {
@@ -998,7 +1125,7 @@ static void lin_row_states(const LinRow *row, int upper[6], int lower[6]) {
 
 /* Returns the number of assignments marked for reassignment because their
    .lin row has fewer than three QN per state. */
-static int import_fit_lines(AppState *s) {
+static int import_fit_lines(AppState *s, int *ignored_exclusions) {
     PredFitState *p = &s->predfit;
     int n_rows = read_lin_rows(p);
     static unsigned char used[MAX_ASSIGNMENTS];
@@ -1016,10 +1143,13 @@ static int import_fit_lines(AppState *s) {
     if (note[0]) snprintf(s->error_message, sizeof(s->error_message), "%s", note);
 
     int marked = 0;
-    /* Carry the fit flags over. The two files can disagree - lines assigned
-       after the last save are only in the .lin, lines saved and never fitted
-       only in assignments.txt - so each row is matched once, on its quantum
-       numbers when they are available and on the frequency otherwise. */
+    int legacy_exclusions = !fit_exclusions_file_exists(s);
+    int saw_legacy_exclusion = 0;
+    /* The two files can disagree - lines assigned after the last save are
+       only in the .lin, lines saved and never fitted only in assignments.txt
+       - so each row is matched once, on its quantum numbers when available
+       and on frequency otherwise.  Old sentinel rows are read only to migrate
+       an existing workspace that predates exclusions.txt. */
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < s->n_assignments; i++) {
             Assignment *a = &s->assignments[i];
@@ -1037,7 +1167,10 @@ static int import_fit_lines(AppState *s) {
                 for (int q = 0; q < compare; q++)
                     if (u[q] != au[q] || l[q] != al[q]) same_qn = 0;
                 if (pass == 0 && !same_qn) continue;   /* exact match first */
-                a->fit_enabled = row->enabled;
+                if (legacy_exclusions && !row->enabled) {
+                    a->fit_enabled = 0;
+                    saw_legacy_exclusion = 1;
+                }
                 /* Never promote the QN length from an old .lin: versions
                    before CAT/QNFMT tracking could have written an incorrect
                    number of fields there.  New assignments persist NQN in
@@ -1066,12 +1199,17 @@ static int import_fit_lines(AppState *s) {
         a->pred.n_qn = row->nq;
         set_branch_and_dipole(&a->pred);
         a->exp_freq = row->freq;
-        a->fit_enabled = row->enabled;
+        a->fit_enabled = legacy_exclusions ? row->enabled : 1;
+        if (legacy_exclusions && !row->enabled) saw_legacy_exclusion = 1;
         /* Fewer than three QN per state is not a rotational record: the row
            was truncated by an older build (B-01).  Keep it rather than drop
            it, and say that it must be assigned again from the catalogue. */
         if (row->nq < 3) { a->needs_reassign = 1; marked++; }
     }
+    if (legacy_exclusions && saw_legacy_exclusion)
+        predfit_save_exclusions(s); /* one-way migration from the old sentinel */
+    if (!legacy_exclusions && ignored_exclusions)
+        *ignored_exclusions = predfit_load_exclusions(s);
     return marked;
 }
 
@@ -1088,7 +1226,8 @@ int predfit_restore_latest(AppState *s) {
     sync_basic_from_parameters(p);
     import_int_settings(p);
     store_active_species(p);
-    int marked = import_fit_lines(s);
+    int ignored_exclusions = 0;
+    int marked = import_fit_lines(s, &ignored_exclusions);
     char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
     snprintf(s->pending_pred_path,sizeof(s->pending_pred_path),"%s",cat_path);
     s->pending_load=1;
@@ -1099,6 +1238,10 @@ int predfit_restore_latest(AppState *s) {
         snprintf(p->status, sizeof(p->status),
                  "Restored the latest Pred&Fit state from .fit; %d assignments from model.lin have fewer than 3 QN per state: assign them again.",
                  marked);
+    else if (ignored_exclusions > 0)
+        snprintf(p->status, sizeof(p->status),
+                 "Restored the latest Pred&Fit state from .fit; ignored %d malformed fit exclusion%s.",
+                 ignored_exclusions, ignored_exclusions == 1 ? "" : "s");
     else
         snprintf(p->status,sizeof(p->status),"Restored the latest Pred&Fit state from .fit.");
     return 1;
@@ -1517,6 +1660,8 @@ typedef struct {
     char   param_line[MAX_REPORT_PARAM_LINES][100];  /* verbatim SPFIT block   */
     int    n_param_lines;
     FitObservation obs[MAX_ASSIGNMENTS];             /* indexed by line number */
+    FitExclusionKey obs_key[MAX_ASSIGNMENTS];         /* identity in model.lin */
+    unsigned char obs_key_valid[MAX_ASSIGNMENTS];
     unsigned char bad_line[MAX_ASSIGNMENTS];          /* SPFIT "Bad Line(n)" */
     int    n_obs;
     int    loaded;
@@ -1539,6 +1684,7 @@ static void report_reset(FitReport *rep) {
     rep->n_obs = 0;
     rep->loaded = 0;
     memset(rep->obs, 0, sizeof(rep->obs));
+    memset(rep->obs_key_valid, 0, sizeof(rep->obs_key_valid));
     memset(rep->bad_line, 0, sizeof(rep->bad_line));
 }
 
@@ -1622,11 +1768,26 @@ static void report_refresh(const PredFitState *p) {
         }
     }
     fclose(fp);
+    /* model.fit numbers only describe the .lin rows present during Fit.
+       Bind them to their transition identities so an excluded/deleted/reordered
+       assignment cannot make the fitting view show another row's residual. */
+    int n_lin = read_lin_rows(p);
+    for (int i = 0; i < n_lin; i++) {
+        g_report.obs_key[i].n_qn = g_lin_rows[i].nq;
+        memcpy(g_report.obs_key[i].qn, g_lin_rows[i].qn, sizeof(g_report.obs_key[i].qn));
+        g_report.obs_key_valid[i] = 1;
+    }
 }
 
 static FitObservation report_observation(int line_number) {
     if (line_number < 1 || line_number > MAX_ASSIGNMENTS) return (FitObservation){0, 0, 0, 0, 0, 0};
     return g_report.obs[line_number - 1];
+}
+
+static int report_line_for_assignment(const Assignment *a) {
+    for (int i = 0; i < MAX_ASSIGNMENTS; i++)
+        if (g_report.obs_key_valid[i] && exclusion_key_matches(&g_report.obs_key[i], &a->pred)) return i;
+    return -1;
 }
 
 static int observation_is_current(const Assignment *a, FitObservation o);
@@ -1860,9 +2021,21 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
 
     if (point_in_rect(x, y, u.rows)) {
         int row = p->advanced_line_scroll + (y - u.rows.y) / u.row_h;
-        if (row >= 0 && row < s->n_assignments)
-            s->assignments[row].fit_enabled = !s->assignments[row].fit_enabled;
-        p->session_dirty = 1;
+        if (row >= 0 && row < s->n_assignments) {
+            int del_x = u.table.x + u.table.w - 32;
+            if (x >= del_x) {
+                /* This is deliberately the same deletion as the main
+                   Assignments panel: the assignment disappears everywhere. */
+                delete_assignment(s, row);
+                int limit = adv_scroll_limit(s->n_assignments, u.rows_visible);
+                if (p->advanced_line_scroll > limit) p->advanced_line_scroll = limit;
+            } else {
+                int previous = s->assignments[row].fit_enabled;
+                s->assignments[row].fit_enabled = !previous;
+                if (!predfit_save_exclusions(s)) s->assignments[row].fit_enabled = previous;
+            }
+            p->session_dirty = 1;
+        }
         return 1;
     }
     if (p->advanced_tab == 2) {
@@ -2052,7 +2225,7 @@ void predfit_render_advanced(AppState *s) {
                 u.btn_b.x + u.btn_b.w + 16, u.footer.y + 17, UI_FAINT);
 
     } else if (p->advanced_tab == 1) {
-        ui_text(r, UI_FONT_SANS, "Assigned transitions — click a row to exclude it from SPFIT only",
+        ui_text(r, UI_FONT_SANS, "Assigned transitions — click a row to include/exclude from Fit; × deletes it everywhere",
                 u.caption.x, u.caption.y, UI_ACCENT_TEXT);
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
@@ -2062,6 +2235,7 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.07), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.28), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.52), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
         for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
@@ -2081,8 +2255,10 @@ void predfit_render_advanced(AppState *s) {
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.28), ty, UI_DIM);
             format_assignment_qn(b, sizeof(b), &a->pred);
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.52), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            SDL_Rect del = {u.table.x + u.table.w - 30, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
-        ui_text(r, UI_FONT_SANS_SM, "Excluded rows are written as 90000 + frequency in .fit/model.lin.",
+        ui_text(r, UI_FONT_SANS_SM, "Excluded rows stay in assignments and .fit/exclusions.txt; SPFIT never receives them.",
                 ADV_PAD, u.footer.y + 17, UI_FAINT);
 
     } else {
@@ -2118,14 +2294,16 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "CALCULATED",      adv_col(u.table, 0.47), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "OBS-CALC",        adv_col(u.table, 0.64), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "/UNC",            adv_col(u.table, 0.80), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
         for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
             int actual = p->advanced_line_scroll + i;
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
-            FitObservation o = report_observation(actual + 1);
-            FitRowState state = fitting_row_state(a, actual);
+            int report_line = report_line_for_assignment(a);
+            FitObservation o = report_line >= 0 ? report_observation(report_line + 1) : (FitObservation){0};
+            FitRowState state = fitting_row_state(a, report_line);
             SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
             if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
             else if (i % 2)                       ui_fill(r, row, UI_PANEL);
@@ -2177,6 +2355,8 @@ void predfit_render_advanced(AppState *s) {
             } else {
                 ui_text(r, UI_FONT_MONO_SM, "not fitted yet", adv_col(u.table, 0.47), ty, UI_FAINT);
             }
+            SDL_Rect del = {u.table.x + u.table.w - 30, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
 
         ui_button(r, u.btn_a, "Fit", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);

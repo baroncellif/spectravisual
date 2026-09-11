@@ -78,6 +78,14 @@ typedef struct {
     int needs_reassign;       // restored from a .lin row with fewer than 3 QN per state
 } Assignment;
 
+/* A fit exclusion is deliberately keyed by the transition, not its place in
+   the assignment list.  The list can be reordered, deduplicated or edited
+   while a fit-history snapshot still exists. */
+typedef struct {
+    int n_qn;
+    int qn[12];               /* upper then lower, including used spin QNs */
+} FitExclusionKey;
+
 typedef struct {
     int id;
     double value;
@@ -123,8 +131,8 @@ typedef struct {
     PickettSpecies species[MAX_PICKETT_SPECIES];
     int n_species;
     int active_species;
-    int n_assignments;
-    unsigned char assignment_fit_enabled[MAX_ASSIGNMENTS];
+    int n_exclusions;
+    FitExclusionKey exclusions[MAX_ASSIGNMENTS];
 } PredFitSnapshot;
 
 typedef struct {

@@ -575,10 +575,13 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
     deduplicate_assignments(list, n);
     for(int i=0; i<*n; i++) {
         if (same_assignment_transition(&list[i].pred, &p)) {
+            int fit_enabled = list[i].fit_enabled;
             list[i].exp_freq = exp_f;
             list[i].exp_int  = exp_i;
             list[i].pred = p;
-            list[i].fit_enabled = 1;
+            /* Reassignment refreshes the observation and CAT values, but it
+               must not silently undo the user's temporary Fit exclusion. */
+            list[i].fit_enabled = fit_enabled;
             list[i].needs_reassign = 0;
             printf("Updated assignment for transition at %.4f MHz\n", p.freq_mhz);
             return;

@@ -25,7 +25,6 @@ static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m)
 static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
-static void delete_assignment(AppState *s, int idx);
 static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
@@ -913,7 +912,7 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     if (assigned) save_assignments(s);   /* the file follows every change */
 }
 
-static void delete_assignment(AppState *s, int idx) {
+void delete_assignment(AppState *s, int idx) {
     if (idx < 0 || idx >= s->n_assignments) return;
 
     double pred_freq = s->assignments[idx].pred.freq_mhz;
@@ -932,7 +931,7 @@ static void delete_assignment(AppState *s, int idx) {
 
     clamp_assignment_scroll(s);
     printf("Deleted assignment for %.4f MHz\n", pred_freq);
-    save_assignments(s);
+    if (save_assignments(s)) predfit_save_exclusions(s);
 }
 
 static void clamp_assignment_scroll(AppState *s) {

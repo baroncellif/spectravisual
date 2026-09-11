@@ -171,6 +171,10 @@ static void ensure_aux_loaded(AppState *state) {
         load_assignments_file(path, state->assignments, &state->n_assignments, &report);
         assignment_file_message(&report, path, note, sizeof(note));
         if (note[0]) append_error_message(state, note);
+        /* Pred&Fit's temporary inclusion choices are separate from the
+           complete assignment list, and must apply even when a user opens a
+           catalogue directly instead of restoring model.cat. */
+        predfit_load_exclusions(state);
     }
     char f[512];
     if (find_assigned_frequency_file(f, sizeof(f)))

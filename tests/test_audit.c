@@ -1332,6 +1332,139 @@ static int test_workdir_after_settings(void) {
     DONE();
 }
 
+/* ================================================= #8 Fit exclusions */
+
+static Assignment *assignment_for(AppState *s, const PredLine *pred) {
+    for (int i = 0; i < s->n_assignments; i++)
+        if (same_identity(&s->assignments[i].pred, pred)) return &s->assignments[i];
+    return NULL;
+}
+
+/* Prepare a real 3-QN model catalogue and two live assignments without
+   requiring local SPFIT/SPCAT binaries. */
+static void prepare_exclusion_case(AppState *s) {
+    mono_model(&s->predfit);
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, s->pred_lines[0].freq_mhz - 0.02, 1.0);
+    assign_index(s, 1, s->pred_lines[1].freq_mhz - 0.02, 1.0);
+    write_inputs(s, 0);
+    copy_path(fx("cat3_303.cat"), work_path(".fit/model.cat"));
+}
+
+static int lin_nline(const char *path) {
+    FILE *fp = fopen(path, "r");
+    char title[256], header[256];
+    int n_param = 0, nline = -1;
+    if (fp && fgets(title, sizeof(title), fp) && fgets(header, sizeof(header), fp))
+        sscanf(header, "%d%d", &n_param, &nline);
+    if (fp) fclose(fp);
+    return nline;
+}
+
+/* T-15, R-15: the exclusion is not a numeric sentinel.  It is absent from
+   the actual SPFIT input for both small and very large line uncertainties. */
+static int test_excluded_rows_absent_from_lin(void) {
+    AppState *s = new_state();
+    prepare_exclusion_case(s);
+    CHECK_INT("due assignment", s->n_assignments, 2);
+    s->assignments[0].fit_enabled = 0;
+    CHECK_INT("salva esclusioni", predfit_save_exclusions(s), 1);
+    const double errors[] = {0.001, 5.0};
+    for (int i = 0; i < 2; i++) {
+        s->predfit.line_error_mhz = errors[i];
+        CHECK_INT("write_inputs Fit", write_inputs(s, 1), 1);
+        CHECK_INT("NLINE solo incluse", lin_nline(work_path(".fit/model.par")), 1);
+        CHECK_INT("righe .lin", read_lin_rows(&s->predfit), 1);
+        if (g_lin_rows[0].freq > 0.0)
+            CHECK_DBL("frequenza inclusa", g_lin_rows[0].freq, s->assignments[1].exp_freq, 1e-6);
+        FILE *fp = fopen(work_path(".fit/model.lin"), "r");
+        char line[256] = "";
+        if (fp) { fgets(line, sizeof(line), fp); fclose(fp); }
+        CHECK(strstr(line, "90000") == NULL, "sentinella rimasta nel .lin: '%s'", line);
+    }
+    DONE();
+}
+
+/* T-12, T-14: direct CAT load and Pred&Fit restore apply exactly the same
+   identity-keyed exclusion, regardless of assignment-list position. */
+static int test_exclusions_persist_by_identity(void) {
+    AppState *s = new_state();
+    prepare_exclusion_case(s);
+    PredLine excluded = s->assignments[1].pred;
+    s->assignments[1].fit_enabled = 0;
+    CHECK_INT("salva esclusioni", predfit_save_exclusions(s), 1);
+    CHECK_INT("write Fit inputs", write_inputs(s, 1), 1);
+
+    AppState *with_cat = new_state();
+    set_predictions(with_cat, fx("cat3_303.cat"));
+    Assignment *a = assignment_for(with_cat, &excluded);
+    CHECK(a != NULL, "avvio con CAT: transizione esclusa assente");
+    if (a) CHECK_INT("avvio con CAT: esclusa", a->fit_enabled, 0);
+
+    AppState *without_cat = new_state();
+    CHECK_INT("restore senza CAT", predfit_restore_latest(without_cat), 1);
+    a = assignment_for(without_cat, &excluded);
+    CHECK(a != NULL, "avvio senza CAT: transizione esclusa assente");
+    if (a) CHECK_INT("avvio senza CAT: esclusa", a->fit_enabled, 0);
+    DONE();
+}
+
+/* T-12, R-14: Undo restores only the Fit state.  After deletion, it neither
+   re-inserts the deleted assignment nor moves the exclusion to index zero. */
+static int test_undo_exclusions_by_identity(void) {
+    AppState *s = new_state();
+    prepare_exclusion_case(s);
+    PredLine deleted = s->assignments[0].pred;
+    PredLine excluded = s->assignments[1].pred;
+    s->assignments[1].fit_enabled = 0;
+    CHECK_INT("salva esclusioni prima dello snapshot", predfit_save_exclusions(s), 1);
+    CHECK_INT("snapshot Fit", push_fit_snapshot(s), 1);
+    delete_assignment(s, 0);
+    CHECK_INT("lista dopo delete", s->n_assignments, 1);
+    s->assignments[0].fit_enabled = 1; /* prove that Undo reapplies its key */
+    restore_fit_snapshot(s, &s->predfit.history[0]);
+    CHECK(assignment_for(s, &deleted) == NULL, "Undo ha ricreato un assignment cancellato");
+    Assignment *a = assignment_for(s, &excluded);
+    CHECK(a != NULL, "transizione esclusa assente dopo Undo");
+    if (a) CHECK_INT("esclusione resta sulla transizione", a->fit_enabled, 0);
+    DONE();
+}
+
+/* T-40, R-36: moving an already assigned transition to another experimental
+   peak refreshes the values but retains the user's Fit choice. */
+static int test_reassign_keeps_exclusion(void) {
+    AppState *s = new_state();
+    set_predictions(s, fx("cat3_303.cat"));
+    assign_index(s, 0, 3000.0, 1.0);
+    s->assignments[0].fit_enabled = 0;
+    PredLine line = s->assignments[0].pred;
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.25, 2.0);
+    CHECK_INT("una sola transizione", s->n_assignments, 1);
+    CHECK_INT("esclusione conservata", s->assignments[0].fit_enabled, 0);
+    CHECK_DBL("nuova frequenza osservata", s->assignments[0].exp_freq, 3000.25, 1e-9);
+    DONE();
+}
+
+/* The sidecar is optional input, never an authority on the assignment list:
+   a hand-edited/wrong file may lose its own records, but cannot lose data. */
+static int test_malformed_exclusions_are_safe(void) {
+    AppState *s = new_state();
+    prepare_exclusion_case(s);
+    FILE *fp = fopen(work_path(".fit/exclusions.txt"), "w");
+    if (fp) {
+        fputs("# SpectraVisual fit exclusions, format 1\n", fp);
+        fputs("not a transition\n", fp);
+        fputs("9 1 2 3\n", fp);
+        fclose(fp);
+    }
+    AppState *r = new_state();
+    set_predictions(r, fx("cat3_303.cat"));
+    CHECK_INT("assignment conservati", r->n_assignments, 2);
+    for (int i = 0; i < r->n_assignments; i++)
+        CHECK_INT("file malformato non esclude", r->assignments[i].fit_enabled, 1);
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -1371,6 +1504,11 @@ static const Test TESTS[] = {
     {"test_session_load_adds_missing_param_rows", test_session_load_adds_missing_param_rows},
     {"test_startup_does_not_rewrite_session",   test_startup_does_not_rewrite_session},
     {"test_workdir_after_settings",            test_workdir_after_settings},
+    {"test_excluded_rows_absent_from_lin",     test_excluded_rows_absent_from_lin},
+    {"test_exclusions_persist_by_identity",    test_exclusions_persist_by_identity},
+    {"test_undo_exclusions_by_identity",       test_undo_exclusions_by_identity},
+    {"test_reassign_keeps_exclusion",          test_reassign_keeps_exclusion},
+    {"test_malformed_exclusions_are_safe",     test_malformed_exclusions_are_safe},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

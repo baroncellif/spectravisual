@@ -15,6 +15,10 @@ void predfit_publish_shared_state(AppState *state);
 void predfit_adopt_shared_state(AppState *state);
 void predfit_adopt_generated_catalog(AppState *state);
 int predfit_restore_latest(AppState *state);
+/* Persist only the temporary Fit choices. assignments.txt remains the
+   authoritative, complete assignment list. */
+int predfit_save_exclusions(AppState *state);
+int predfit_load_exclusions(AppState *state);
 
 /* The session file: which spectra were open, which one was active, and the
    fit uncertainties the user chose. Save it whenever the working set changes. */
