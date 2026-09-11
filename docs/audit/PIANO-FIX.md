@@ -132,7 +132,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #17 | Spettro attivo e coda di caricamento | B-29, B-14, B-34, U-17 | medio | fatto |
 | #18 | Impostazioni e persistenza di Pred&Fit | B-36, U-16, B-44, B-45, M-06 | medio | parziale `b98d08f` |
 | #19 | Percorsi con spazi ed esito dei processi | B-28, M-01 | medio | fatto `79f231c` |
-| #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | — |
+| #20 | Find peaks | B-30, U-04 | medio (lettura fuori dal buffer) | fatto `a2b91ff` |
 | #21 | Pred&Fit opt-in | B-26 | medio (vincolo 4) | D7 |
 | #22 | Prestazioni del caricamento della lista | B-48 | basso | — |
 | #23 | Vista iniziale, estensioni, input numerici | B-31, B-50, U-14, B-37, M-02, U-18 | basso | — |
@@ -816,7 +816,12 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     MALLOC_PROTECT_BEFORE=1 ./tests/test_audit test_peakfinder_width_bounds`);
   - `test_find_peaks_respects_offset` (U-04).
 - **Documentazione**: scheda B-30; A3 U-04; A4 R-20.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-12 — commit codice: `a2b91ff` — test aggiunti:
+  `test_peakfinder_baseline_invariant`, `test_peakfinder_noise_window_used`,
+  `test_peakfinder_width_bounds`, `test_find_peaks_respects_offset` (suite
+  61/61 PASS). La soglia usa la MAD dei residui rispetto a due finestre locali
+  di rumore; gli indici e gli input sono limitati alla vista; Find traduce le
+  coordinate visuali nell’asse grezzo prima di memorizzare il picco.
 
 ### #21 — Pred&Fit opt-in
 
