@@ -8,10 +8,20 @@
 
 typedef enum { SEP_COMMA, SEP_TAB, SEP_SPACE } Separator;
 
+/* One two-character QN field of a .cat record, decoded like Pickett's readqn
+   (calpgm/catutil.c:10-60): a blank field is 0; the first character is a
+   blank, a tens digit, '-' (-1..-9), an upper-case letter for the hundreds
+   (A0 = 100) or a lower-case one for -10 and below (a0 = -10, a1 = -11). */
 static int parse_qn2(const char *s) {
-    if (s[0] == ' ' && s[1] == ' ') return 0;
-    char buf[3] = {s[0], s[1], '\0'};
-    return atoi(buf);
+    char tens = s[0], units = s[1];
+    if (units < '0' || units > '9') return 0;
+    int v = units - '0';
+    if (tens == ' ')                return v;
+    if (tens == '-')                return -v;
+    if (tens >= '0' && tens <= '9') return v + 10 * (tens - '0');
+    if (tens >= 'A' && tens <= 'Z') return v + 10 * (tens - 'A' + 10);
+    if (tens >= 'a' && tens <= 'z') return -v - 10 * (tens - 'a' + 1);
+    return 0;
 }
 
 static char branch_from_qn(int Ju,int Jl) {
@@ -33,35 +43,64 @@ static char mu_from_qn(int Kau,int Kal,int Kcu,int Kcl) {
     return '?';
 }
 
-// The first fixed-width fields of a Pickett .cat line are
-// FREQ(13), ERR(8), LGINT(8), DR(2), ELO(10), ... .
-static void parse_cat_intensity_fields(const char *line, PredLine *pl) {
-    int dr = 0;
-    double elo = 0.0;
-    if (sscanf(line + 29, "%2d%10lf", &dr, &elo) != 2) {
-        dr = 0;
-        elo = 0.0;
-    }
-    pl->cat_lgint = pl->lgint;
-    pl->elo_cm = elo;
-    pl->rot_dof = dr;
+/* A .cat record is fixed width (calpgm/calcat.c:700-709): FREQ 13, ERR 8,
+   LGINT 8, DR 2, ELO 10, GUP 3, TAG 7, QNFMT 4, then twelve two-character QN
+   fields (six upper, six lower).  Neighbouring fields can touch - an ERR of
+   158.2229 follows the frequency without a blank, a three-digit GUP follows
+   ELO - so every field is cut at its own columns before it is converted. */
+enum { CAT_FREQ = 0, CAT_ERR = 13, CAT_LGINT = 21, CAT_DR = 29, CAT_ELO = 31,
+       CAT_QNFMT = 51, CAT_QN = 55 };
+
+/* Field [start, start + width) as a number.  Columns past the end of the line
+   count as blank; a blank or non-numeric field is rejected. */
+static int cat_number(const char *line, int len, int start, int width, double *value) {
+    char field[16];
+    int n = 0;
+    for (int i = start; i < start + width && i < len; i++) field[n++] = line[i];
+    field[n] = '\0';
+    char *end = NULL;
+    *value = strtod(field, &end);
+    if (end == field) return 0;
+    while (*end == ' ') end++;
+    return *end == '\0';
 }
 
-/* QNFMT occupies columns 52--55 (zero-based offset 51); its final digit is
-   NQN, the number of quantum numbers printed for each state.  Preserve it
-   with the transition rather than trying to derive a format from zeros, spin,
-   or the current UI configuration. */
-static void parse_cat_quantum_numbers(const char *line, PredLine *pl) {
-    const int qn0 = 55;
-    int qnfmt = 0;
-    if ((int)strlen(line) >= qn0 && sscanf(line + 51, "%4d", &qnfmt) == 1) {
-        int n = qnfmt % 10;
-        pl->n_qn = (n >= 1 && n <= 6) ? n : 0;
-    }
-    pl->Ju  = parse_qn2(line + qn0 +  0); pl->Kau = parse_qn2(line + qn0 +  2); pl->Kcu = parse_qn2(line + qn0 +  4);
-    pl->M1u = parse_qn2(line + qn0 +  6); pl->M2u = parse_qn2(line + qn0 +  8); pl->M3u = parse_qn2(line + qn0 + 10);
-    pl->Jl  = parse_qn2(line + qn0 + 12); pl->Kal = parse_qn2(line + qn0 + 14); pl->Kcl = parse_qn2(line + qn0 + 16);
-    pl->M1l = parse_qn2(line + qn0 + 18); pl->M2l = parse_qn2(line + qn0 + 20); pl->M3l = parse_qn2(line + qn0 + 22);
+int parse_cat_record(const char *line, PredLine *pl, double *err_mhz) {
+    int len = (int)strcspn(line, "\r\n");
+    double freq, err, lgint, dr, elo, qnfmt;
+    if (len < CAT_QN) return 0;
+    if (!cat_number(line, len, CAT_FREQ, 13, &freq) || !cat_number(line, len, CAT_ERR, 8, &err) ||
+        !cat_number(line, len, CAT_LGINT, 8, &lgint) || !cat_number(line, len, CAT_QNFMT, 4, &qnfmt))
+        return 0;
+    /* QNFMT's final digit is NQN, the number of quantum numbers printed for
+       each state; Pickett reads 0 as 10 (calpgm/ulib.c:778).  Preserve it with
+       the transition rather than deriving a format from zeros, spin, or the
+       UI.  At most six QN per state are kept, so NQN 0 and NQN above 6 are
+       not supported (D6 of docs/audit/PIANO-FIX.md). */
+    int nqn = (int)qnfmt % 10;
+    if (nqn < 1 || nqn > 6) return -1;
+    if (!cat_number(line, len, CAT_DR, 2, &dr)) dr = 0.0;
+    if (!cat_number(line, len, CAT_ELO, 10, &elo)) elo = 0.0;
+
+    memset(pl, 0, sizeof(*pl));
+    pl->freq_mhz = freq;
+    pl->lgint = lgint;
+    pl->cat_lgint = lgint;
+    pl->linear_int = pow(10.0, lgint);
+    pl->rot_dof = (int)dr;
+    pl->elo_cm = elo;
+    pl->n_qn = nqn;
+
+    /* A record saved without its trailing blanks simply has blank QN fields. */
+    char qn[24];
+    for (int i = 0; i < 24; i++) qn[i] = CAT_QN + i < len ? line[CAT_QN + i] : ' ';
+    int *field[12] = {&pl->Ju, &pl->Kau, &pl->Kcu, &pl->M1u, &pl->M2u, &pl->M3u,
+                      &pl->Jl, &pl->Kal, &pl->Kcl, &pl->M1l, &pl->M2l, &pl->M3l};
+    for (int k = 0; k < 12; k++) *field[k] = parse_qn2(qn + 2 * k);
+    pl->branch = branch_from_qn(pl->Ju, pl->Jl);
+    pl->mu     = mu_from_qn(pl->Kau, pl->Kal, pl->Kcu, pl->Kcl);
+    if (err_mhz) *err_mhz = err;
+    return 1;
 }
 
 static int dipole_index(char mu) {
@@ -236,22 +275,8 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
     *global_max_int = -1.0;
 
     while (fgets(line, sizeof(line), f) && n < maxn) {
-        if ((int)strlen(line) < 80) continue;
-        double freq = 0.0, err = 0.0, lgint = 0.0;
-        if (sscanf(line, "%lf %lf %lf", &freq, &err, &lgint) < 3) continue;
-
         PredLine pl;
-        memset(&pl, 0, sizeof(pl));
-        pl.freq_mhz = freq;
-        pl.lgint    = lgint;
-        pl.linear_int = pow(10.0, lgint); 
-        parse_cat_intensity_fields(line, &pl);
-
-        parse_cat_quantum_numbers(line, &pl);
-
-        pl.branch = branch_from_qn(pl.Ju, pl.Jl);
-        pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
-
+        if (parse_cat_record(line, &pl, NULL) != 1) continue;
         out[n++] = pl;
         if (pl.freq_mhz < *xmin) *xmin = pl.freq_mhz;
         if (pl.freq_mhz > *xmax) *xmax = pl.freq_mhz;
@@ -268,10 +293,11 @@ int read_pred_cat(const char *fname, PredLine *out, int maxn,
     return n;
 }
 
-int read_pred_cat_alloc(const char *fname, PredLine **out,
-                        double *xmin, double *xmax,
-                        double *global_max_int)
+int read_pred_cat_alloc_counted(const char *fname, PredLine **out,
+                                double *xmin, double *xmax,
+                                double *global_max_int, int *n_unsupported)
 {
+    if (n_unsupported) *n_unsupported = 0;
     FILE *f = fopen(fname, "r");
     if (!f) return 0;
 
@@ -288,9 +314,10 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
     *global_max_int = -1.0;
 
     while (fgets(line, sizeof(line), f)) {
-        if ((int)strlen(line) < 80) continue;
-        double freq = 0.0, err = 0.0, lgint = 0.0;
-        if (sscanf(line, "%lf %lf %lf", &freq, &err, &lgint) < 3) continue;
+        PredLine pl;
+        int parsed = parse_cat_record(line, &pl, NULL);
+        if (parsed < 0 && n_unsupported) (*n_unsupported)++;
+        if (parsed != 1) continue;
 
         if (n >= cap) {
             int new_cap = cap * 2;
@@ -299,18 +326,6 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
             arr = tmp;
             cap = new_cap;
         }
-
-        PredLine pl;
-        memset(&pl, 0, sizeof(pl));
-        pl.freq_mhz = freq;
-        pl.lgint    = lgint;
-        pl.linear_int = pow(10.0, lgint); 
-        parse_cat_intensity_fields(line, &pl);
-
-        parse_cat_quantum_numbers(line, &pl);
-
-        pl.branch = branch_from_qn(pl.Ju, pl.Jl);
-        pl.mu     = mu_from_qn(pl.Kau, pl.Kal, pl.Kcu, pl.Kcl);
 
         arr[n++] = pl;
         if (pl.freq_mhz < *xmin) *xmin = pl.freq_mhz;
@@ -331,6 +346,13 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
     PredLine *shrunk = realloc(arr, sizeof(PredLine) * n);
     *out = shrunk ? shrunk : arr;
     return n;
+}
+
+int read_pred_cat_alloc(const char *fname, PredLine **out,
+                        double *xmin, double *xmax,
+                        double *global_max_int)
+{
+    return read_pred_cat_alloc_counted(fname, out, xmin, xmax, global_max_int, NULL);
 }
 
 void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,

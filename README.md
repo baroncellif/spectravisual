@@ -90,6 +90,7 @@ If a predicted line is selected while measuring a line frequency, an assignment 
 Prediction handling
 	•	Click on a predicted line: select a single transition
 	•	Ctrl / Cmd + click: select multiple predicted lines
+	•	.cat files are read in SPCAT's fixed-width layout: letter-coded quantum numbers (A5 = 105, a1 = -11) are decoded and trailing blanks do not matter. Lines with NQN 0 or more than 6 quantum numbers per state are not supported: they are skipped and their number is shown in the title bar.
 	•	m : apply Lorentzian broadening to predicted lines
 	•	d : open the Intensity analysis panel
 	•	C : open a window to filter predicted transitions by intensity (log10(Int))

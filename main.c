@@ -288,10 +288,16 @@ static int add_spectrum(AppState *state, const char *path) {
 static int set_predictions(AppState *state, const char *path) {
     PredLine *pred = NULL;
     double pxmin, pxmax, pgmax;
-    int n = read_pred_cat_alloc(path, &pred, &pxmin, &pxmax, &pgmax);
+    int unsupported = 0;
+    int n = read_pred_cat_alloc_counted(path, &pred, &pxmin, &pxmax, &pgmax, &unsupported);
     if (n <= 0 || !pred) {
-        snprintf(state->error_message, sizeof(state->error_message),
-                 "Could not load predictions: %s", path);
+        if (unsupported > 0)
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load predictions: %s (%d lines skipped: NQN 0 or above 6 is not supported).",
+                     path, unsupported);
+        else
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Could not load predictions: %s", path);
         return 0;
     }
     free(state->pred_lines);
@@ -321,9 +327,17 @@ static int set_predictions(AppState *state, const char *path) {
         state->pvxmin = pxmin; state->pvxmax = pxmax;
         state->bar_x = (pxmin + pxmax) / 2.0; state->pbar_x = state->bar_x;
     }
-    snprintf(state->status_message, sizeof(state->status_message),
-             "Loaded %d predicted lines.", n);
-    state->error_message[0] = '\0';
+    if (unsupported > 0) {
+        /* Also in the title bar: status_message is only shown while nothing
+           is loaded, and skipped catalogue lines must not go unnoticed. */
+        snprintf(state->status_message, sizeof(state->status_message),
+                 "Loaded %d predicted lines; %d skipped: NQN 0 or above 6 is not supported.", n, unsupported);
+        snprintf(state->error_message, sizeof(state->error_message), "%s", state->status_message);
+    } else {
+        snprintf(state->status_message, sizeof(state->status_message),
+                 "Loaded %d predicted lines.", n);
+        state->error_message[0] = '\0';
+    }
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
 }

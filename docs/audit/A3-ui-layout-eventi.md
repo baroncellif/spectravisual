@@ -137,7 +137,9 @@ condivisa da render ([view.c:913-950](../../view.c#L913-L950)) e hit-test
 
 Barra titolo: nomi dei file mostrati ([view.c:896-906](../../view.c#L896-L906));
 `error_message` ha precedenza, `status_message` compare solo senza dati
-([view.c:954-958](../../view.c#L954-L958)). Nessun messaggio di esito per *Save all*,
+([view.c:954-958](../../view.c#L954-L958)). Dal passo #1 `set_predictions` mette in
+`error_message` anche il numero di righe del catalogo scartate perché hanno NQN 0
+o > 6. Nessun messaggio di esito per *Save all*,
 *Find peaks*, *Export list*, *Export fit* (quest'ultimo solo in `intfit_message`).
 
 ---

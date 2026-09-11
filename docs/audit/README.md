@@ -10,6 +10,10 @@ reali dell'app in cartelle temporanee ([A4](A4-riproduzioni.md)).
 - Ogni affermazione cita `file:linee (funzione)`; i link sono relativi alla
   radice del repository. I sorgenti di SPFIT/SPCAT citati come `calpgm/…` sono
   quelli installati in `~/Desktop/Programmi_SP/calpgm` (fuori dal repository).
+- I riferimenti di riga sono quelli del commit `1f4df65`. Le parti aggiornate
+  dopo una correzione (righe **Stato: risolto** delle schede, righe di A1.1/A2.1
+  delle funzioni toccate, A1.3/A2.3 rigenerate) citano invece il codice del
+  commit indicato nello stato del passo in [PIANO-FIX.md](PIANO-FIX.md).
 - Etichette: **[FATTO]** verificato nel codice · **[RIPR]** comportamento
   riprodotto (scenario `R-xx` di [A4](A4-riproduzioni.md)) · **[INF]** inferenza
   tecnica non riprodotta · **[PROP]** proposta progettuale.
@@ -61,6 +65,8 @@ Appendici: [A1 funzioni e call graph](A1-funzioni.md) ·
    fuse al riavvio ([loader.c:522-547](../../loader.c#L522-L547)) [RIPR R-02..R-07];
    righe `.lin` troncate ([predfit.c:696-705](../../predfit.c#L696-L705)); fit
    bloccato per J ≥ 70 ([predfit.c:636-644](../../predfit.c#L636-L644)).
+   **Risolto al passo #1**: il parser legge ogni campo alle sue colonne e NQN è
+   QNFMT % 10 su ogni riga (R-01 e R-17 rieseguiti: nessuna riga con NQN errato).
 2. **"N riportato a 3" — P0.1 — è NVIB forzato.** La terza riga di `.par`/`.var`
    (`s 1 3 0` = CHR SPIND **NVIB** KNMIN, `calpgm/spinv.c:2244-2400`) viene
    riscritta con `state_count` = numero di specie/stati
@@ -150,9 +156,9 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 
 | # | Vincolo | Stato | Dove |
 |---|---|---|---|
-| 1 | Qualsiasi `.cat` si apre e si assegna senza Pred&Fit | **violato** | B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10), B-37 (`.CAT` maiuscolo aperto come spettro) |
+| 1 | Qualsiasi `.cat` si apre e si assegna senza Pred&Fit | **violato** | B-37 (`.CAT` maiuscolo aperto come spettro); risolti al passo #1: B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10) |
 | 2 | Flusso catalogo → assignment → `assignments.txt` autonomo | **violato** | la stessa lista è ricostruita da `import_fit_lines` (B-15), deduplicata da `write_inputs`, modificata da Undo (B-17); la modalità di avvio dipende dall'esistenza di `.fit/model.cat`; la lista ricostruita male sovrascrive `assignments.txt` al primo *Save all* (B-40) |
-| 3 | NQN proprietà della riga CAT | rispettato nel modello dati ([types.h:66](../../types.h#L66)), **violato** nel parser (B-01), nel fallback `nq=3` del writer ([controller.c:304](../../controller.c#L304)) e nel restore da `.lin` ([predfit.c:936](../../predfit.c#L936)) |
+| 3 | NQN proprietà della riga CAT | rispettato nel modello dati ([types.h:66](../../types.h#L66)), **violato** nel fallback `nq=3` del writer ([controller.c:304](../../controller.c#L304)) e nel restore da `.lin` ([predfit.c:936](../../predfit.c#L936)); il parser (B-01) è corretto dal passo #1 |
 | 4 | Pred&Fit opt-in | **violato** | avvio senza `.cat` + `.fit/model.cat` presente → restore automatico ([main.c:401](../../main.c#L401)); `.fit/spectravisual.state` scritto a ogni caricamento di spettro e all'uscita ([main.c:450](../../main.c#L450), [545](../../main.c#L545)); Pred&Fit pubblica T/μ nell'Intensity analysis; con un `.cat` sulla riga di comando il salvataggio all'avvio riscrive la sessione Pred&Fit con i default (B-39) |
 | 5 | Fit intensità indipendente | **violato** | B-11, B-13, B-20, B-21; B-32 (un fit rifiutato modifica comunque intensità e μ red) |
 | 6 | `assignments.txt` in ordine `.lin` con NQN | forma rispettata ([controller.c:300-314](../../controller.c#L300-L314)), contenuto corrotto da B-01; il reader accetta anche `.lin` veri (B-08) |
@@ -312,8 +318,9 @@ drop di uno spettro
 drop del CAT esterno
   → SDL_DROPFILE → path_looks_like_cat [controller.c:980-983] → pending_pred_path, pending_load
   → ciclo → set_predictions [main.c:288-329]
-      read_pred_cat_alloc [loader.c:271-334]: righe < 80 caratteri scartate [291]; FREQ/ERR/LGINT in formato libero [293];
-        parse_cat_intensity_fields [38-48]; parse_cat_quantum_numbers [54-65] (NQN, B-01); branch/mu [312-313]; qsort per frequenza [328-330]
+      read_pred_cat_alloc_counted [loader.c:296-349] (dal passo #1): ogni riga passa da parse_cat_record [68-104]:
+        campi a colonne fisse, righe da 55 caratteri, QN come readqn, NQN = QNFMT % 10; NQN 0 o > 6 scartate e contate (D6);
+        qsort per frequenza
       predfit_is_generated_catalog [predfit.c:28-42] = falso → generated_catalog_pending = active = 0
       cat_temp_k = 0; dipole_cat = 0; rescale_predicted_intensities (Tcat non valida → intensità del catalogo) [loader.c:348-360]
       pred_path; ensure_aux_loaded (già eseguita: nessun effetto)
@@ -346,7 +353,7 @@ Save all
 
 Rami: se `.fit/model.cat` esiste l'avvio "senza Pred&Fit" non è possibile
 (Pred&Fit ripristina catalogo e lista, [flusso 8](#flusso-8)); se il CAT ha
-QNFMT a tre cifre e J ≥ 10 il writer tronca i QN (B-01, B-05); se `data_dir`
+QNFMT a tre cifre e J ≥ 10 il writer troncava i QN (B-01, risolto al passo #1; B-05); se `data_dir`
 non esiste il salvataggio fallisce in silenzio [RIPR]; se si carica un altro
 catalogo tra selezione e picco viene assegnata la riga sbagliata (B-10).
 Violazione del vincolo 4: la cartella `.fit/` e il file di sessione Pred&Fit
@@ -395,6 +402,10 @@ verificati con fixture sintetiche scritte nel formato di `calpgm/calcat.c:700-70
 e sono quindi **non verificati su dati reali**. Due transizioni uguali nei primi
 tre QN e diverse nel quarto (F o v) restano distinte solo se NQN è letto giusto
 (QN < 10 oppure QNFMT a quattro cifre).
+
+**Dal passo #1** NQN è letto correttamente con ogni QNFMT: la colonna "primo QN
+≥ 10" è uguale a quella accanto [RIPR R-01 rieseguito]; il round-trip completo
+(colonna *Round-trip*) è verificato al passo #4.
 
 <a id="flusso-4"></a>
 ### Flusso 4 — CAT esterno aperto dopo un Pred&Fit nello stesso processo
@@ -1031,12 +1042,12 @@ sovrascrivono; solo `predfit_save_session` usa file temporaneo e rename
 
 ```mermaid
 flowchart TB
-  E_CAT80{"E_CAT80 riga CAT ≥ 80 caratteri?<br/>loader.c:291"} -->|"no"| E_CAT80N["riga scartata in silenzio (B-03)"]
-  E_CAT80 -->|"sì"| E_QN{"E_QN QNFMT letto con %4d<br/>loader.c:57"}
-  E_QN -->|"QNFMT a 3 cifre e primo QN ≥ 10"| E_QNBAD["NQN = decine del QN (B-01)"]
-  E_QN -->|"NQN fuori 1..6"| E_QN0["n_qn = 0"]
-  E_QN0 -->|"Save all"| E_NQ3["fallback nq = 3<br/>controller.c:304"]
-  E_QN0 -->|"Fit"| E_FITBLOCK["fit bloccato, messaggio<br/>predfit.c:636-644"]
+  E_CAT80{"E_CAT80 record lungo almeno 55 caratteri, FREQ ERR LGINT QNFMT numerici?<br/>parse_cat_record loader.c:68-104, dal passo 1"} -->|"no"| E_CAT80N["riga ignorata: non è un record"]
+  E_CAT80 -->|"sì"| E_QN{"E_QN NQN = QNFMT % 10<br/>colonne 52-55"}
+  E_QN -->|"NQN 0 o maggiore di 6, D6"| E_QN0["riga scartata e contata<br/>messaggio di set_predictions"]
+  E_QN -->|"NQN 1..6"| E_QNOK["riga caricata"]
+  E_NQNBAD["E_NQNBAD n_qn non valido<br/>righe legacy di assignments.txt"] -->|"Save all"| E_NQ3["fallback nq = 3<br/>controller.c:304"]
+  E_NQNBAD -->|"Fit"| E_FITBLOCK["fit bloccato, messaggio<br/>predfit.c:636-644"]
   E_ASGP{"E_ASGP riga assignments.txt:<br/>conteggio = 2·NQN + 4?<br/>loader.c:592-594"} -->|"sì"| E_ASGNEW["letta come nuovo formato,<br/>anche se è un .lin o un legacy (B-08)"]
   E_ASGP -->|"no"| E_ASGOLD["sscanf a 16 campi,<br/>legacy 14 mai raggiunto"]
   E_PROG{"E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005"} -->|"no"| E_PROGN["status: Set the SPCAT/SPFIT program"]
@@ -1054,7 +1065,7 @@ flowchart TB
   E_SEL -->|"render"| E_SELR["lettura fuori limite<br/>view.c:1815"]
 
   classDef bad fill:#fde2e1,stroke:#c0392b,color:#111
-  class E_CAT80N,E_QNBAD,E_ASGNEW,E_ASGOLD,E_SILENT,E_SENTBAD,E_FOPENS,E_RESTY,E_SELR bad
+  class E_NQNBAD,E_ASGNEW,E_ASGOLD,E_SILENT,E_SENTBAD,E_FOPENS,E_RESTY,E_SELR bad
 ```
 
 Altri rami rilevanti: `read_data_alloc` riconosce il separatore dalla prima riga
@@ -1299,6 +1310,14 @@ SPCAT/SPFIT, QN usati, perdite di informazione, compatibilità e divergenze.
 Record a larghezza fissa scritto da SPCAT (`calpgm/calcat.c:700-709`:
 `"%13.4f%8.4f%8.4f%2d%10.4f%s%7ld%4d"` + stringa dei QN):
 
+**Dal passo #1** l'app legge il record con `parse_cat_record`
+([loader.c:46-104](../../loader.c#L46-L104)): ogni campo è tagliato alle colonne
+di questa tabella e convertito da solo; il record deve arrivare almeno alla
+colonna 55 (QNFMT) e i QN mancanti valgono come vuoti; i QN sono decodificati
+come `readqn` ([loader.c:11-25](../../loader.c#L11-L25)); le righe con NQN 0 o > 6
+sono scartate e contate (D6). La colonna *Lettura nell'app* descrive il commit
+`1f4df65`.
+
 | Colonne | Campo | Formato SPCAT | Lettura nell'app | Note |
 |---|---|---|---|---|
 | 1–13 | FREQ (MHz) | F13.4 (F13.6 con PRIR, F13.3 oltre 99 999 999) | `sscanf("%lf %lf %lf")` in formato libero [loader.c:293](../../loader.c#L293) | se FREQ ed ERR si toccano le cifre di ERR finiscono in FREQ: ultima riga di `.fit/model.cat`, `6348.1049158.2229` → 6348.1049158 [FATTO] |
@@ -1312,18 +1331,19 @@ Record a larghezza fissa scritto da SPCAT (`calpgm/calcat.c:700-709`:
 | 56–67 | QN superiori, 6 × 2 caratteri | `qnfmt()` `calpgm/calcat.c:778-820`: ≥ 100 → lettera `A`–`Z` + cifra; −1…−9 → `-d`; ≤ −10 → lettera `a`–`z` + cifra; slot inutilizzati vuoti | `parse_qn2` = `atoi` su 2 caratteri [loader.c:11-15](../../loader.c#L11-L15) → **B-04** | decodifica canonica: `readqn` `calpgm/catutil.c:10-60` |
 | 68–79 | QN inferiori | idem | offset 55+12 [loader.c:63-64](../../loader.c#L63-L64) | — |
 
-Altre regole del lettore: riga scartata se `strlen < 80` ([loader.c:291](../../loader.c#L291))
-→ un CAT senza spazi finali non si carica (**B-03**) [RIPR R-01]; ramo e tipo di
+Altre regole del lettore: al commit `1f4df65` riga scartata se `strlen < 80` ([loader.c:291](../../loader.c#L291))
+→ un CAT senza spazi finali non si carica (**B-03**) [RIPR R-01], dal passo #1 basta
+che il record arrivi alla colonna 55; ramo e tipo di
 dipolo derivati sempre dai primi tre QN ([loader.c:17-34](../../loader.c#L17-L34),
 [312-313](../../loader.c#L312-L313)); righe riordinate per frequenza
 ([328-330](../../loader.c#L328-L330)). Informazioni perse: ERR, GUP, TAG, cifre Q e H
 di QNFMT (quindi la posizione del numero vibrazionale, `calpgm/calcat.c:291-292`),
-QN in codice lettera.
+QN in codice lettera (letti dal passo #1).
 
 `model.cat`: stesso formato, prodotto da SPCAT sui file dell'app. Il suo QNFMT
 dipende da NVIB: `.fit/model.out` riporta `IQNFMT = 1404` con `s 1 3 0`
 [FATTO]; con una specie (`s 1 1 0`) è `303` e ha lo stesso difetto di B-01
-[RIPR R-17]. Con NVIB > 1 il quarto QN è lo stato v (`iposv = (1404/100)%5 − 1 = 3`).
+[RIPR R-17], corretto al passo #1. Con NVIB > 1 il quarto QN è lo stato v (`iposv = (1404/100)%5 − 1 = 3`).
 
 <a id="62-assignmentstxt"></a>
 ### 6.2 `assignments.txt`
@@ -1506,6 +1526,9 @@ analysis, allargamento, filtri.
   — e letto da identità, writer, mappatura delle specie e display, con fallback a
   3 in tre punti ([controller.c:304](../../controller.c#L304), [view.c:19](../../view.c#L19),
   [predfit.c:856](../../predfit.c#L856)).
+- **Dal passo #1** il parser CAT (`parse_cat_record`) legge NQN correttamente
+  (colonne 52–55, QNFMT % 10) e scarta, contandole, le righe con NQN 0 o > 6 (D6);
+  le altre tre sorgenti di `n_qn` sono trattate ai passi #4 e #8.
 - **Non** è dedotto dal modello Pred&Fit: nessun writer di `n_qn` legge
   `hamiltonian_line`, `state_count` o `.par` [FATTO, indice [A2](A2-campi.md)].
   L'ipotesi iniziale del report ("uso improprio di NQN dall'Hamiltoniano") non
@@ -1518,11 +1541,13 @@ analysis, allargamento, filtri.
    (NQN 4, v=0): due assignment, entrambi nel `.lin`; quello a 3 QN è letto male
    da SPFIT [FATTO + RIPR R-11].
 2. Due transizioni con lo stesso J ≥ 10 e Ka/Kc diversi in un CAT con QNFMT a tre
-   cifre: dopo save/reopen diventano una sola [RIPR R-02].
+   cifre: dopo save/reopen diventano una sola [RIPR R-02]. La causa (B-01) è
+   risolta al passo #1; il round-trip è verificato al passo #4.
 3. Due transizioni che differiscono solo nel quarto QN (F o v) con primo QN ≥ 10
-   e QNFMT a tre cifre: scritte con 1 QN, fuse [RIPR R-03].
+   e QNFMT a tre cifre: scritte con 1 QN, fuse [RIPR R-03]. Causa risolta al
+   passo #1; round-trip verificato al passo #4.
 4. Tutte le righe con J ≥ 100 in codice lettera hanno J = 0 e collidono tra loro
-   [RIPR R-01].
+   [RIPR R-01]. Risolto al passo #1.
 5. Blend allo stesso picco: le identità basate sulla sola frequenza (restore
    passata 1, report del fit, ripiego del fit intensità) confondono le due
    transizioni.
@@ -1542,6 +1567,15 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-01"></a>
 ### B-01 — NQN letto dalle colonne sbagliate (`%4d` su QNFMT)
 
+- **Stato: risolto** in (commit del passo #1) — nuova logica: `parse_cat_record`
+  ([loader.c:68-104](../../loader.c#L68-L104)) taglia ogni campo alle sue colonne e
+  converte QNFMT (colonne 52–55) da solo con `cat_number`
+  ([loader.c:56-66](../../loader.c#L56-L66)); NQN = QNFMT % 10 su ogni riga, anche con
+  J ≥ 10. Le righe con NQN 0 o > 6 non vengono caricate (D6) e `set_predictions`
+  ([main.c:288-343](../../main.c#L288-L343)) ne riporta il numero nel messaggio di
+  stato e nella barra del titolo. Test: `test_cat_nqn_from_qnfmt_3qn`,
+  `test_cat_nqn_4_5_6`, `test_cat_invalid_nqn_reported`; R-01 e R-17 rieseguiti.
+  Sotto, la diagnosi originale.
 - **Gravità** critica · **P0.2, P0.3** · [FATTO] + [RIPR R-01, R-02..R-07, R-17]
 - **Dove**: `parse_cat_quantum_numbers` [loader.c:54-65](../../loader.c#L54-L65), riga [57](../../loader.c#L57).
 - **Causa**: `sscanf(line + 51, "%4d", &qnfmt)` salta gli spazi iniziali e solo dopo
@@ -1596,6 +1630,10 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-03"></a>
 ### B-03 — Righe CAT senza spazi finali scartate
 
+- **Stato: risolto** in (commit del passo #1) — nuova logica: un record è accettato se
+  arriva almeno alla colonna 55, la fine di QNFMT ([loader.c:71](../../loader.c#L71));
+  le colonne dei QN che mancano valgono come vuote ([loader.c:94-99](../../loader.c#L94-L99)).
+  Test: `test_cat_trailing_spaces_irrelevant`.
 - **Gravità** alta (vincolo 1) · **P0.3** · [FATTO] + [RIPR R-01]
 - **Dove**: [loader.c:239](../../loader.c#L239), [291](../../loader.c#L291) (`strlen(line) < 80`).
 - **Causa**: il controllo presume che ogni riga sia lunga 79 caratteri + newline.
@@ -1609,6 +1647,10 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-04"></a>
 ### B-04 — QN in codice lettera e negativi ≤ −10 letti come 0
 
+- **Stato: risolto** in (commit del passo #1) — nuova logica: `parse_qn2`
+  ([loader.c:11-25](../../loader.c#L11-L25)) decodifica come `readqn`: lettera
+  maiuscola = centinaia (`A5` = 105), minuscola = da −10 in giù (`a1` = −11), `-d` = −d.
+  Test: `test_cat_letter_and_negative_qn`.
 - **Gravità** media · **P0.3** · [FATTO] + [RIPR R-01]
 - **Dove**: `parse_qn2` [loader.c:11-15](../../loader.c#L11-L15) (`atoi`).
 - **Causa**: SPCAT codifica QN ≥ 100 con una lettera maiuscola e QN ≤ −10 con una
@@ -1886,6 +1928,12 @@ riproduzione completa di ogni prova è in [A4](A4-riproduzioni.md).
 <a id="b-25"></a>
 ### B-25 — Campi numerici del CAT letti in formato libero
 
+- **Stato: risolto** in (commit del passo #1) — nuova logica: FREQ, ERR, LGINT, DR, ELO e
+  QNFMT sono letti alle colonne di `calpgm/calcat.c:700-709` (costanti `CAT_*`
+  [loader.c:51-52](../../loader.c#L51-L52), `cat_number` [56-66](../../loader.c#L56-L66)):
+  `6348.1049158.2229` dà FREQ 6348,1049 ed ERR 158,2229, e un GUP a tre cifre non
+  entra in ELO. ERR non è conservato in `PredLine`: lo restituisce `parse_cat_record`.
+  Test: `test_cat_fixed_width_numbers`.
 - **Gravità** bassa · [FATTO]
 - **Dove**: [loader.c:241](../../loader.c#L241), [293](../../loader.c#L293), [41](../../loader.c#L41).
 - **Effetti**: quando FREQ ed ERR (o ELO e GUP) si toccano, le cifre del campo
@@ -2444,7 +2492,7 @@ regressioni sono possibili.
 
 | Bug | Codice da toccare | Chiamanti e persistenze che dipendono | Regressioni possibili | Test |
 |---|---|---|---|---|
-| B-01, B-03, B-04 | `parse_cat_quantum_numbers`, `parse_qn2`, controllo di lunghezza | `read_pred_cat(_alloc)` ← `set_predictions` (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di `n_qn`: `same_assignment_transition`, `current_assignment_prediction`, `same_qn`, `rescale_by_species`, `write_inputs` (controllo e writer), *Save all*, `format_pred_qn`, `format_assignment_qn`; file `assignments.txt` esistenti con righe troncate | le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT | T-01..T-07 |
+| B-01, B-03, B-04 (risolti al passo #1, con B-25) | `parse_cat_record`, `parse_qn2`, controllo di lunghezza | `read_pred_cat(_alloc)` ← `set_predictions` (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di `n_qn`: `same_assignment_transition`, `current_assignment_prediction`, `same_qn`, `rescale_by_species`, `write_inputs` (controllo e writer), *Save all*, `format_pred_qn`, `format_assignment_qn`; file `assignments.txt` esistenti con righe troncate | le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT | T-01..T-07 |
 | B-02 | `update_hamiltonian_nstates` e i suoi 5 chiamanti | `write_multi_state_int` (ID per v ≥ NVIB), `int_maxv_at`, `rescale_by_species` (stato da `M1u`), QNFMT di `model.cat`, identità degli assignment su `model.cat`, sessione (`hamiltonian`) | un NVIB minore del numero di specie produce parametri e dipoli per stati inesistenti; cambia NQN delle righe generate | T-11, T-13 |
 | B-05, B-06, B-08 | writer e reader di `assignments.txt` | `ensure_aux_loaded`, `import_fit_lines`; file dell'utente in formato legacy | file vecchi rifiutati invece che letti male: serve un messaggio e un percorso di conversione | T-07, T-20 |
 | B-09, B-16 | writer e reader del `.lin`, persistenza delle esclusioni | `read_lin_rows`/`import_fit_lines` usano la sentinella per ricostruire i flag; `NLINE`; tabella *Fitting* (mappa per posizione) | togliere le righe escluse dal `.lin` cambia la numerazione delle osservazioni: la tabella *Fitting* deve mappare per identità | T-12, T-15 |

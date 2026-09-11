@@ -205,8 +205,8 @@ output e ipotesi all&#39;utente: non allentare il test.</p>
 <td>D6</td>
 <td>Servono cataloghi con NQN = 0 (10 QN per stato) o NQN &gt; 6?</td>
 <td>#1</td>
-<td>—</td>
-<td>—</td>
+<td>Non servono: le righe con NQN 0 o &gt; 6 non vengono caricate e il loro numero compare nel messaggio di stato.</td>
+<td>2026-09-11</td>
 </tr>
 <tr>
 <td>D7</td>
@@ -474,7 +474,7 @@ specie produce <code>model.cat</code>;</li>
 <li><code>make test</code> funziona partendo da un clone pulito.</li>
 </ul>
 </li>
-<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #1 —
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: <code>dcff7bc</code> —
 test aggiunti: <code>test_baseline_cat1404_nqn4</code>, <code>test_baseline_roundtrip_qnfmt1404</code>,
 <code>test_baseline_reassign_updates_obsfreq</code>, <code>test_baseline_right_drag_ascending</code>,
 <code>test_baseline_calculate_single_species</code> (5 PASS, anche su una copia pulita
@@ -524,7 +524,13 @@ messaggio (finché D6 non dice altro).</li>
 </li>
 <li><strong>Documentazione</strong>: report §6.1, §7.2, schede B-01/B-03/B-04/B-25, punto 1
 dell&#39;executive summary; A4 R-01 e R-17.</li>
-<li><strong>Stato</strong>: ☐ non fatto — commit: —</li>
+<li><strong>Stato</strong>: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #2 —
+test aggiunti: <code>test_cat_nqn_from_qnfmt_3qn</code>, <code>test_cat_nqn_4_5_6</code>,
+<code>test_cat_letter_and_negative_qn</code>, <code>test_cat_trailing_spaces_irrelevant</code>,
+<code>test_cat_fixed_width_numbers</code>, <code>test_cat_invalid_nqn_reported</code> (suite 11/11 PASS).
+Nuove funzioni in <code>loader.h</code>: <code>parse_cat_record</code>, <code>read_pred_cat_alloc_counted</code>.
+Con D6 le righe con NQN 0 o &gt; 6 sono scartate e contate in <code>status_message</code> ed
+<code>error_message</code>. R-01 e R-17 rieseguiti: nessuna riga con NQN errato.</li>
 </ul>
 <h3 id="piano-2--nessuna-perdita-di-assignment-restore-da-data_dir-righe-lin-corte-scrittura-sicura-salvataggio-automatico"><a class="hlink" href="#piano-2--nessuna-perdita-di-assignment-restore-da-data_dir-righe-lin-corte-scrittura-sicura-salvataggio-automatico">#</a>#2 — Nessuna perdita di assignment: restore da <code>data_dir</code>, righe <code>.lin</code> corte, scrittura sicura, salvataggio automatico</h3>
 <ul>
@@ -1141,11 +1147,11 @@ vincoli 1–6 verificati da test dedicati.</p>
 <th>Passo in cui correggerlo</th>
 </tr>
 </thead><tbody><tr>
-<td>—</td>
-<td>—</td>
-<td>—</td>
-<td>—</td>
-<td>—</td>
+<td>N-01</td>
+<td>Il numero di righe scartate dal passo #1 sta in <code>error_message</code>, che <code>add_spectrum</code> azzera a ogni caricamento riuscito (<a class="src" href="../../main.c#L282" title="apre il sorgente">main.c:282</a>). All&#39;avvio <code>spectravisual spettro.txt catalogo.cat</code> il catalogo è caricato prima dello spettro, quindi l&#39;avviso sparisce subito. È lo stesso canale unico, sovrascritto da qualsiasi messaggio, di U-06.</td>
+<td>lettura di <code>add_spectrum</code> e dell&#39;ordine di caricamento in <code>main</code> (prima il <code>.cat</code>, poi gli spettri)</td>
+<td>#1</td>
+<td>#24</td>
 </tr>
 </tbody></table></div>
 
@@ -1162,6 +1168,10 @@ reali dell&#39;app in cartelle temporanee (<a href="#a4-top">A4</a>).</p>
 <li>Ogni affermazione cita <code>file:linee (funzione)</code>; i link sono relativi alla
 radice del repository. I sorgenti di SPFIT/SPCAT citati come <code>calpgm/…</code> sono
 quelli installati in <code>~/Desktop/Programmi_SP/calpgm</code> (fuori dal repository).</li>
+<li>I riferimenti di riga sono quelli del commit <code>1f4df65</code>. Le parti aggiornate
+dopo una correzione (righe <strong>Stato: risolto</strong> delle schede, righe di A1.1/A2.1
+delle funzioni toccate, A1.3/A2.3 rigenerate) citano invece il codice del
+commit indicato nello stato del passo in <a href="#piano-top">PIANO-FIX.md</a>.</li>
 <li>Etichette: <strong><span class="tag tag-fatto">FATTO</span></strong> verificato nel codice · <strong><span class="tag tag-ripr">RIPR</span></strong> comportamento
 riprodotto (scenario <code>R-xx</code> di <a href="#a4-top">A4</a>) · <strong><span class="tag tag-inf">INF</span></strong> inferenza
 tecnica non riprodotta · <strong><span class="tag tag-prop">PROP</span></strong> proposta progettuale.</li>
@@ -1208,7 +1218,9 @@ catena: <code>assignments.txt</code> scritto con 1–2 QN per stato
 (<a class="src" href="../../controller.c#L303-L313" title="apre il sorgente">controller.c:303-313</a>); transizioni diverse
 fuse al riavvio (<a class="src" href="../../loader.c#L522-L547" title="apre il sorgente">loader.c:522-547</a>) <span class="tag tag-ripr">RIPR R-02..R-07</span>;
 righe <code>.lin</code> troncate (<a class="src" href="../../predfit.c#L696-L705" title="apre il sorgente">predfit.c:696-705</a>); fit
-bloccato per J ≥ 70 (<a class="src" href="../../predfit.c#L636-L644" title="apre il sorgente">predfit.c:636-644</a>).</li>
+bloccato per J ≥ 70 (<a class="src" href="../../predfit.c#L636-L644" title="apre il sorgente">predfit.c:636-644</a>).
+<strong>Risolto al passo #1</strong>: il parser legge ogni campo alle sue colonne e NQN è
+QNFMT % 10 su ogni riga (R-01 e R-17 rieseguiti: nessuna riga con NQN errato).</li>
 <li><strong>&quot;N riportato a 3&quot; — P0.1 — è NVIB forzato.</strong> La terza riga di <code>.par</code>/<code>.var</code>
 (<code>s 1 3 0</code> = CHR SPIND <strong>NVIB</strong> KNMIN, <code>calpgm/spinv.c:2244-2400</code>) viene
 riscritta con <code>state_count</code> = numero di specie/stati
@@ -1303,7 +1315,7 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 <td>1</td>
 <td>Qualsiasi <code>.cat</code> si apre e si assegna senza Pred&amp;Fit</td>
 <td><strong>violato</strong></td>
-<td>B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10), B-37 (<code>.CAT</code> maiuscolo aperto come spettro)</td>
+<td>B-37 (<code>.CAT</code> maiuscolo aperto come spettro); risolti al passo #1: B-01 (NQN), B-03 (righe senza spazi finali scartate), B-04 (QN ≥ 100 o ≤ −10)</td>
 </tr>
 <tr>
 <td>2</td>
@@ -1314,7 +1326,7 @@ impostazioni e persistenza (B-35, B-36, B-44, B-45), esclusioni (B-47), export
 <tr>
 <td>3</td>
 <td>NQN proprietà della riga CAT</td>
-<td>rispettato nel modello dati (<a class="src" href="../../types.h#L66" title="apre il sorgente">types.h:66</a>), <strong>violato</strong> nel parser (B-01), nel fallback <code>nq=3</code> del writer (<a class="src" href="../../controller.c#L304" title="apre il sorgente">controller.c:304</a>) e nel restore da <code>.lin</code> (<a class="src" href="../../predfit.c#L936" title="apre il sorgente">predfit.c:936</a>)</td>
+<td>rispettato nel modello dati (<a class="src" href="../../types.h#L66" title="apre il sorgente">types.h:66</a>), <strong>violato</strong> nel fallback <code>nq=3</code> del writer (<a class="src" href="../../controller.c#L304" title="apre il sorgente">controller.c:304</a>) e nel restore da <code>.lin</code> (<a class="src" href="../../predfit.c#L936" title="apre il sorgente">predfit.c:936</a>); il parser (B-01) è corretto dal passo #1</td>
 <td></td>
 </tr>
 <tr>
@@ -1957,8 +1969,9 @@ drop di uno spettro
 drop del CAT esterno
   → SDL_DROPFILE → path_looks_like_cat [controller.c:980-983] → pending_pred_path, pending_load
   → ciclo → set_predictions [main.c:288-329]
-      read_pred_cat_alloc [loader.c:271-334]: righe &lt; 80 caratteri scartate [291]; FREQ/ERR/LGINT in formato libero [293];
-        parse_cat_intensity_fields [38-48]; parse_cat_quantum_numbers [54-65] (NQN, B-01); branch/mu [312-313]; qsort per frequenza [328-330]
+      read_pred_cat_alloc_counted [loader.c:296-349] (dal passo #1): ogni riga passa da parse_cat_record [68-104]:
+        campi a colonne fisse, righe da 55 caratteri, QN come readqn, NQN = QNFMT % 10; NQN 0 o &gt; 6 scartate e contate (D6);
+        qsort per frequenza
       predfit_is_generated_catalog [predfit.c:28-42] = falso → generated_catalog_pending = active = 0
       cat_temp_k = 0; dipole_cat = 0; rescale_predicted_intensities (Tcat non valida → intensità del catalogo) [loader.c:348-360]
       pred_path; ensure_aux_loaded (già eseguita: nessun effetto)
@@ -1989,7 +2002,7 @@ Save all
   → FILE data_dir/assignments.txt sovrascritto; nessun messaggio a schermo; exp_int e fit_enabled non salvati</code></pre>
 <p>Rami: se <code>.fit/model.cat</code> esiste l&#39;avvio &quot;senza Pred&amp;Fit&quot; non è possibile
 (Pred&amp;Fit ripristina catalogo e lista, <a href="#readme-flusso-8">flusso 8</a>); se il CAT ha
-QNFMT a tre cifre e J ≥ 10 il writer tronca i QN (B-01, B-05); se <code>data_dir</code>
+QNFMT a tre cifre e J ≥ 10 il writer troncava i QN (B-01, risolto al passo #1; B-05); se <code>data_dir</code>
 non esiste il salvataggio fallisce in silenzio <span class="tag tag-ripr">RIPR</span>; se si carica un altro
 catalogo tra selezione e picco viene assegnata la riga sbagliata (B-10).
 Violazione del vincolo 4: la cartella <code>.fit/</code> e il file di sessione Pred&amp;Fit
@@ -2059,6 +2072,9 @@ verificati con fixture sintetiche scritte nel formato di <code>calpgm/calcat.c:7
 e sono quindi <strong>non verificati su dati reali</strong>. Due transizioni uguali nei primi
 tre QN e diverse nel quarto (F o v) restano distinte solo se NQN è letto giusto
 (QN &lt; 10 oppure QNFMT a quattro cifre).</p>
+<p><strong>Dal passo #1</strong> NQN è letto correttamente con ogni QNFMT: la colonna &quot;primo QN
+≥ 10&quot; è uguale a quella accanto <span class="tag tag-ripr">RIPR R-01 rieseguito</span>; il round-trip completo
+(colonna <em>Round-trip</em>) è verificato al passo #4.</p>
 <p><a id="readme-flusso-4"></a></p>
 <h3 id="readme-flusso-4--cat-esterno-aperto-dopo-un-predfit-nello-stesso-processo"><a class="hlink" href="#readme-flusso-4--cat-esterno-aperto-dopo-un-predfit-nello-stesso-processo">#</a>Flusso 4 — CAT esterno aperto dopo un Pred&amp;Fit nello stesso processo</h3>
 <pre class="code"><code>(stato: Calculate/Fit eseguiti, model.cat mostrato, generated_catalog_active = 1)
@@ -2340,7 +2356,7 @@ condiviso. Il grafo completo, con i chiamanti inversi di ogni funzione, è in
 sovrascrivono; solo <code>predfit_save_session</code> usa file temporaneo e rename
 (<a class="src" href="../../predfit.c#L190-L237" title="apre il sorgente">predfit.c:190-237</a>).</p>
 <h3 id="readme-58-d8--errori-fallback-sentinelle-e-rami-anomali"><a class="hlink" href="#readme-58-d8--errori-fallback-sentinelle-e-rami-anomali">#</a>5.8 D8 — Errori, fallback, sentinelle e rami anomali</h3>
-<figure class="diagram"><div class="diagram-inner"><svg id="mmd7" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 5146.09375px;" viewBox="-8 -8 5146.09375 993.078125" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd7{font-family:Helvetica,Arial,sans-serif;font-size:16px;fill:#333;}#mmd7 .error-icon{fill:#552222;}#mmd7 .error-text{fill:#552222;stroke:#552222;}#mmd7 .edge-thickness-normal{stroke-width:2px;}#mmd7 .edge-thickness-thick{stroke-width:3.5px;}#mmd7 .edge-pattern-solid{stroke-dasharray:0;}#mmd7 .edge-pattern-dashed{stroke-dasharray:3;}#mmd7 .edge-pattern-dotted{stroke-dasharray:2;}#mmd7 .marker{fill:#333333;stroke:#333333;}#mmd7 .marker.cross{stroke:#333333;}#mmd7 svg{font-family:Helvetica,Arial,sans-serif;font-size:16px;}#mmd7 .label{font-family:Helvetica,Arial,sans-serif;color:#333;}#mmd7 .cluster-label text{fill:#333;}#mmd7 .cluster-label span,#mmd7 p{color:#333;}#mmd7 .label text,#mmd7 span,#mmd7 p{fill:#333;color:#333;}#mmd7 .node rect,#mmd7 .node circle,#mmd7 .node ellipse,#mmd7 .node polygon,#mmd7 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd7 .flowchart-label text{text-anchor:middle;}#mmd7 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd7 .node .label{text-align:center;}#mmd7 .node.clickable{cursor:pointer;}#mmd7 .arrowheadPath{fill:#333333;}#mmd7 .edgePath .path{stroke:#333333;stroke-width:2.0px;}#mmd7 .flowchart-link{stroke:#333333;fill:none;}#mmd7 .edgeLabel{background-color:#e8e8e8;text-align:center;}#mmd7 .edgeLabel rect{opacity:0.5;background-color:#e8e8e8;fill:#e8e8e8;}#mmd7 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd7 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd7 .cluster text{fill:#333;}#mmd7 .cluster span,#mmd7 p{color:#333;}#mmd7 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:Helvetica,Arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd7 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd7 :root{--mermaid-font-family:Helvetica,Arial,sans-serif;}#mmd7 .bad>*{fill:#fde2e1!important;stroke:#c0392b!important;color:#111!important;}#mmd7 .bad span{fill:#fde2e1!important;stroke:#c0392b!important;color:#111!important;}#mmd7 .bad tspan{fill:#111!important;}</style><g><marker id="mmd7_flowchart-pointEnd" class="marker flowchart" viewBox="0 0 10 10" refX="6" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-pointStart" class="marker flowchart" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-circleEnd" class="marker flowchart" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></circle></marker><marker id="mmd7_flowchart-circleStart" class="marker flowchart" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></circle></marker><marker id="mmd7_flowchart-crossEnd" class="marker cross flowchart" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-crossStart" class="marker cross flowchart" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"></path></marker><g class="root"><g class="clusters"></g><g class="edgePaths"><path d="M204.926,303.926L189.658,328.449C174.391,352.971,143.855,402.017,128.588,451.241C113.32,500.465,113.32,549.868,113.32,574.569L113.32,599.27" id="L-E_CAT80-E_CAT80N-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_CAT80 LE-E_CAT80N" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M322.043,303.926L337.144,328.449C352.245,352.971,382.447,402.017,397.618,431.406C412.79,460.796,412.931,470.53,413.001,475.396L413.072,480.263" id="L-E_CAT80-E_QN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_CAT80 LE-E_QN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M363.03,707.46L354.766,721.396C346.502,735.333,329.974,763.205,321.709,781.925C313.445,800.645,313.445,810.211,313.445,814.995L313.445,819.778" id="L-E_QN-E_QNBAD-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN LE-E_QNBAD" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M463.267,707.46L471.364,721.396C479.462,735.333,495.657,763.205,503.754,781.925C511.852,800.645,511.852,810.211,511.852,814.995L511.852,819.778" id="L-E_QN-E_QN0-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN LE-E_QN0" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M479.075,858.078L467.818,863.745C456.562,869.411,434.048,880.745,422.792,891.195C411.535,901.645,411.535,911.211,411.535,915.995L411.535,920.778" id="L-E_QN0-E_NQ3-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN0 LE-E_NQ3" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M544.628,858.078L555.885,863.745C567.141,869.411,589.655,880.745,600.911,891.195C612.168,901.645,612.168,911.211,612.168,915.995L612.168,920.778" id="L-E_QN0-E_FITBLOCK-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN0 LE-E_FITBLOCK" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M822.355,303.761L808.039,328.311C793.724,352.862,765.092,401.962,750.777,449.714C736.461,497.465,736.461,543.868,736.461,567.069L736.461,590.27" id="L-E_ASGP-E_ASGNEW-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_ASGP LE-E_ASGNEW" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M931.817,303.761L945.966,328.311C960.115,352.862,988.413,401.962,1002.562,449.714C1016.711,497.465,1016.711,543.868,1016.711,567.069L1016.711,590.27" id="L-E_ASGP-E_ASGOLD-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_ASGP LE-E_ASGOLD" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1332.324,353.641L1332.241,369.878C1332.158,386.115,1331.991,418.589,1331.908,459.527C1331.824,500.465,1331.824,549.868,1331.824,574.569L1331.824,599.27" id="L-E_PROG-E_PROGN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_PROG LE-E_PROGN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1642.473,315.352L1642.389,337.97C1642.306,360.589,1642.139,405.826,1642.056,453.145C1641.973,500.465,1641.973,549.868,1641.973,574.569L1641.973,599.27" id="L-E_RC-E_RCN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RC LE-E_RCN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1986.262,375.328L1986.178,387.951C1986.095,400.573,1985.928,425.818,1985.845,463.141C1985.762,500.465,1985.762,549.868,1985.762,574.569L1985.762,599.27" id="L-E_SPFITBAD-E_SILENT-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SPFITBAD LE-E_SILENT" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M2444.051,291.652L2427.562,318.221C2411.074,344.789,2378.098,397.926,2361.609,449.195C2345.121,500.465,2345.121,549.868,2345.121,574.569L2345.121,599.27" id="L-E_SENT-E_SENTBAD-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SENT LE-E_SENTBAD" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M2545.762,291.652L2562.083,318.221C2578.405,344.789,2611.048,397.926,2627.37,449.195C2643.691,500.465,2643.691,549.868,2643.691,574.569L2643.691,599.27" id="L-E_SENT-E_SENTOK-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SENT LE-E_SENTOK" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3018.904,273.791L3000.646,303.336C2982.388,332.881,2945.872,391.972,2927.614,446.219C2909.355,500.465,2909.355,549.868,2909.355,574.569L2909.355,599.27" id="L-E_FOPEN-E_FOPENS-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_FOPEN LE-E_FOPENS" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3098.354,273.791L3116.445,303.336C3134.537,332.881,3170.719,391.972,3188.811,446.219C3206.902,500.465,3206.902,549.868,3206.902,574.569L3206.902,599.27" id="L-E_FOPEN-E_FOPENPF-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_FOPEN LE-E_FOPENPF" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3569.879,382.453L3569.796,393.888C3569.712,405.323,3569.546,428.193,3569.462,462.829C3569.379,497.465,3569.379,543.868,3569.379,567.069L3569.379,590.27" id="L-E_SESS-E_SESSN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SESS LE-E_SESSN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4001.832,417.563L4001.749,423.146C4001.665,428.729,4001.499,439.896,4001.415,468.68C4001.332,497.465,4001.332,543.868,4001.332,567.069L4001.332,590.27" id="L-E_SESSF-E_SESSG-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SESSF LE-E_SESSG" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4407.76,302.772L4393.466,327.487C4379.171,352.202,4350.582,401.632,4336.287,451.049C4321.992,500.465,4321.992,549.868,4321.992,574.569L4321.992,599.27" id="L-E_RESTORE-E_RESTN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RESTORE LE-E_RESTN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4515.201,302.772L4529.329,327.487C4543.457,352.202,4571.713,401.632,4585.841,451.049C4599.969,500.465,4599.969,549.868,4599.969,574.569L4599.969,599.27" id="L-E_RESTORE-E_RESTY-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RESTORE LE-E_RESTY" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4930.755,320.325L4922.547,342.115C4914.339,363.904,4897.923,407.483,4889.716,452.474C4881.508,497.465,4881.508,543.868,4881.508,567.069L4881.508,590.27" id="L-E_SEL-E_SELA-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SEL LE-E_SELA" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M5013.433,320.325L5021.474,342.115C5029.515,363.904,5045.597,407.483,5053.639,452.474C5061.68,497.465,5061.68,543.868,5061.68,567.069L5061.68,590.27" id="L-E_SEL-E_SELR-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SEL LE-E_SELR" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path></g><g class="edgeLabels"><g class="edgeLabel" transform="translate(113.3203125, 451.0625)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(412.6484375, 451.0625)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(313.4453125, 791.078125)"><g class="label" transform="translate(-119.8359375, -9)"><foreignObject width="239.671875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">QNFMT a 3 cifre e primo QN ≥ 10</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(511.8515625, 791.078125)"><g class="label" transform="translate(-51.1328125, -9)"><foreignObject width="102.265625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">NQN fuori 1..6</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(411.53515625, 892.078125)"><g class="label" transform="translate(-28.4609375, -9)"><foreignObject width="56.921875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">Save all</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(612.16796875, 892.078125)"><g class="label" transform="translate(-8.890625, -9)"><foreignObject width="17.78125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">Fit</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(736.4609375, 451.0625)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1016.7109375, 451.0625)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1331.82421875, 451.0625)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1641.97265625, 451.0625)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1985.76171875, 451.0625)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2345.12109375, 451.0625)"><g class="label" transform="translate(-79.5390625, -9)"><foreignObject width="159.078125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">err · 1e6 ≥ 90000 MHz</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2643.69140625, 451.0625)"><g class="label" transform="translate(-79.8203125, -9)"><foreignObject width="159.640625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">err · 1e6 &lt; 90000 MHz</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2909.35546875, 451.0625)"><g class="label" transform="translate(-96.4765625, -9)"><foreignObject width="192.953125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">assignments.txt, linelist.csv</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(3206.90234375, 451.0625)"><g class="label" transform="translate(-40.8984375, -9)"><foreignObject width="81.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">file Pred-Fit</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(3569.37890625, 451.0625)"><g class="label" transform="translate(-28.9140625, -9)"><foreignObject width="57.828125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">ignorata</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4001.33203125, 451.0625)"><g class="label" transform="translate(-61.375, -9)"><foreignObject width="122.75" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">controllo realpath</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4321.9921875, 451.0625)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4599.96875, 451.0625)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4881.5078125, 451.0625)"><g class="label" transform="translate(-49.375, -9)"><foreignObject width="98.75" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">assegnazione</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(5061.6796875, 451.0625)"><g class="label" transform="translate(-23.125, -9)"><foreignObject width="46.25" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">render</span></div></foreignObject></g></g></g><g class="nodes"><g class="node default default flowchart-label" id="flowchart-E_CAT80-471" data-node="true" data-id="E_CAT80" transform="translate(262.984375, 208.53125)"><polygon points="153.453125,0 306.90625,-153.453125 153.453125,-306.90625 0,-153.453125" class="label-container" transform="translate(-153.453125,153.453125)" style=""></polygon><g class="label" style="" transform="translate(-120.453125, -18)"><rect></rect><foreignObject width="240.90625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_CAT80 riga CAT ≥ 80 caratteri?<br/>loader.c:291</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_CAT80N-472" data-node="true" data-id="E_CAT80N" transform="translate(113.3203125, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-113.3203125" y="-16.5" width="226.640625" height="33"></rect><g class="label" style="" transform="translate(-105.8203125, -9)"><rect></rect><foreignObject width="211.640625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga scartata in silenzio (B-03)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_QN-474" data-node="true" data-id="E_QN" transform="translate(412.6484375, 621.0703125)"><polygon points="136.0078125,0 272.015625,-136.0078125 136.0078125,-272.015625 0,-136.0078125" class="label-container" transform="translate(-136.0078125,136.0078125)" style=""></polygon><g class="label" style="" transform="translate(-103.0078125, -18)"><rect></rect><foreignObject width="206.015625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_QN QNFMT letto con %4d<br/>loader.c:57</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_QNBAD-476" data-node="true" data-id="E_QNBAD" transform="translate(313.4453125, 841.578125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-109.5390625" y="-16.5" width="219.078125" height="33"></rect><g class="label" style="" transform="translate(-102.0390625, -9)"><rect></rect><foreignObject width="204.078125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">NQN = decine del QN (B-01)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_QN0-478" data-node="true" data-id="E_QN0" transform="translate(511.8515625, 841.578125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-38.8671875" y="-16.5" width="77.734375" height="33"></rect><g class="label" style="" transform="translate(-31.3671875, -9)"><rect></rect><foreignObject width="62.734375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">n_qn = 0</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_NQ3-480" data-node="true" data-id="E_NQ3" transform="translate(411.53515625, 951.578125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-61.7578125" y="-25.5" width="123.515625" height="51"></rect><g class="label" style="" transform="translate(-54.2578125, -18)"><rect></rect><foreignObject width="108.515625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">fallback nq = 3<br/>controller.c:304</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FITBLOCK-482" data-node="true" data-id="E_FITBLOCK" transform="translate(612.16796875, 951.578125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-88.875" y="-25.5" width="177.75" height="51"></rect><g class="label" style="" transform="translate(-81.375, -18)"><rect></rect><foreignObject width="162.75" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">fit bloccato, messaggio<br/>predfit.c:636-644</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_ASGP-483" data-node="true" data-id="E_ASGP" transform="translate(876.5859375, 208.53125)"><polygon points="149.4609375,0 298.921875,-149.4609375 149.4609375,-298.921875 0,-149.4609375" class="label-container" transform="translate(-149.4609375,149.4609375)" style=""></polygon><g class="label" style="" transform="translate(-107.4609375, -27)"><rect></rect><foreignObject width="214.921875" height="54"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_ASGP riga assignments.txt:<br/>conteggio = 2·NQN + 4?<br/>loader.c:592-594</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_ASGNEW-484" data-node="true" data-id="E_ASGNEW" transform="translate(736.4609375, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-137.8046875" y="-25.5" width="275.609375" height="51"></rect><g class="label" style="" transform="translate(-130.3046875, -18)"><rect></rect><foreignObject width="260.609375" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">letta come nuovo formato,<br/>anche se è un .lin o un legacy (B-08)</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_ASGOLD-486" data-node="true" data-id="E_ASGOLD" transform="translate(1016.7109375, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-92.4453125" y="-25.5" width="184.890625" height="51"></rect><g class="label" style="" transform="translate(-84.9453125, -18)"><rect></rect><foreignObject width="169.890625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">sscanf a 16 campi,<br/>legacy 14 mai raggiunto</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_PROG-487" data-node="true" data-id="E_PROG" transform="translate(1331.82421875, 208.53125)"><polygon points="144.609375,0 289.21875,-144.609375 144.609375,-289.21875 0,-144.609375" class="label-container" transform="translate(-144.609375,144.609375)" style=""></polygon><g class="label" style="" transform="translate(-111.609375, -18)"><rect></rect><foreignObject width="223.21875" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_PROGN-488" data-node="true" data-id="E_PROGN" transform="translate(1331.82421875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-143.7109375" y="-16.5" width="287.421875" height="33"></rect><g class="label" style="" transform="translate(-136.2109375, -9)"><rect></rect><foreignObject width="272.421875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status: Set the SPCAT/SPFIT program</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RC-489" data-node="true" data-id="E_RC" transform="translate(1641.97265625, 208.53125)"><polygon points="106.3203125,0 212.640625,-106.3203125 106.3203125,-212.640625 0,-106.3203125" class="label-container" transform="translate(-106.3203125,106.3203125)" style=""></polygon><g class="label" style="" transform="translate(-73.3203125, -18)"><rect></rect><foreignObject width="146.640625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_RC exit code ≠ 0?<br/>predfit.c:717-721</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RCN-490" data-node="true" data-id="E_RCN" transform="translate(1641.97265625, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-116.4375" y="-16.5" width="232.875" height="33"></rect><g class="label" style="" transform="translate(-108.9375, -9)"><rect></rect><foreignObject width="217.875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status ... failed; history_count--</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SPFITBAD-491" data-node="true" data-id="E_SPFITBAD" transform="translate(1985.76171875, 208.53125)"><polygon points="166.296875,0 332.59375,-166.296875 166.296875,-332.59375 0,-166.296875" class="label-container" transform="translate(-166.296875,166.296875)" style=""></polygon><g class="label" style="" transform="translate(-142.296875, -9)"><rect></rect><foreignObject width="284.59375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SPFITBAD righe Bad Line o rifiutate?</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SILENT-492" data-node="true" data-id="E_SILENT" transform="translate(1985.76171875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-177.3515625" y="-16.5" width="354.703125" height="33"></rect><g class="label" style="" transform="translate(-169.8515625, -9)"><rect></rect><foreignObject width="339.703125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">nessun segnale: status mostra solo RMS (B-22)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SENT-493" data-node="true" data-id="E_SENT" transform="translate(2494.40625, 208.53125)"><polygon points="133.4765625,0 266.953125,-133.4765625 133.4765625,-266.953125 0,-133.4765625" class="label-container" transform="translate(-133.4765625,133.4765625)" style=""></polygon><g class="label" style="" transform="translate(-109.4765625, -9)"><rect></rect><foreignObject width="218.953125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SENT riga esclusa: 90000+f</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SENTBAD-494" data-node="true" data-id="E_SENTBAD" transform="translate(2345.12109375, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-132.0078125" y="-16.5" width="264.015625" height="33"></rect><g class="label" style="" transform="translate(-124.5078125, -9)"><rect></rect><foreignObject width="249.015625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga usata nel fit, divergenza (B-09)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SENTOK-496" data-node="true" data-id="E_SENTOK" transform="translate(2643.69140625, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-116.5625" y="-16.5" width="233.125" height="33"></rect><g class="label" style="" transform="translate(-109.0625, -9)"><rect></rect><foreignObject width="218.125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">NEXT LINE NOT USED IN FIT</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FOPEN-497" data-node="true" data-id="E_FOPEN" transform="translate(3058.12890625, 208.53125)"><polygon points="104.484375,0 208.96875,-104.484375 104.484375,-208.96875 0,-104.484375" class="label-container" transform="translate(-104.484375,104.484375)" style=""></polygon><g class="label" style="" transform="translate(-80.484375, -9)"><rect></rect><foreignObject width="160.96875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_FOPEN fopen fallita</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_FOPENS-498" data-node="true" data-id="E_FOPENS" transform="translate(2909.35546875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-99.1015625" y="-16.5" width="198.203125" height="33"></rect><g class="label" style="" transform="translate(-91.6015625, -9)"><rect></rect><foreignObject width="183.203125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">nessun messaggio (U-06)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FOPENPF-500" data-node="true" data-id="E_FOPENPF" transform="translate(3206.90234375, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-148.4453125" y="-16.5" width="296.890625" height="33"></rect><g class="label" style="" transform="translate(-140.9453125, -9)"><rect></rect><foreignObject width="281.890625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status Cannot write Pickett working files</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESS-501" data-node="true" data-id="E_SESS" transform="translate(3569.37890625, 208.53125)"><polygon points="173.421875,0 346.84375,-173.421875 173.421875,-346.84375 0,-173.421875" class="label-container" transform="translate(-173.421875,173.421875)" style=""></polygon><g class="label" style="" transform="translate(-149.421875, -9)"><rect></rect><foreignObject width="298.84375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SESS riga di sessione non riconosciuta</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSN-502" data-node="true" data-id="E_SESSN" transform="translate(3569.37890625, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-164.03125" y="-25.5" width="328.0625" height="51"></rect><g class="label" style="" transform="translate(-156.53125, -18)"><rect></rect><foreignObject width="313.0625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">valori di default; specie assenti → Species 1<br/>predfit.c:350-353</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSF-503" data-node="true" data-id="E_SESSF" transform="translate(4001.33203125, 208.53125)"><polygon points="208.53125,0 417.0625,-208.53125 208.53125,-417.0625 0,-208.53125" class="label-container" transform="translate(-208.53125,208.53125)" style=""></polygon><g class="label" style="" transform="translate(-184.53125, -9)"><rect></rect><foreignObject width="369.0625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SESSF spectravisual.state trattato come spettro?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSG-504" data-node="true" data-id="E_SESSG" transform="translate(4001.33203125, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-127.1328125" y="-25.5" width="254.265625" height="51"></rect><g class="label" style="" transform="translate(-119.6328125, -18)"><rect></rect><foreignObject width="239.265625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">rifiutato come spettro<br/>main.c:226-230, predfit.c:176-183</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RESTORE-505" data-node="true" data-id="E_RESTORE" transform="translate(4460.98046875, 208.53125)"><polygon points="147.4609375,0 294.921875,-147.4609375 147.4609375,-294.921875 0,-147.4609375" class="label-container" transform="translate(-147.4609375,147.4609375)" style=""></polygon><g class="label" style="" transform="translate(-123.4609375, -9)"><rect></rect><foreignObject width="246.921875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_RESTORE .fit/model.cat esiste?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RESTN-506" data-node="true" data-id="E_RESTN" transform="translate(4321.9921875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-58.1953125" y="-16.5" width="116.390625" height="33"></rect><g class="label" style="" transform="translate(-50.6953125, -9)"><rect></rect><foreignObject width="101.390625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">restore saltato</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_RESTY-508" data-node="true" data-id="E_RESTY" transform="translate(4599.96875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-169.78125" y="-16.5" width="339.5625" height="33"></rect><g class="label" style="" transform="translate(-162.28125, -9)"><rect></rect><foreignObject width="324.5625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">Pred-Fit ripristinato senza richiesta (vincolo 4)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SEL-509" data-node="true" data-id="E_SEL" transform="translate(4971.59375, 208.53125)"><polygon points="152.6328125,0 305.265625,-152.6328125 152.6328125,-305.265625 0,-152.6328125" class="label-container" transform="translate(-152.6328125,152.6328125)" style=""></polygon><g class="label" style="" transform="translate(-128.6328125, -9)"><rect></rect><foreignObject width="257.265625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SEL indice selezionato ≥ n_pred?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SELA-510" data-node="true" data-id="E_SELA" transform="translate(4881.5078125, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-61.7578125" y="-25.5" width="123.515625" height="51"></rect><g class="label" style="" transform="translate(-54.2578125, -18)"><rect></rect><foreignObject width="108.515625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">ignorato<br/>controller.c:842</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SELR-512" data-node="true" data-id="E_SELR" transform="translate(5061.6796875, 621.0703125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-68.4140625" y="-25.5" width="136.828125" height="51"></rect><g class="label" style="" transform="translate(-60.9140625, -18)"><rect></rect><foreignObject width="121.828125" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">lettura fuori limite<br/>view.c:1815</span></div></foreignObject></g></g></g></g></g></svg></div><figcaption><button class="zoom" type="button">ingrandisci</button></figcaption></figure>
+<figure class="diagram"><div class="diagram-inner"><svg id="mmd7" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 5624.84375px;" viewBox="-8 -8 5624.84375 1114.984375" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd7{font-family:Helvetica,Arial,sans-serif;font-size:16px;fill:#333;}#mmd7 .error-icon{fill:#552222;}#mmd7 .error-text{fill:#552222;stroke:#552222;}#mmd7 .edge-thickness-normal{stroke-width:2px;}#mmd7 .edge-thickness-thick{stroke-width:3.5px;}#mmd7 .edge-pattern-solid{stroke-dasharray:0;}#mmd7 .edge-pattern-dashed{stroke-dasharray:3;}#mmd7 .edge-pattern-dotted{stroke-dasharray:2;}#mmd7 .marker{fill:#333333;stroke:#333333;}#mmd7 .marker.cross{stroke:#333333;}#mmd7 svg{font-family:Helvetica,Arial,sans-serif;font-size:16px;}#mmd7 .label{font-family:Helvetica,Arial,sans-serif;color:#333;}#mmd7 .cluster-label text{fill:#333;}#mmd7 .cluster-label span,#mmd7 p{color:#333;}#mmd7 .label text,#mmd7 span,#mmd7 p{fill:#333;color:#333;}#mmd7 .node rect,#mmd7 .node circle,#mmd7 .node ellipse,#mmd7 .node polygon,#mmd7 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd7 .flowchart-label text{text-anchor:middle;}#mmd7 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd7 .node .label{text-align:center;}#mmd7 .node.clickable{cursor:pointer;}#mmd7 .arrowheadPath{fill:#333333;}#mmd7 .edgePath .path{stroke:#333333;stroke-width:2.0px;}#mmd7 .flowchart-link{stroke:#333333;fill:none;}#mmd7 .edgeLabel{background-color:#e8e8e8;text-align:center;}#mmd7 .edgeLabel rect{opacity:0.5;background-color:#e8e8e8;fill:#e8e8e8;}#mmd7 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd7 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd7 .cluster text{fill:#333;}#mmd7 .cluster span,#mmd7 p{color:#333;}#mmd7 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:Helvetica,Arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd7 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd7 :root{--mermaid-font-family:Helvetica,Arial,sans-serif;}#mmd7 .bad>*{fill:#fde2e1!important;stroke:#c0392b!important;color:#111!important;}#mmd7 .bad span{fill:#fde2e1!important;stroke:#c0392b!important;color:#111!important;}#mmd7 .bad tspan{fill:#111!important;}</style><g><marker id="mmd7_flowchart-pointEnd" class="marker flowchart" viewBox="0 0 10 10" refX="6" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-pointStart" class="marker flowchart" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-circleEnd" class="marker flowchart" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></circle></marker><marker id="mmd7_flowchart-circleStart" class="marker flowchart" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></circle></marker><marker id="mmd7_flowchart-crossEnd" class="marker cross flowchart" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"></path></marker><marker id="mmd7_flowchart-crossStart" class="marker cross flowchart" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"></path></marker><g class="root"><g class="clusters"></g><g class="edgePaths"><path d="M229.339,552.675L220.412,574.008C211.485,595.341,193.631,638.006,184.704,683.482C175.777,728.957,175.777,777.243,175.777,801.385L175.777,825.528" id="L-E_CAT80-E_CAT80N-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_CAT80 LE-E_CAT80N" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M418.333,552.675L427.093,574.008C435.853,595.341,453.374,638.006,462.205,664.206C471.036,690.405,471.177,700.139,471.247,705.006L471.318,709.872" id="L-E_CAT80-E_QN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_CAT80 LE-E_QN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M419.859,928.949L410.719,943.122C401.579,957.294,383.299,985.639,374.159,1004.595C365.02,1023.551,365.02,1033.118,365.02,1037.901L365.02,1042.684" id="L-E_QN-E_QN0-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN LE-E_QN0" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M522.93,928.949L531.903,943.122C540.876,957.294,558.823,985.639,567.796,1006.095C576.77,1026.551,576.77,1039.118,576.77,1045.401L576.77,1051.684" id="L-E_QN-E_QNOK-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_QN LE-E_QNOK" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M829.444,348.836L810.421,404.142C791.399,459.448,753.354,570.06,734.331,648.009C715.309,725.957,715.309,771.243,715.309,793.885L715.309,816.528" id="L-E_NQNBAD-E_NQ3-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_NQNBAD LE-E_NQ3" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M845.374,348.836L860.9,404.142C876.426,459.448,907.479,570.06,923.005,648.009C938.531,725.957,938.531,771.243,938.531,793.885L938.531,816.528" id="L-E_NQNBAD-E_FITBLOCK-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_NQNBAD LE-E_FITBLOCK" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1313.736,431.197L1297.315,472.776C1280.894,514.355,1248.053,597.513,1231.632,661.735C1215.211,725.957,1215.211,771.243,1215.211,793.885L1215.211,816.528" id="L-E_ASGP-E_ASGNEW-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_ASGP LE-E_ASGNEW" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1397.936,431.197L1414.19,472.776C1430.444,514.355,1462.953,597.513,1479.207,661.735C1495.461,725.957,1495.461,771.243,1495.461,793.885L1495.461,816.528" id="L-E_ASGP-E_ASGOLD-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_ASGP LE-E_ASGOLD" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M1811.074,468.445L1810.991,503.816C1810.908,539.188,1810.741,609.93,1810.658,669.443C1810.574,728.957,1810.574,777.243,1810.574,801.385L1810.574,825.528" id="L-E_PROG-E_PROGN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_PROG LE-E_PROGN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M2121.223,430.156L2121.139,471.909C2121.056,513.661,2120.889,597.167,2120.806,663.062C2120.723,728.957,2120.723,777.243,2120.723,801.385L2120.723,825.528" id="L-E_RC-E_RCN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RC LE-E_RCN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M2465.012,490.133L2464.928,521.889C2464.845,553.646,2464.678,617.159,2464.595,673.058C2464.512,728.957,2464.512,777.243,2464.512,801.385L2464.512,825.528" id="L-E_SPFITBAD-E_SILENT-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SPFITBAD LE-E_SILENT" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M2934.325,417.981L2915.916,461.763C2897.507,505.545,2860.689,593.108,2842.28,661.033C2823.871,728.957,2823.871,777.243,2823.871,801.385L2823.871,825.528" id="L-E_SENT-E_SENTBAD-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SENT LE-E_SENTBAD" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3012.988,417.981L3031.23,461.763C3049.472,505.545,3085.957,593.108,3104.199,661.033C3122.441,728.957,3122.441,777.243,3122.441,801.385L3122.441,825.528" id="L-E_SENT-E_SENTOK-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SENT LE-E_SENTOK" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3506.665,397.607L3486.905,444.784C3467.145,491.962,3427.625,586.317,3407.865,657.637C3388.105,728.957,3388.105,777.243,3388.105,801.385L3388.105,825.528" id="L-E_FOPEN-E_FOPENS-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_FOPEN LE-E_FOPENS" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M3568.093,397.607L3587.686,444.784C3607.279,491.962,3646.466,586.317,3666.059,657.637C3685.652,728.957,3685.652,777.243,3685.652,801.385L3685.652,825.528" id="L-E_FOPEN-E_FOPENPF-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_FOPEN LE-E_FOPENPF" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4048.629,497.258L4048.546,527.827C4048.462,558.396,4048.296,619.534,4048.212,672.746C4048.129,725.957,4048.129,771.243,4048.129,793.885L4048.129,816.528" id="L-E_SESS-E_SESSN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SESS LE-E_SESSN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4480.582,532.367L4480.499,557.085C4480.415,581.802,4480.249,631.237,4480.165,678.597C4480.082,725.957,4480.082,771.243,4480.082,793.885L4480.082,816.528" id="L-E_SESSF-E_SESSG-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SESSF LE-E_SESSG" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4898.936,430.003L4882.571,471.781C4866.205,513.559,4833.474,597.115,4817.108,663.036C4800.742,728.957,4800.742,777.243,4800.742,801.385L4800.742,825.528" id="L-E_RESTORE-E_RESTN-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RESTORE LE-E_RESTN" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M4981.525,430.003L4997.724,471.781C5013.923,513.559,5046.321,597.115,5062.52,663.036C5078.719,728.957,5078.719,777.243,5078.719,801.385L5078.719,825.528" id="L-E_RESTORE-E_RESTY-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_RESTORE LE-E_RESTY" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M5420.112,445.737L5410.136,484.893C5400.161,524.049,5380.209,602.36,5370.234,664.159C5360.258,725.957,5360.258,771.243,5360.258,793.885L5360.258,816.528" id="L-E_SEL-E_SELA-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SEL LE-E_SELA" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path><path d="M5481.576,445.737L5491.385,484.893C5501.194,524.049,5520.812,602.36,5530.621,664.159C5540.43,725.957,5540.43,771.243,5540.43,793.885L5540.43,816.528" id="L-E_SEL-E_SELR-0" class=" edge-thickness-normal edge-pattern-solid flowchart-link LS-E_SEL LE-E_SELR" style="fill:none;" marker-end="url(#mmd7_flowchart-pointEnd)"></path></g><g class="edgeLabels"><g class="edgeLabel" transform="translate(175.77734375, 680.671875)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(470.89453125, 680.671875)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(365.01953125, 1013.984375)"><g class="label" transform="translate(-96.4921875, -9)"><foreignObject width="192.984375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">NQN 0 o maggiore di 6, D6</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(576.76953125, 1013.984375)"><g class="label" transform="translate(-33.34375, -9)"><foreignObject width="66.6875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">NQN 1..6</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(715.30859375, 680.671875)"><g class="label" transform="translate(-28.4609375, -9)"><foreignObject width="56.921875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">Save all</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(938.53125, 680.671875)"><g class="label" transform="translate(-8.890625, -9)"><foreignObject width="17.78125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">Fit</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1215.2109375, 680.671875)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1495.4609375, 680.671875)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1810.57421875, 680.671875)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2120.72265625, 680.671875)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2464.51171875, 680.671875)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(2823.87109375, 680.671875)"><g class="label" transform="translate(-79.5390625, -9)"><foreignObject width="159.078125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">err · 1e6 ≥ 90000 MHz</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(3122.44140625, 680.671875)"><g class="label" transform="translate(-79.8203125, -9)"><foreignObject width="159.640625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">err · 1e6 &lt; 90000 MHz</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(3388.10546875, 680.671875)"><g class="label" transform="translate(-96.4765625, -9)"><foreignObject width="192.953125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">assignments.txt, linelist.csv</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(3685.65234375, 680.671875)"><g class="label" transform="translate(-40.8984375, -9)"><foreignObject width="81.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">file Pred-Fit</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4048.12890625, 680.671875)"><g class="label" transform="translate(-28.9140625, -9)"><foreignObject width="57.828125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">ignorata</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4480.08203125, 680.671875)"><g class="label" transform="translate(-61.375, -9)"><foreignObject width="122.75" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">controllo realpath</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(4800.7421875, 680.671875)"><g class="label" transform="translate(-8.8984375, -9)"><foreignObject width="17.796875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">no</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(5078.71875, 680.671875)"><g class="label" transform="translate(-6.2265625, -9)"><foreignObject width="12.453125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">sì</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(5360.2578125, 680.671875)"><g class="label" transform="translate(-49.375, -9)"><foreignObject width="98.75" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">assegnazione</span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(5540.4296875, 680.671875)"><g class="label" transform="translate(-23.125, -9)"><foreignObject width="46.25" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="edgeLabel">render</span></div></foreignObject></g></g></g><g class="nodes"><g class="node default default flowchart-label" id="flowchart-E_CAT80-471" data-node="true" data-id="E_CAT80" transform="translate(323.3359375, 323.3359375)"><polygon points="323.3359375,0 646.671875,-323.3359375 323.3359375,-646.671875 0,-323.3359375" class="label-container" transform="translate(-323.3359375,323.3359375)" style=""></polygon><g class="label" style="" transform="translate(-290.3359375, -18)"><rect></rect><foreignObject width="580.671875" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_CAT80 record lungo almeno 55 caratteri, FREQ ERR LGINT QNFMT numerici?<br/>parse_cat_record loader.c:68-104, dal passo 1</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_CAT80N-472" data-node="true" data-id="E_CAT80N" transform="translate(175.77734375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-112.4609375" y="-16.5" width="224.921875" height="33"></rect><g class="label" style="" transform="translate(-104.9609375, -9)"><rect></rect><foreignObject width="209.921875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga ignorata: non è un record</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_QN-474" data-node="true" data-id="E_QN" transform="translate(470.89453125, 847.328125)"><polygon points="132.65625,0 265.3125,-132.65625 132.65625,-265.3125 0,-132.65625" class="label-container" transform="translate(-132.65625,132.65625)" style=""></polygon><g class="label" style="" transform="translate(-99.65625, -18)"><rect></rect><foreignObject width="199.3125" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_QN NQN = QNFMT % 10<br/>colonne 52-55</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_QN0-476" data-node="true" data-id="E_QN0" transform="translate(365.01953125, 1073.484375)"><rect class="basic label-container" style="" rx="0" ry="0" x="-110.671875" y="-25.5" width="221.34375" height="51"></rect><g class="label" style="" transform="translate(-103.171875, -18)"><rect></rect><foreignObject width="206.34375" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga scartata e contata<br/>messaggio di set_predictions</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_QNOK-478" data-node="true" data-id="E_QNOK" transform="translate(576.76953125, 1073.484375)"><rect class="basic label-container" style="" rx="0" ry="0" x="-51.078125" y="-16.5" width="102.15625" height="33"></rect><g class="label" style="" transform="translate(-43.578125, -9)"><rect></rect><foreignObject width="87.15625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga caricata</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_NQNBAD-479" data-node="true" data-id="E_NQNBAD" transform="translate(838.21484375, 323.3359375)"><rect class="basic label-container" style="" rx="0" ry="0" x="-116.890625" y="-25.5" width="233.78125" height="51"></rect><g class="label" style="" transform="translate(-109.390625, -18)"><rect></rect><foreignObject width="218.78125" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_NQNBAD n_qn non valido<br/>righe legacy di assignments.txt</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_NQ3-480" data-node="true" data-id="E_NQ3" transform="translate(715.30859375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-61.7578125" y="-25.5" width="123.515625" height="51"></rect><g class="label" style="" transform="translate(-54.2578125, -18)"><rect></rect><foreignObject width="108.515625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">fallback nq = 3<br/>controller.c:304</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FITBLOCK-482" data-node="true" data-id="E_FITBLOCK" transform="translate(938.53125, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-88.875" y="-25.5" width="177.75" height="51"></rect><g class="label" style="" transform="translate(-81.375, -18)"><rect></rect><foreignObject width="162.75" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">fit bloccato, messaggio<br/>predfit.c:636-644</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_ASGP-483" data-node="true" data-id="E_ASGP" transform="translate(1355.3359375, 323.3359375)"><polygon points="149.4609375,0 298.921875,-149.4609375 149.4609375,-298.921875 0,-149.4609375" class="label-container" transform="translate(-149.4609375,149.4609375)" style=""></polygon><g class="label" style="" transform="translate(-107.4609375, -27)"><rect></rect><foreignObject width="214.921875" height="54"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_ASGP riga assignments.txt:<br/>conteggio = 2·NQN + 4?<br/>loader.c:592-594</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_ASGNEW-484" data-node="true" data-id="E_ASGNEW" transform="translate(1215.2109375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-137.8046875" y="-25.5" width="275.609375" height="51"></rect><g class="label" style="" transform="translate(-130.3046875, -18)"><rect></rect><foreignObject width="260.609375" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">letta come nuovo formato,<br/>anche se è un .lin o un legacy (B-08)</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_ASGOLD-486" data-node="true" data-id="E_ASGOLD" transform="translate(1495.4609375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-92.4453125" y="-25.5" width="184.890625" height="51"></rect><g class="label" style="" transform="translate(-84.9453125, -18)"><rect></rect><foreignObject width="169.890625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">sscanf a 16 campi,<br/>legacy 14 mai raggiunto</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_PROG-487" data-node="true" data-id="E_PROG" transform="translate(1810.57421875, 323.3359375)"><polygon points="144.609375,0 289.21875,-144.609375 144.609375,-289.21875 0,-144.609375" class="label-container" transform="translate(-144.609375,144.609375)" style=""></polygon><g class="label" style="" transform="translate(-111.609375, -18)"><rect></rect><foreignObject width="223.21875" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_PROG spcat/spfit eseguibili?<br/>predfit.c:978-981, 1001-1005</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_PROGN-488" data-node="true" data-id="E_PROGN" transform="translate(1810.57421875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-143.7109375" y="-16.5" width="287.421875" height="33"></rect><g class="label" style="" transform="translate(-136.2109375, -9)"><rect></rect><foreignObject width="272.421875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status: Set the SPCAT/SPFIT program</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RC-489" data-node="true" data-id="E_RC" transform="translate(2120.72265625, 323.3359375)"><polygon points="106.3203125,0 212.640625,-106.3203125 106.3203125,-212.640625 0,-106.3203125" class="label-container" transform="translate(-106.3203125,106.3203125)" style=""></polygon><g class="label" style="" transform="translate(-73.3203125, -18)"><rect></rect><foreignObject width="146.640625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_RC exit code ≠ 0?<br/>predfit.c:717-721</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RCN-490" data-node="true" data-id="E_RCN" transform="translate(2120.72265625, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-116.4375" y="-16.5" width="232.875" height="33"></rect><g class="label" style="" transform="translate(-108.9375, -9)"><rect></rect><foreignObject width="217.875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status ... failed; history_count--</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SPFITBAD-491" data-node="true" data-id="E_SPFITBAD" transform="translate(2464.51171875, 323.3359375)"><polygon points="166.296875,0 332.59375,-166.296875 166.296875,-332.59375 0,-166.296875" class="label-container" transform="translate(-166.296875,166.296875)" style=""></polygon><g class="label" style="" transform="translate(-142.296875, -9)"><rect></rect><foreignObject width="284.59375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SPFITBAD righe Bad Line o rifiutate?</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SILENT-492" data-node="true" data-id="E_SILENT" transform="translate(2464.51171875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-177.3515625" y="-16.5" width="354.703125" height="33"></rect><g class="label" style="" transform="translate(-169.8515625, -9)"><rect></rect><foreignObject width="339.703125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">nessun segnale: status mostra solo RMS (B-22)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SENT-493" data-node="true" data-id="E_SENT" transform="translate(2973.15625, 323.3359375)"><polygon points="133.4765625,0 266.953125,-133.4765625 133.4765625,-266.953125 0,-133.4765625" class="label-container" transform="translate(-133.4765625,133.4765625)" style=""></polygon><g class="label" style="" transform="translate(-109.4765625, -9)"><rect></rect><foreignObject width="218.953125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SENT riga esclusa: 90000+f</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SENTBAD-494" data-node="true" data-id="E_SENTBAD" transform="translate(2823.87109375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-132.0078125" y="-16.5" width="264.015625" height="33"></rect><g class="label" style="" transform="translate(-124.5078125, -9)"><rect></rect><foreignObject width="249.015625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">riga usata nel fit, divergenza (B-09)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SENTOK-496" data-node="true" data-id="E_SENTOK" transform="translate(3122.44140625, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-116.5625" y="-16.5" width="233.125" height="33"></rect><g class="label" style="" transform="translate(-109.0625, -9)"><rect></rect><foreignObject width="218.125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">NEXT LINE NOT USED IN FIT</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FOPEN-497" data-node="true" data-id="E_FOPEN" transform="translate(3536.87890625, 323.3359375)"><polygon points="104.484375,0 208.96875,-104.484375 104.484375,-208.96875 0,-104.484375" class="label-container" transform="translate(-104.484375,104.484375)" style=""></polygon><g class="label" style="" transform="translate(-80.484375, -9)"><rect></rect><foreignObject width="160.96875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_FOPEN fopen fallita</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_FOPENS-498" data-node="true" data-id="E_FOPENS" transform="translate(3388.10546875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-99.1015625" y="-16.5" width="198.203125" height="33"></rect><g class="label" style="" transform="translate(-91.6015625, -9)"><rect></rect><foreignObject width="183.203125" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">nessun messaggio (U-06)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_FOPENPF-500" data-node="true" data-id="E_FOPENPF" transform="translate(3685.65234375, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-148.4453125" y="-16.5" width="296.890625" height="33"></rect><g class="label" style="" transform="translate(-140.9453125, -9)"><rect></rect><foreignObject width="281.890625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">status Cannot write Pickett working files</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESS-501" data-node="true" data-id="E_SESS" transform="translate(4048.12890625, 323.3359375)"><polygon points="173.421875,0 346.84375,-173.421875 173.421875,-346.84375 0,-173.421875" class="label-container" transform="translate(-173.421875,173.421875)" style=""></polygon><g class="label" style="" transform="translate(-149.421875, -9)"><rect></rect><foreignObject width="298.84375" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SESS riga di sessione non riconosciuta</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSN-502" data-node="true" data-id="E_SESSN" transform="translate(4048.12890625, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-164.03125" y="-25.5" width="328.0625" height="51"></rect><g class="label" style="" transform="translate(-156.53125, -18)"><rect></rect><foreignObject width="313.0625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">valori di default; specie assenti → Species 1<br/>predfit.c:350-353</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSF-503" data-node="true" data-id="E_SESSF" transform="translate(4480.08203125, 323.3359375)"><polygon points="208.53125,0 417.0625,-208.53125 208.53125,-417.0625 0,-208.53125" class="label-container" transform="translate(-208.53125,208.53125)" style=""></polygon><g class="label" style="" transform="translate(-184.53125, -9)"><rect></rect><foreignObject width="369.0625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SESSF spectravisual.state trattato come spettro?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SESSG-504" data-node="true" data-id="E_SESSG" transform="translate(4480.08203125, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-127.1328125" y="-25.5" width="254.265625" height="51"></rect><g class="label" style="" transform="translate(-119.6328125, -18)"><rect></rect><foreignObject width="239.265625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">rifiutato come spettro<br/>main.c:226-230, predfit.c:176-183</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RESTORE-505" data-node="true" data-id="E_RESTORE" transform="translate(4939.73046875, 323.3359375)"><polygon points="147.4609375,0 294.921875,-147.4609375 147.4609375,-294.921875 0,-147.4609375" class="label-container" transform="translate(-147.4609375,147.4609375)" style=""></polygon><g class="label" style="" transform="translate(-123.4609375, -9)"><rect></rect><foreignObject width="246.921875" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_RESTORE .fit/model.cat esiste?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_RESTN-506" data-node="true" data-id="E_RESTN" transform="translate(4800.7421875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-58.1953125" y="-16.5" width="116.390625" height="33"></rect><g class="label" style="" transform="translate(-50.6953125, -9)"><rect></rect><foreignObject width="101.390625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">restore saltato</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_RESTY-508" data-node="true" data-id="E_RESTY" transform="translate(5078.71875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-169.78125" y="-16.5" width="339.5625" height="33"></rect><g class="label" style="" transform="translate(-162.28125, -9)"><rect></rect><foreignObject width="324.5625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">Pred-Fit ripristinato senza richiesta (vincolo 4)</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SEL-509" data-node="true" data-id="E_SEL" transform="translate(5450.34375, 323.3359375)"><polygon points="152.6328125,0 305.265625,-152.6328125 152.6328125,-305.265625 0,-152.6328125" class="label-container" transform="translate(-152.6328125,152.6328125)" style=""></polygon><g class="label" style="" transform="translate(-128.6328125, -9)"><rect></rect><foreignObject width="257.265625" height="18"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">E_SEL indice selezionato ≥ n_pred?</span></div></foreignObject></g></g><g class="node default default flowchart-label" id="flowchart-E_SELA-510" data-node="true" data-id="E_SELA" transform="translate(5360.2578125, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-61.7578125" y="-25.5" width="123.515625" height="51"></rect><g class="label" style="" transform="translate(-54.2578125, -18)"><rect></rect><foreignObject width="108.515625" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">ignorato<br/>controller.c:842</span></div></foreignObject></g></g><g class="node default bad flowchart-label" id="flowchart-E_SELR-512" data-node="true" data-id="E_SELR" transform="translate(5540.4296875, 847.328125)"><rect class="basic label-container" style="" rx="0" ry="0" x="-68.4140625" y="-25.5" width="136.828125" height="51"></rect><g class="label" style="" transform="translate(-60.9140625, -18)"><rect></rect><foreignObject width="121.828125" height="36"><div xmlns="http://www.w3.org/1999/xhtml" style="display: inline-block; white-space: nowrap;"><span class="nodeLabel">lettura fuori limite<br/>view.c:1815</span></div></foreignObject></g></g></g></g></g></svg></div><figcaption><button class="zoom" type="button">ingrandisci</button></figcaption></figure>
 <p>Altri rami rilevanti: <code>read_data_alloc</code> riconosce il separatore dalla prima riga
 numerica e scarta le righe che non lo rispettano (<a class="src" href="../../loader.c#L471-L508" title="apre il sorgente">loader.c:471-508</a>);
 <code>import_int_settings</code> converte un FEND frazionario (vecchio bug) in 40
@@ -2847,6 +2863,13 @@ SPCAT/SPFIT, QN usati, perdite di informazione, compatibilità e divergenze.</p>
 <h3 id="readme-61-cat-esterno-e-modelcat"><a class="hlink" href="#readme-61-cat-esterno-e-modelcat">#</a>6.1 CAT esterno e <code>model.cat</code></h3>
 <p>Record a larghezza fissa scritto da SPCAT (<code>calpgm/calcat.c:700-709</code>:
 <code>&quot;%13.4f%8.4f%8.4f%2d%10.4f%s%7ld%4d&quot;</code> + stringa dei QN):</p>
+<p><strong>Dal passo #1</strong> l&#39;app legge il record con <code>parse_cat_record</code>
+(<a class="src" href="../../loader.c#L46-L104" title="apre il sorgente">loader.c:46-104</a>): ogni campo è tagliato alle colonne
+di questa tabella e convertito da solo; il record deve arrivare almeno alla
+colonna 55 (QNFMT) e i QN mancanti valgono come vuoti; i QN sono decodificati
+come <code>readqn</code> (<a class="src" href="../../loader.c#L11-L25" title="apre il sorgente">loader.c:11-25</a>); le righe con NQN 0 o &gt; 6
+sono scartate e contate (D6). La colonna <em>Lettura nell&#39;app</em> descrive il commit
+<code>1f4df65</code>.</p>
 <div class="table-wrap"><table><thead><tr>
 <th>Colonne</th>
 <th>Campo</th>
@@ -2925,17 +2948,18 @@ SPCAT/SPFIT, QN usati, perdite di informazione, compatibilità e divergenze.</p>
 <td>—</td>
 </tr>
 </tbody></table></div>
-<p>Altre regole del lettore: riga scartata se <code>strlen &lt; 80</code> (<a class="src" href="../../loader.c#L291" title="apre il sorgente">loader.c:291</a>)
-→ un CAT senza spazi finali non si carica (<strong>B-03</strong>) <span class="tag tag-ripr">RIPR R-01</span>; ramo e tipo di
+<p>Altre regole del lettore: al commit <code>1f4df65</code> riga scartata se <code>strlen &lt; 80</code> (<a class="src" href="../../loader.c#L291" title="apre il sorgente">loader.c:291</a>)
+→ un CAT senza spazi finali non si carica (<strong>B-03</strong>) <span class="tag tag-ripr">RIPR R-01</span>, dal passo #1 basta
+che il record arrivi alla colonna 55; ramo e tipo di
 dipolo derivati sempre dai primi tre QN (<a class="src" href="../../loader.c#L17-L34" title="apre il sorgente">loader.c:17-34</a>,
 <a class="src" href="../../loader.c#L312-L313" title="apre il sorgente">312-313</a>); righe riordinate per frequenza
 (<a class="src" href="../../loader.c#L328-L330" title="apre il sorgente">328-330</a>). Informazioni perse: ERR, GUP, TAG, cifre Q e H
 di QNFMT (quindi la posizione del numero vibrazionale, <code>calpgm/calcat.c:291-292</code>),
-QN in codice lettera.</p>
+QN in codice lettera (letti dal passo #1).</p>
 <p><code>model.cat</code>: stesso formato, prodotto da SPCAT sui file dell&#39;app. Il suo QNFMT
 dipende da NVIB: <code>.fit/model.out</code> riporta <code>IQNFMT = 1404</code> con <code>s 1 3 0</code>
 <span class="tag tag-fatto">FATTO</span>; con una specie (<code>s 1 1 0</code>) è <code>303</code> e ha lo stesso difetto di B-01
-<span class="tag tag-ripr">RIPR R-17</span>. Con NVIB &gt; 1 il quarto QN è lo stato v (<code>iposv = (1404/100)%5 − 1 = 3</code>).</p>
+<span class="tag tag-ripr">RIPR R-17</span>, corretto al passo #1. Con NVIB &gt; 1 il quarto QN è lo stato v (<code>iposv = (1404/100)%5 − 1 = 3</code>).</p>
 <p><a id="readme-62-assignmentstxt"></a></p>
 <h3 id="readme-62-assignmentstxt"><a class="hlink" href="#readme-62-assignmentstxt">#</a>6.2 <code>assignments.txt</code></h3>
 <p><strong>Formato nuovo</strong> (writer <a class="src" href="../../controller.c#L300-L314" title="apre il sorgente">controller.c:300-314</a>):</p>
@@ -3276,6 +3300,9 @@ ma è scritto da quattro sorgenti con regole diverse — parser CAT (B-01), file
 — e letto da identità, writer, mappatura delle specie e display, con fallback a
 3 in tre punti (<a class="src" href="../../controller.c#L304" title="apre il sorgente">controller.c:304</a>, <a class="src" href="../../view.c#L19" title="apre il sorgente">view.c:19</a>,
 <a class="src" href="../../predfit.c#L856" title="apre il sorgente">predfit.c:856</a>).</li>
+<li><strong>Dal passo #1</strong> il parser CAT (<code>parse_cat_record</code>) legge NQN correttamente
+(colonne 52–55, QNFMT % 10) e scarta, contandole, le righe con NQN 0 o &gt; 6 (D6);
+le altre tre sorgenti di <code>n_qn</code> sono trattate ai passi #4 e #8.</li>
 <li><strong>Non</strong> è dedotto dal modello Pred&amp;Fit: nessun writer di <code>n_qn</code> legge
 <code>hamiltonian_line</code>, <code>state_count</code> o <code>.par</code> <span class="tag tag-fatto">FATTO, indice <a href="#a2-top">A2</a></span>.
 L&#39;ipotesi iniziale del report (&quot;uso improprio di NQN dall&#39;Hamiltoniano&quot;) non
@@ -3288,11 +3315,13 @@ QNFMT di <code>model.cat</code> → NQN diverso da quello dei CAT esterni → id
 (NQN 4, v=0): due assignment, entrambi nel <code>.lin</code>; quello a 3 QN è letto male
 da SPFIT <span class="tag tag-fatto">FATTO + RIPR R-11</span>.</li>
 <li>Due transizioni con lo stesso J ≥ 10 e Ka/Kc diversi in un CAT con QNFMT a tre
-cifre: dopo save/reopen diventano una sola <span class="tag tag-ripr">RIPR R-02</span>.</li>
+cifre: dopo save/reopen diventano una sola <span class="tag tag-ripr">RIPR R-02</span>. La causa (B-01) è
+risolta al passo #1; il round-trip è verificato al passo #4.</li>
 <li>Due transizioni che differiscono solo nel quarto QN (F o v) con primo QN ≥ 10
-e QNFMT a tre cifre: scritte con 1 QN, fuse <span class="tag tag-ripr">RIPR R-03</span>.</li>
+e QNFMT a tre cifre: scritte con 1 QN, fuse <span class="tag tag-ripr">RIPR R-03</span>. Causa risolta al
+passo #1; round-trip verificato al passo #4.</li>
 <li>Tutte le righe con J ≥ 100 in codice lettera hanno J = 0 e collidono tra loro
-<span class="tag tag-ripr">RIPR R-01</span>.</li>
+<span class="tag tag-ripr">RIPR R-01</span>. Risolto al passo #1.</li>
 <li>Blend allo stesso picco: le identità basate sulla sola frequenza (restore
 passata 1, report del fit, ripiego del fit intensità) confondono le due
 transizioni.</li>
@@ -3309,6 +3338,15 @@ riproduzione completa di ogni prova è in <a href="#a4-top">A4</a>.</p>
 <p><a id="readme-b-01"></a></p>
 <h3 id="readme-b-01--nqn-letto-dalle-colonne-sbagliate-4d-su-qnfmt"><a class="hlink" href="#readme-b-01--nqn-letto-dalle-colonne-sbagliate-4d-su-qnfmt">#</a>B-01 — NQN letto dalle colonne sbagliate (<code>%4d</code> su QNFMT)</h3>
 <ul>
+<li><strong>Stato: risolto</strong> in (commit del passo #1) — nuova logica: <code>parse_cat_record</code>
+(<a class="src" href="../../loader.c#L68-L104" title="apre il sorgente">loader.c:68-104</a>) taglia ogni campo alle sue colonne e
+converte QNFMT (colonne 52–55) da solo con <code>cat_number</code>
+(<a class="src" href="../../loader.c#L56-L66" title="apre il sorgente">loader.c:56-66</a>); NQN = QNFMT % 10 su ogni riga, anche con
+J ≥ 10. Le righe con NQN 0 o &gt; 6 non vengono caricate (D6) e <code>set_predictions</code>
+(<a class="src" href="../../main.c#L288-L343" title="apre il sorgente">main.c:288-343</a>) ne riporta il numero nel messaggio di
+stato e nella barra del titolo. Test: <code>test_cat_nqn_from_qnfmt_3qn</code>,
+<code>test_cat_nqn_4_5_6</code>, <code>test_cat_invalid_nqn_reported</code>; R-01 e R-17 rieseguiti.
+Sotto, la diagnosi originale.</li>
 <li><strong>Gravità</strong> critica · <strong>P0.2, P0.3</strong> · <span class="tag tag-fatto">FATTO</span> + <span class="tag tag-ripr">RIPR R-01, R-02..R-07, R-17</span></li>
 <li><strong>Dove</strong>: <code>parse_cat_quantum_numbers</code> <a class="src" href="../../loader.c#L54-L65" title="apre il sorgente">loader.c:54-65</a>, riga <a class="src" href="../../loader.c#L57" title="apre il sorgente">57</a>.</li>
 <li><strong>Causa</strong>: <code>sscanf(line + 51, &quot;%4d&quot;, &amp;qnfmt)</code> salta gli spazi iniziali e solo dopo
@@ -3363,6 +3401,10 @@ una scelta esplicita (<a href="#readme-12-domande-bloccanti">§12</a>, D1).</li>
 <p><a id="readme-b-03"></a></p>
 <h3 id="readme-b-03--righe-cat-senza-spazi-finali-scartate"><a class="hlink" href="#readme-b-03--righe-cat-senza-spazi-finali-scartate">#</a>B-03 — Righe CAT senza spazi finali scartate</h3>
 <ul>
+<li><strong>Stato: risolto</strong> in (commit del passo #1) — nuova logica: un record è accettato se
+arriva almeno alla colonna 55, la fine di QNFMT (<a class="src" href="../../loader.c#L71" title="apre il sorgente">loader.c:71</a>);
+le colonne dei QN che mancano valgono come vuote (<a class="src" href="../../loader.c#L94-L99" title="apre il sorgente">loader.c:94-99</a>).
+Test: <code>test_cat_trailing_spaces_irrelevant</code>.</li>
 <li><strong>Gravità</strong> alta (vincolo 1) · <strong>P0.3</strong> · <span class="tag tag-fatto">FATTO</span> + <span class="tag tag-ripr">RIPR R-01</span></li>
 <li><strong>Dove</strong>: <a class="src" href="../../loader.c#L239" title="apre il sorgente">loader.c:239</a>, <a class="src" href="../../loader.c#L291" title="apre il sorgente">291</a> (<code>strlen(line) &lt; 80</code>).</li>
 <li><strong>Causa</strong>: il controllo presume che ogni riga sia lunga 79 caratteri + newline.
@@ -3376,6 +3418,10 @@ colonne mancanti.</li>
 <p><a id="readme-b-04"></a></p>
 <h3 id="readme-b-04--qn-in-codice-lettera-e-negativi--10-letti-come-0"><a class="hlink" href="#readme-b-04--qn-in-codice-lettera-e-negativi--10-letti-come-0">#</a>B-04 — QN in codice lettera e negativi ≤ −10 letti come 0</h3>
 <ul>
+<li><strong>Stato: risolto</strong> in (commit del passo #1) — nuova logica: <code>parse_qn2</code>
+(<a class="src" href="../../loader.c#L11-L25" title="apre il sorgente">loader.c:11-25</a>) decodifica come <code>readqn</code>: lettera
+maiuscola = centinaia (<code>A5</code> = 105), minuscola = da −10 in giù (<code>a1</code> = −11), <code>-d</code> = −d.
+Test: <code>test_cat_letter_and_negative_qn</code>.</li>
 <li><strong>Gravità</strong> media · <strong>P0.3</strong> · <span class="tag tag-fatto">FATTO</span> + <span class="tag tag-ripr">RIPR R-01</span></li>
 <li><strong>Dove</strong>: <code>parse_qn2</code> <a class="src" href="../../loader.c#L11-L15" title="apre il sorgente">loader.c:11-15</a> (<code>atoi</code>).</li>
 <li><strong>Causa</strong>: SPCAT codifica QN ≥ 100 con una lettera maiuscola e QN ≤ −10 con una
@@ -3653,6 +3699,12 @@ cambiare la specie attiva: vedi <a href="#readme-b-43">B-43</a> <span class="tag
 <p><a id="readme-b-25"></a></p>
 <h3 id="readme-b-25--campi-numerici-del-cat-letti-in-formato-libero"><a class="hlink" href="#readme-b-25--campi-numerici-del-cat-letti-in-formato-libero">#</a>B-25 — Campi numerici del CAT letti in formato libero</h3>
 <ul>
+<li><strong>Stato: risolto</strong> in (commit del passo #1) — nuova logica: FREQ, ERR, LGINT, DR, ELO e
+QNFMT sono letti alle colonne di <code>calpgm/calcat.c:700-709</code> (costanti <code>CAT_*</code>
+<a class="src" href="../../loader.c#L51-L52" title="apre il sorgente">loader.c:51-52</a>, <code>cat_number</code> <a class="src" href="../../loader.c#L56-L66" title="apre il sorgente">56-66</a>):
+<code>6348.1049158.2229</code> dà FREQ 6348,1049 ed ERR 158,2229, e un GUP a tre cifre non
+entra in ELO. ERR non è conservato in <code>PredLine</code>: lo restituisce <code>parse_cat_record</code>.
+Test: <code>test_cat_fixed_width_numbers</code>.</li>
 <li><strong>Gravità</strong> bassa · <span class="tag tag-fatto">FATTO</span></li>
 <li><strong>Dove</strong>: <a class="src" href="../../loader.c#L241" title="apre il sorgente">loader.c:241</a>, <a class="src" href="../../loader.c#L293" title="apre il sorgente">293</a>, <a class="src" href="../../loader.c#L41" title="apre il sorgente">41</a>.</li>
 <li><strong>Effetti</strong>: quando FREQ ed ERR (o ELO e GUP) si toccano, le cifre del campo
@@ -4237,8 +4289,8 @@ regressioni sono possibili.</p>
 <th>Test</th>
 </tr>
 </thead><tbody><tr>
-<td>B-01, B-03, B-04</td>
-<td><code>parse_cat_quantum_numbers</code>, <code>parse_qn2</code>, controllo di lunghezza</td>
+<td>B-01, B-03, B-04 (risolti al passo #1, con B-25)</td>
+<td><code>parse_cat_record</code>, <code>parse_qn2</code>, controllo di lunghezza</td>
 <td><code>read_pred_cat(_alloc)</code> ← <code>set_predictions</code> (riga di comando, drop, Calculate, Fit, Undo, restore); consumatori di <code>n_qn</code>: <code>same_assignment_transition</code>, <code>current_assignment_prediction</code>, <code>same_qn</code>, <code>rescale_by_species</code>, <code>write_inputs</code> (controllo e writer), <em>Save all</em>, <code>format_pred_qn</code>, <code>format_assignment_qn</code>; file <code>assignments.txt</code> esistenti con righe troncate</td>
 <td>le righe già troncate nei file esistenti non corrisponderanno più a nessuna riga CAT (NQN 3 vs 1) → duplicati alla riassegnazione; righe con J ≥ 70 prima bloccate arriveranno a SPFIT</td>
 <td>T-01..T-07</td>
@@ -4755,8 +4807,8 @@ cambiano la correzione.</p>
 <h1 id="a1-a1--atlante-delle-funzioni-e-call-graph-bidirezionale"><a class="hlink" href="#a1-a1--atlante-delle-funzioni-e-call-graph-bidirezionale">#</a>A1 — Atlante delle funzioni e call graph bidirezionale</h1>
 <p>Appendice di <a href="#readme-top">README.md</a>. La parte A1.1 è curata a mano per le
 funzioni che partecipano alle relazioni critiche; la parte A1.3 è <strong>generata</strong>
-da <a href="repro/ast_index.py">repro/ast_index.py</a> e copre tutte le 372 funzioni del
-progetto (362 analizzate sull&#39;AST di clang; le 10 restanti sono in C++ o
+da <a href="repro/ast_index.py">repro/ast_index.py</a> e copre tutte le 373 funzioni del
+progetto (363 analizzate sull&#39;AST di clang; le 10 restanti sono in C++ o
 header-only e sono annotate a mano).</p>
 <h2 id="a1-metodo-e-limiti-dellindice-generato"><a class="hlink" href="#a1-metodo-e-limiti-dellindice-generato">#</a>Metodo e limiti dell&#39;indice generato</h2>
 <ul>
@@ -4804,31 +4856,31 @@ compare come scrittura del contenitore, non dei singoli campi.</li>
 <th>Effetti indiretti</th>
 </tr>
 </thead><tbody><tr>
-<td><code>read_pred_cat_alloc</code> <a class="src" href="../../loader.c#L271-L334" title="apre il sorgente">loader.c:271-334</a></td>
-<td><code>set_predictions</code> <a class="src" href="../../main.c#L291" title="apre il sorgente">main.c:291</a> ← <code>.cat</code> da riga di comando <a class="src" href="../../main.c#L429" title="apre il sorgente">main.c:429</a>, drop, Calculate/Fit/restore via coda <a class="src" href="../../main.c#L520" title="apre il sorgente">main.c:520</a></td>
-<td><code>parse_cat_intensity_fields</code>, <code>parse_cat_quantum_numbers</code>, <code>branch_from_qn</code>, <code>mu_from_qn</code>, <code>qsort</code>(<code>compare_pred_frequency</code>)</td>
+<td><code>read_pred_cat_alloc_counted</code> <a class="src" href="../../loader.c#L296-L349" title="apre il sorgente">loader.c:296-349</a> (dal passo #1; <code>read_pred_cat_alloc</code> <a class="src" href="../../loader.c#L351-L356" title="apre il sorgente">351-356</a> è il wrapper senza conteggio)</td>
+<td><code>set_predictions</code> <a class="src" href="../../main.c#L292" title="apre il sorgente">main.c:292</a> ← <code>.cat</code> da riga di comando, drop, Calculate/Fit/restore via coda</td>
+<td><code>parse_cat_record</code>, <code>qsort</code>(<code>compare_pred_frequency</code>)</td>
 <td>percorso</td>
-<td>array <code>PredLine</code> nuovo, n, xmin/xmax, massimo</td>
+<td>array <code>PredLine</code> nuovo, n, xmin/xmax, massimo, numero di righe con NQN non supportato</td>
 <td>—</td>
 <td>nuovo array</td>
 <td>legge il CAT</td>
-<td>righe &lt; 80 caratteri scartate (B-03); NQN sbagliato (B-01); QN lettera (B-04); l&#39;ordinamento cambia gli indici rispetto al file</td>
+<td>record da 55 caratteri, NQN e QN corretti (B-01, B-03, B-04, B-25 risolti al passo #1); righe con NQN 0 o &gt; 6 scartate e contate (D6); l&#39;ordinamento cambia gli indici rispetto al file</td>
 </tr>
 <tr>
-<td><code>parse_cat_quantum_numbers</code> <a class="src" href="../../loader.c#L54-L65" title="apre il sorgente">loader.c:54-65</a></td>
-<td><code>read_pred_cat</code>, <code>read_pred_cat_alloc</code></td>
-<td><code>parse_qn2</code>, <code>sscanf</code></td>
+<td><code>parse_cat_record</code> <a class="src" href="../../loader.c#L68-L104" title="apre il sorgente">loader.c:68-104</a> (dal passo #1; sostituisce <code>parse_cat_quantum_numbers</code> e <code>parse_cat_intensity_fields</code>)</td>
+<td><code>read_pred_cat</code>, <code>read_pred_cat_alloc_counted</code>, suite di test</td>
+<td><code>cat_number</code>, <code>parse_qn2</code>, <code>branch_from_qn</code>, <code>mu_from_qn</code></td>
 <td>riga</td>
+<td>1 record, 0 non record, −1 NQN non supportato; ERR</td>
 <td>—</td>
+<td><code>PredLine</code> intero (FREQ, LGINT, DR, ELO, NQN, 12 QN, ramo, dipolo)</td>
 <td>—</td>
-<td><code>PredLine.n_qn</code>, 12 QN</td>
-<td>—</td>
-<td><strong>B-01</strong> (causa radice), B-04</td>
+<td>colonne fisse come <code>calpgm/calcat.c:700-709</code>; QN come <code>readqn</code></td>
 </tr>
 <tr>
 <td><code>set_predictions</code> <a class="src" href="../../main.c#L288-L329" title="apre il sorgente">main.c:288-329</a></td>
 <td><code>main</code> <a class="src" href="../../main.c#L429" title="apre il sorgente">429</a>; ciclo principale <a class="src" href="../../main.c#L520" title="apre il sorgente">520</a></td>
-<td><code>read_pred_cat_alloc</code>, <code>predfit_is_generated_catalog</code>, <code>rescale_predicted_intensities</code>, <code>ensure_aux_loaded</code></td>
+<td><code>read_pred_cat_alloc_counted</code> (dal passo #1: il numero di righe con NQN 0 o &gt; 6 va in <code>status_message</code> ed <code>error_message</code>), <code>predfit_is_generated_catalog</code>, <code>rescale_predicted_intensities</code>, <code>ensure_aux_loaded</code></td>
 <td>percorso</td>
 <td>0/1</td>
 <td><code>data_loaded</code>, <code>rot_temp_k</code>, <code>dipole_red</code>, flag Pred&amp;Fit</td>
@@ -5377,7 +5429,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 (<a class="src" href="../../controller.c#L1072" title="apre il sorgente">controller.c:1072</a>), <code>ui_panel_height</code> che dipende da
 <code>n_assignments</code>, il caret dei campi da <code>input_rect</code> scritto dal render.</p>
 <h2 id="a1-a13-indice-completo-generato-tutte-le-funzioni"><a class="hlink" href="#a1-a13-indice-completo-generato-tutte-le-funzioni">#</a>A1.3 Indice completo generato (tutte le funzioni)</h2>
-<p>Colonne: vedi <em>Metodo</em>. I link di linea puntano ai sorgenti del commit analizzato.</p>
+<p>Colonne: vedi <em>Metodo</em>. I link di linea puntano ai sorgenti dell&#39;ultimo passo fatto di <a href="#piano-top">PIANO-FIX.md</a>: la sezione è rigenerata a ogni passo.</p>
 <h3 id="a1-mainc"><a class="hlink" href="#a1-mainc">#</a><code>main.c</code></h3>
 <div class="table-wrap"><table><thead><tr>
 <th>ID</th>
@@ -5550,10 +5602,10 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-main-set_predictions"></a><code>F-MAIN-set_predictions</code></td>
 <td><code>set_predictions</code></td>
-<td><a class="src" href="../../main.c#L288-L329" title="apre il sorgente">288–329</a></td>
+<td><a class="src" href="../../main.c#L288-L343" title="apre il sorgente">288–343</a></td>
 <td>static</td>
 <td><code>main</code></td>
-<td><code>ensure_aux_loaded</code>, <code>predfit_is_generated_catalog</code>, <code>read_pred_cat_alloc</code>, <code>rescale_predicted_intensities</code></td>
+<td><code>ensure_aux_loaded</code>, <code>predfit_is_generated_catalog</code>, <code>read_pred_cat_alloc_counted</code>, <code>rescale_predicted_intensities</code></td>
 <td><code>AppState.pbar_x</code>, <code>AppState.predfit</code>, <code>AppState.pvxmax</code>, <code>AppState.pvxmin</code>, <code>AppState.pxmax</code>, <code>AppState.pxmin</code>, <code>AppState.vxmax</code>, <code>AppState.vxmin</code>, <code>AppState.vymax</code>, <code>AppState.vymin</code>, <code>AppState.xmax</code>, <code>AppState.xmin</code>, <code>AppState.ymax</code>, <code>AppState.ymin</code>, <code>PredFitState.generated_catalog_active</code>, <code>PredFitState.generated_catalog_pending</code></td>
 <td><code>AppState.bar_x</code>, <code>AppState.cat_temp_k</code>, <code>AppState.data_loaded</code>, <code>AppState.dipole_cat</code>, <code>AppState.error_message</code>, <code>AppState.n_pred</code>, <code>AppState.pred_lines</code></td>
 <td><code>AppState.pred_global_max</code>, <code>AppState.pred_path</code>, <code>AppState.status_message</code></td>
@@ -5564,7 +5616,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-main-remove_spectrum"></a><code>F-MAIN-remove_spectrum</code></td>
 <td><code>remove_spectrum</code></td>
-<td><a class="src" href="../../main.c#L331-L342" title="apre il sorgente">331–342</a></td>
+<td><a class="src" href="../../main.c#L345-L356" title="apre il sorgente">345–356</a></td>
 <td>static</td>
 <td><code>main</code></td>
 <td><code>mirror_active</code></td>
@@ -5578,7 +5630,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-main-save_screenshot"></a><code>F-MAIN-save_screenshot</code></td>
 <td><code>save_screenshot</code></td>
-<td><a class="src" href="../../main.c#L345-L364" title="apre il sorgente">345–364</a></td>
+<td><a class="src" href="../../main.c#L359-L378" title="apre il sorgente">359–378</a></td>
 <td>static</td>
 <td><code>main</code></td>
 <td>—</td>
@@ -5592,7 +5644,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-main-main"></a><code>F-MAIN-main</code></td>
 <td><code>main</code></td>
-<td><a class="src" href="../../main.c#L366-L555" title="apre il sorgente">366–555</a></td>
+<td><a class="src" href="../../main.c#L380-L569" title="apre il sorgente">380–569</a></td>
 <td>extern</td>
 <td>—</td>
 <td><code>add_spectrum</code>, <code>commit_active</code>, <code>free_dataset</code>, <code>handle_app_events</code>, <code>init_app_defaults</code>, <code>plotgpu_init</code>, <code>plotgpu_shutdown</code>, <code>predfit_adopt_generated_catalog</code>, <code>predfit_dispose</code>, <code>predfit_load_session</code>, <code>predfit_render_advanced</code>, <code>predfit_restore_latest</code>, <code>predfit_save_session</code>, <code>remove_spectrum</code>, <code>render_app</code>, <code>render_app_frame</code>, <code>reopen_predfit_session</code>, <code>restore_session_spectrum</code>, <code>restore_session_view</code>, <code>save_screenshot</code>, <code>select_spectrum</code>, <code>set_predictions</code>, <code>settings_apply_defaults</code>, <code>settings_dispose</code>, <code>settings_init</code>, <code>settings_render</code>, <code>ui_font</code>, <code>ui_fonts_close</code>, <code>ui_fonts_init</code>, <code>update_sidebars</code></td>
@@ -5988,23 +6040,23 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 </thead><tbody><tr>
 <td><a id="a1-f-loader-parse_qn2"></a><code>F-LOADER-parse_qn2</code></td>
 <td><code>parse_qn2</code></td>
-<td><a class="src" href="../../loader.c#L11-L15" title="apre il sorgente">11–15</a></td>
+<td><a class="src" href="../../loader.c#L15-L25" title="apre il sorgente">15–25</a></td>
 <td>static</td>
-<td><code>parse_cat_quantum_numbers</code></td>
+<td><code>parse_cat_record</code></td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
-<td><code>atoi</code></td>
+<td>—</td>
 </tr>
 <tr>
 <td><a id="a1-f-loader-branch_from_qn"></a><code>F-LOADER-branch_from_qn</code></td>
 <td><code>branch_from_qn</code></td>
-<td><a class="src" href="../../loader.c#L17-L23" title="apre il sorgente">17–23</a></td>
+<td><a class="src" href="../../loader.c#L27-L33" title="apre il sorgente">27–33</a></td>
 <td>static</td>
-<td><code>load_existing_assignments</code>, <code>read_pred_cat</code>, <code>read_pred_cat_alloc</code></td>
+<td><code>load_existing_assignments</code>, <code>parse_cat_record</code></td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
@@ -6016,9 +6068,9 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-mu_from_qn"></a><code>F-LOADER-mu_from_qn</code></td>
 <td><code>mu_from_qn</code></td>
-<td><a class="src" href="../../loader.c#L25-L34" title="apre il sorgente">25–34</a></td>
+<td><a class="src" href="../../loader.c#L35-L44" title="apre il sorgente">35–44</a></td>
 <td>static</td>
-<td><code>load_existing_assignments</code>, <code>read_pred_cat</code>, <code>read_pred_cat_alloc</code></td>
+<td><code>load_existing_assignments</code>, <code>parse_cat_record</code></td>
 <td>—</td>
 <td>—</td>
 <td>—</td>
@@ -6028,37 +6080,37 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <td><code>abs</code></td>
 </tr>
 <tr>
-<td><a id="a1-f-loader-parse_cat_intensity_fields"></a><code>F-LOADER-parse_cat_intensity_fields</code></td>
-<td><code>parse_cat_intensity_fields</code></td>
-<td><a class="src" href="../../loader.c#L38-L48" title="apre il sorgente">38–48</a></td>
+<td><a id="a1-f-loader-cat_number"></a><code>F-LOADER-cat_number</code></td>
+<td><code>cat_number</code></td>
+<td><a class="src" href="../../loader.c#L56-L66" title="apre il sorgente">56–66</a></td>
 <td>static</td>
-<td><code>read_pred_cat</code>, <code>read_pred_cat_alloc</code></td>
-<td>—</td>
-<td><code>PredLine.cat_lgint</code>, <code>PredLine.elo_cm</code>, <code>PredLine.rot_dof</code></td>
+<td><code>parse_cat_record</code></td>
 <td>—</td>
 <td>—</td>
-<td><code>PredLine.lgint</code></td>
 <td>—</td>
-<td><code>sscanf</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td><code>strtod</code></td>
 </tr>
 <tr>
-<td><a id="a1-f-loader-parse_cat_quantum_numbers"></a><code>F-LOADER-parse_cat_quantum_numbers</code></td>
-<td><code>parse_cat_quantum_numbers</code></td>
-<td><a class="src" href="../../loader.c#L54-L65" title="apre il sorgente">54–65</a></td>
-<td>static</td>
-<td><code>read_pred_cat</code>, <code>read_pred_cat_alloc</code></td>
-<td><code>parse_qn2</code></td>
-<td><code>PredLine.Jl</code>, <code>PredLine.Ju</code>, <code>PredLine.Kal</code>, <code>PredLine.Kau</code>, <code>PredLine.Kcl</code>, <code>PredLine.Kcu</code>, <code>PredLine.M1l</code>, <code>PredLine.M1u</code>, <code>PredLine.M2l</code>, <code>PredLine.M2u</code>, <code>PredLine.M3l</code>, <code>PredLine.M3u</code>, <code>PredLine.n_qn</code></td>
+<td><a id="a1-f-loader-parse_cat_record"></a><code>F-LOADER-parse_cat_record</code></td>
+<td><code>parse_cat_record</code></td>
+<td><a class="src" href="../../loader.c#L68-L104" title="apre il sorgente">68–104</a></td>
+<td>extern</td>
+<td><code>read_pred_cat</code>, <code>read_pred_cat_alloc_counted</code></td>
+<td><code>branch_from_qn</code>, <code>cat_number</code>, <code>mu_from_qn</code>, <code>parse_qn2</code></td>
+<td><code>PredLine.branch</code>, <code>PredLine.cat_lgint</code>, <code>PredLine.elo_cm</code>, <code>PredLine.freq_mhz</code>, <code>PredLine.lgint</code>, <code>PredLine.linear_int</code>, <code>PredLine.mu</code>, <code>PredLine.n_qn</code>, <code>PredLine.rot_dof</code></td>
+<td>—</td>
+<td><code>PredLine.Jl</code>, <code>PredLine.Ju</code>, <code>PredLine.Kal</code>, <code>PredLine.Kau</code>, <code>PredLine.Kcl</code>, <code>PredLine.Kcu</code>, <code>PredLine.M1l</code>, <code>PredLine.M1u</code>, <code>PredLine.M2l</code>, <code>PredLine.M2u</code>, <code>PredLine.M3l</code>, <code>PredLine.M3u</code></td>
 <td>—</td>
 <td>—</td>
-<td>—</td>
-<td>—</td>
-<td><code>sscanf</code>, <code>strlen</code></td>
+<td><code>__builtin___memset_chk</code>, <code>__builtin_object_size</code>, <code>pow</code>, <code>strcspn</code></td>
 </tr>
 <tr>
 <td><a id="a1-f-loader-dipole_index"></a><code>F-LOADER-dipole_index</code></td>
 <td><code>dipole_index</code></td>
-<td><a class="src" href="../../loader.c#L67-L72" title="apre il sorgente">67–72</a></td>
+<td><a class="src" href="../../loader.c#L106-L111" title="apre il sorgente">106–111</a></td>
 <td>static</td>
 <td><code>rescale_predicted_intensities</code></td>
 <td>—</td>
@@ -6072,7 +6124,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-parse_line"></a><code>F-LOADER-parse_line</code></td>
 <td><code>parse_line</code></td>
-<td><a class="src" href="../../loader.c#L74-L78" title="apre il sorgente">74–78</a></td>
+<td><a class="src" href="../../loader.c#L113-L117" title="apre il sorgente">113–117</a></td>
 <td>static</td>
 <td><code>read_data</code>, <code>read_data_alloc</code></td>
 <td>—</td>
@@ -6086,7 +6138,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-trim_whitespace"></a><code>F-LOADER-trim_whitespace</code></td>
 <td><code>trim_whitespace</code></td>
-<td><a class="src" href="../../loader.c#L82-L95" title="apre il sorgente">82–95</a></td>
+<td><a class="src" href="../../loader.c#L121-L134" title="apre il sorgente">121–134</a></td>
 <td>static</td>
 <td><code>parse_config_line</code></td>
 <td>—</td>
@@ -6100,7 +6152,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-parse_config_line"></a><code>F-LOADER-parse_config_line</code></td>
 <td><code>parse_config_line</code></td>
-<td><a class="src" href="../../loader.c#L97-L119" title="apre il sorgente">97–119</a></td>
+<td><a class="src" href="../../loader.c#L136-L158" title="apre il sorgente">136–158</a></td>
 <td>static</td>
 <td><code>find_assigned_frequency_file</code></td>
 <td><code>trim_whitespace</code></td>
@@ -6114,7 +6166,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-find_assigned_frequency_file"></a><code>F-LOADER-find_assigned_frequency_file</code></td>
 <td><code>find_assigned_frequency_file</code></td>
-<td><a class="src" href="../../loader.c#L121-L152" title="apre il sorgente">121–152</a></td>
+<td><a class="src" href="../../loader.c#L160-L191" title="apre il sorgente">160–191</a></td>
 <td>extern</td>
 <td><code>ensure_aux_loaded</code></td>
 <td><code>parse_config_line</code></td>
@@ -6128,7 +6180,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-parse_assigned_frequency_line"></a><code>F-LOADER-parse_assigned_frequency_line</code></td>
 <td><code>parse_assigned_frequency_line</code></td>
-<td><a class="src" href="../../loader.c#L154-L199" title="apre il sorgente">154–199</a></td>
+<td><a class="src" href="../../loader.c#L193-L238" title="apre il sorgente">193–238</a></td>
 <td>static</td>
 <td><code>read_assigned_frequencies</code></td>
 <td>—</td>
@@ -6142,7 +6194,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-read_assigned_frequencies"></a><code>F-LOADER-read_assigned_frequencies</code></td>
 <td><code>read_assigned_frequencies</code></td>
-<td><a class="src" href="../../loader.c#L201-L218" title="apre il sorgente">201–218</a></td>
+<td><a class="src" href="../../loader.c#L240-L257" title="apre il sorgente">240–257</a></td>
 <td>extern</td>
 <td><code>ensure_aux_loaded</code></td>
 <td><code>parse_assigned_frequency_line</code></td>
@@ -6156,7 +6208,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-compare_pred_frequency"></a><code>F-LOADER-compare_pred_frequency</code></td>
 <td><code>compare_pred_frequency</code></td>
-<td><a class="src" href="../../loader.c#L220-L223" title="apre il sorgente">220–223</a></td>
+<td><a class="src" href="../../loader.c#L259-L262" title="apre il sorgente">259–262</a></td>
 <td>static</td>
 <td>—</td>
 <td>—</td>
@@ -6170,35 +6222,49 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-read_pred_cat"></a><code>F-LOADER-read_pred_cat</code></td>
 <td><code>read_pred_cat</code></td>
-<td><a class="src" href="../../loader.c#L225-L269" title="apre il sorgente">225–269</a></td>
+<td><a class="src" href="../../loader.c#L264-L294" title="apre il sorgente">264–294</a></td>
 <td>extern</td>
 <td>—</td>
-<td><code>branch_from_qn</code>, <code>mu_from_qn</code>, <code>parse_cat_intensity_fields</code>, <code>parse_cat_quantum_numbers</code></td>
-<td><code>PredLine.branch</code>, <code>PredLine.lgint</code>, <code>PredLine.mu</code></td>
+<td><code>parse_cat_record</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
 <td><code>PredLine.freq_mhz</code>, <code>PredLine.linear_int</code></td>
 <td>—</td>
-<td><code>PredLine.Jl</code>, <code>PredLine.Ju</code>, <code>PredLine.Kal</code>, <code>PredLine.Kau</code>, <code>PredLine.Kcl</code>, <code>PredLine.Kcu</code></td>
+<td><code>fclose</code>, <code>fgets</code>, <code>fopen</code>, <code>qsort</code></td>
+</tr>
+<tr>
+<td><a id="a1-f-loader-read_pred_cat_alloc_counted"></a><code>F-LOADER-read_pred_cat_alloc_counted</code></td>
+<td><code>read_pred_cat_alloc_counted</code></td>
+<td><a class="src" href="../../loader.c#L296-L349" title="apre il sorgente">296–349</a></td>
+<td>extern</td>
+<td><code>read_pred_cat_alloc</code>, <code>set_predictions</code></td>
+<td><code>parse_cat_record</code></td>
 <td>—</td>
-<td><code>__builtin___memset_chk</code>, <code>__builtin_object_size</code>, <code>fclose</code>, <code>fgets</code>, <code>fopen</code>, <code>pow</code>, <code>qsort</code>, <code>sscanf</code>, <code>strlen</code></td>
+<td>—</td>
+<td>—</td>
+<td><code>PredLine.freq_mhz</code>, <code>PredLine.linear_int</code></td>
+<td>—</td>
+<td><code>fclose</code>, <code>fgets</code>, <code>fopen</code>, <code>free</code>, <code>malloc</code>, <code>qsort</code>, <code>realloc</code></td>
 </tr>
 <tr>
 <td><a id="a1-f-loader-read_pred_cat_alloc"></a><code>F-LOADER-read_pred_cat_alloc</code></td>
 <td><code>read_pred_cat_alloc</code></td>
-<td><a class="src" href="../../loader.c#L271-L334" title="apre il sorgente">271–334</a></td>
+<td><a class="src" href="../../loader.c#L351-L356" title="apre il sorgente">351–356</a></td>
 <td>extern</td>
-<td><code>set_predictions</code></td>
-<td><code>branch_from_qn</code>, <code>mu_from_qn</code>, <code>parse_cat_intensity_fields</code>, <code>parse_cat_quantum_numbers</code></td>
-<td><code>PredLine.branch</code>, <code>PredLine.lgint</code>, <code>PredLine.mu</code></td>
-<td><code>PredLine.freq_mhz</code>, <code>PredLine.linear_int</code></td>
 <td>—</td>
-<td><code>PredLine.Jl</code>, <code>PredLine.Ju</code>, <code>PredLine.Kal</code>, <code>PredLine.Kau</code>, <code>PredLine.Kcl</code>, <code>PredLine.Kcu</code></td>
+<td><code>read_pred_cat_alloc_counted</code></td>
 <td>—</td>
-<td><code>__builtin___memset_chk</code>, <code>__builtin_object_size</code>, <code>fclose</code>, <code>fgets</code>, <code>fopen</code>, <code>free</code>, <code>malloc</code>, <code>pow</code>, <code>qsort</code>, <code>realloc</code>, <code>sscanf</code>, <code>strlen</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
 </tr>
 <tr>
 <td><a id="a1-f-loader-rescale_predicted_intensities"></a><code>F-LOADER-rescale_predicted_intensities</code></td>
 <td><code>rescale_predicted_intensities</code></td>
-<td><a class="src" href="../../loader.c#L336-L388" title="apre il sorgente">336–388</a></td>
+<td><a class="src" href="../../loader.c#L358-L410" title="apre il sorgente">358–410</a></td>
 <td>extern</td>
 <td><code>commit_text_input</code>, <code>handle_mouse_down</code>, <code>predfit_publish_shared_state</code>, <code>set_predictions</code></td>
 <td><code>dipole_index</code></td>
@@ -6212,7 +6278,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-rescale_predicted_intensities_by_species"></a><code>F-LOADER-rescale_predicted_intensities_by_species</code></td>
 <td><code>rescale_predicted_intensities_by_species</code></td>
-<td><a class="src" href="../../loader.c#L390-L427" title="apre il sorgente">390–427</a></td>
+<td><a class="src" href="../../loader.c#L412-L449" title="apre il sorgente">412–449</a></td>
 <td>extern</td>
 <td><code>predfit_adopt_generated_catalog</code>, <code>predfit_publish_shared_state</code></td>
 <td>—</td>
@@ -6226,7 +6292,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-read_data"></a><code>F-LOADER-read_data</code></td>
 <td><code>read_data</code></td>
-<td><a class="src" href="../../loader.c#L429-L460" title="apre il sorgente">429–460</a></td>
+<td><a class="src" href="../../loader.c#L451-L482" title="apre il sorgente">451–482</a></td>
 <td>extern</td>
 <td>—</td>
 <td><code>parse_line</code></td>
@@ -6240,7 +6306,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-read_data_alloc"></a><code>F-LOADER-read_data_alloc</code></td>
 <td><code>read_data_alloc</code></td>
-<td><a class="src" href="../../loader.c#L462-L520" title="apre il sorgente">462–520</a></td>
+<td><a class="src" href="../../loader.c#L484-L542" title="apre il sorgente">484–542</a></td>
 <td>extern</td>
 <td><code>add_spectrum</code></td>
 <td><code>parse_line</code></td>
@@ -6254,7 +6320,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-same_assignment_transition"></a><code>F-LOADER-same_assignment_transition</code></td>
 <td><code>same_assignment_transition</code></td>
-<td><a class="src" href="../../loader.c#L522-L528" title="apre il sorgente">522–528</a></td>
+<td><a class="src" href="../../loader.c#L544-L550" title="apre il sorgente">544–550</a></td>
 <td>static</td>
 <td><code>add_or_update_assignment</code>, <code>deduplicate_assignments</code></td>
 <td>—</td>
@@ -6268,7 +6334,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-deduplicate_assignments"></a><code>F-LOADER-deduplicate_assignments</code></td>
 <td><code>deduplicate_assignments</code></td>
-<td><a class="src" href="../../loader.c#L530-L547" title="apre il sorgente">530–547</a></td>
+<td><a class="src" href="../../loader.c#L552-L569" title="apre il sorgente">552–569</a></td>
 <td>extern</td>
 <td><code>add_or_update_assignment</code>, <code>handle_mouse_down</code>, <code>write_inputs</code></td>
 <td><code>same_assignment_transition</code></td>
@@ -6282,7 +6348,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-add_or_update_assignment"></a><code>F-LOADER-add_or_update_assignment</code></td>
 <td><code>add_or_update_assignment</code></td>
-<td><a class="src" href="../../loader.c#L549-L572" title="apre il sorgente">549–572</a></td>
+<td><a class="src" href="../../loader.c#L571-L594" title="apre il sorgente">571–594</a></td>
 <td>extern</td>
 <td><code>assign_selected_predictions</code>, <code>load_existing_assignments</code></td>
 <td><code>deduplicate_assignments</code>, <code>same_assignment_transition</code></td>
@@ -6296,7 +6362,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-parse_assignment_lin_order"></a><code>F-LOADER-parse_assignment_lin_order</code></td>
 <td><code>parse_assignment_lin_order</code></td>
-<td><a class="src" href="../../loader.c#L579-L607" title="apre il sorgente">579–607</a></td>
+<td><a class="src" href="../../loader.c#L601-L629" title="apre il sorgente">601–629</a></td>
 <td>static</td>
 <td><code>load_existing_assignments</code></td>
 <td>—</td>
@@ -6310,7 +6376,7 @@ Shift+Tab che campiona il profilo sulla larghezza del pannello
 <tr>
 <td><a id="a1-f-loader-load_existing_assignments"></a><code>F-LOADER-load_existing_assignments</code></td>
 <td><code>load_existing_assignments</code></td>
-<td><a class="src" href="../../loader.c#L609-L667" title="apre il sorgente">609–667</a></td>
+<td><a class="src" href="../../loader.c#L631-L689" title="apre il sorgente">631–689</a></td>
 <td>extern</td>
 <td><code>ensure_aux_loaded</code>, <code>import_fit_lines</code></td>
 <td><code>add_or_update_assignment</code>, <code>branch_from_qn</code>, <code>mu_from_qn</code>, <code>parse_assignment_lin_order</code></td>
@@ -10866,9 +10932,9 @@ quelle che ne passano l&#39;indirizzo a una chiamata (A) e quelle che lo leggono
 </tr>
 <tr>
 <td><code>PredLine.n_qn</code></td>
-<td><code>parse_cat_quantum_numbers</code>; <code>parse_assignment_lin_order</code>; <code>load_existing_assignments</code> (legacy); <code>import_fit_lines</code> (<code>slot/2</code> dal <code>.lin</code>)</td>
+<td><code>parse_cat_record</code> (dal passo #1: QNFMT % 10, sempre 1..6); <code>parse_assignment_lin_order</code>; <code>load_existing_assignments</code> (legacy); <code>import_fit_lines</code> (<code>slot/2</code> dal <code>.lin</code>)</td>
 <td>nessuno</td>
-<td>quattro definizioni diverse dello stesso dato (B-01, B-16)</td>
+<td>quattro definizioni diverse dello stesso dato (B-16; B-01 risolto al passo #1)</td>
 </tr>
 <tr>
 <td><code>PredLine.linear_int/lgint</code></td>
@@ -11068,14 +11134,6 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:add_parameter</code>, <code>predfit.c:add_species</code>, <code>predfit.c:advanced_begin_edit</code>, <code>predfit.c:advanced_commit_edit</code>, <code>predfit.c:delete_parameter</code>, <code>predfit.c:have_parameter_id</code>, <code>predfit.c:import_fitted_parameters</code>, <code>predfit.c:predfit_handle_advanced_event</code>, <code>predfit.c:predfit_load_session</code>, <code>predfit.c:predfit_render_advanced</code>, <code>predfit.c:predfit_save_session</code>, <code>predfit.c:push_fit_snapshot</code>, <code>predfit.c:sync_basic_from_parameters</code>, <code>predfit.c:sync_basic_parameters</code>, <code>predfit.c:write_inputs</code></td>
 </tr>
 <tr>
-<td><code>PredLine.lgint</code></td>
-<td>6</td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
-<td>—</td>
-<td>2</td>
-<td><code>layout.c:pred_passes_filter</code>, <code>loader.c:parse_cat_intensity_fields</code></td>
-</tr>
-<tr>
 <td><code>AppSettings.edit_anchor</code></td>
 <td>5</td>
 <td><code>settings.c:edit_begin</code>, <code>settings.c:edit_clamp</code>, <code>settings.c:edit_delete_selection</code>, <code>settings.c:edit_insert</code>, <code>settings.c:settings_handle_event</code></td>
@@ -11164,12 +11222,12 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:add_species</code>, <code>predfit.c:predfit_adopt_generated_catalog</code>, <code>predfit.c:predfit_load_session</code>, <code>predfit.c:predfit_publish_shared_state</code>, <code>predfit.c:predfit_render_advanced</code>, <code>predfit.c:predfit_save_session</code>, <code>predfit.c:push_fit_snapshot</code>, <code>predfit.c:store_active_species</code>, <code>view.c:draw_ui_overlays</code></td>
 </tr>
 <tr>
-<td><code>PredLine.linear_int</code></td>
+<td><code>PredLine.lgint</code></td>
 <td>5</td>
-<td><code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
 <td>—</td>
-<td>8</td>
-<td><code>controller.c:handle_mouse_down</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>view.c:broad_value_at</code>, <code>view.c:draw_prediction_view</code>, <code>view.c:prediction_visible_max</code></td>
+<td>1</td>
+<td><code>layout.c:pred_passes_filter</code></td>
 </tr>
 <tr>
 <td><code>SDL_Rect.h</code></td>
@@ -11308,33 +11366,17 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:advanced_begin_line_error</code>, <code>predfit.c:predfit_render_advanced</code>, <code>predfit.c:push_fit_snapshot</code>, <code>predfit.c:write_inputs</code></td>
 </tr>
 <tr>
-<td><code>PredLine.branch</code></td>
+<td><code>PredLine.linear_int</code></td>
 <td>4</td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>predfit.c:set_branch_and_dipole</code></td>
+<td><code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
 <td>—</td>
-<td>3</td>
-<td><code>layout.c:pred_passes_filter</code>, <code>view.c:draw_pred_line</code>, <code>view.c:ui_card_row</code></td>
-</tr>
-<tr>
-<td><code>PredLine.freq_mhz</code></td>
-<td>4</td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code></td>
-<td><code>loader.c:load_existing_assignments</code></td>
-<td>20</td>
-<td><code>algorithms.c:binary_search_pred_lower</code>, <code>algorithms.c:binary_search_pred_upper</code>, <code>controller.c:delete_assignment</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:current_pred_line</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:line_model</code>, <code>loader.c:add_or_update_assignment</code>, <code>loader.c:compare_pred_frequency</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>predfit.c:predfit_render_advanced</code>, <code>view.c:broad_max_between</code>, <code>view.c:broad_value_at</code>, <code>view.c:draw_cursor_overlay</code>, <code>view.c:draw_panel_headers</code>, <code>view.c:draw_prediction_view</code>, <code>view.c:ui_card_row</code></td>
-</tr>
-<tr>
-<td><code>PredLine.mu</code></td>
-<td>4</td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>predfit.c:set_branch_and_dipole</code></td>
-<td>—</td>
-<td>7</td>
-<td><code>intensity_fit.c:fit_relative_dipoles</code>, <code>intensity_fit.c:intensity_fit_run</code>, <code>intensity_fit.c:line_model</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>view.c:draw_pred_line</code>, <code>view.c:ui_card_row</code></td>
+<td>8</td>
+<td><code>controller.c:handle_mouse_down</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc_counted</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>view.c:broad_value_at</code>, <code>view.c:draw_prediction_view</code>, <code>view.c:prediction_visible_max</code></td>
 </tr>
 <tr>
 <td><code>PredLine.n_qn</code></td>
 <td>4</td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code>, <code>predfit.c:import_fit_lines</code></td>
 <td>—</td>
 <td>8</td>
 <td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
@@ -11610,6 +11652,30 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:active_species</code>, <code>predfit.c:add_species</code>, <code>predfit.c:advanced_begin_species_edit</code>, <code>predfit.c:advanced_commit_edit</code>, <code>predfit.c:predfit_render_advanced</code>, <code>predfit.c:predfit_save_session</code>, <code>predfit.c:write_inputs</code>, <code>predfit.c:write_multi_state_int</code></td>
 <td>10</td>
 <td><code>predfit.c:active_state_suffix</code>, <code>predfit.c:add_species</code>, <code>predfit.c:predfit_adopt_generated_catalog</code>, <code>predfit.c:predfit_handle_advanced_event</code>, <code>predfit.c:predfit_publish_shared_state</code>, <code>predfit.c:push_fit_snapshot</code>, <code>predfit.c:restore_fit_snapshot</code>, <code>predfit.c:state_count</code>, <code>predfit.c:write_inputs</code>, <code>predfit.c:write_multi_state_int</code></td>
+</tr>
+<tr>
+<td><code>PredLine.branch</code></td>
+<td>3</td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>predfit.c:set_branch_and_dipole</code></td>
+<td>—</td>
+<td>3</td>
+<td><code>layout.c:pred_passes_filter</code>, <code>view.c:draw_pred_line</code>, <code>view.c:ui_card_row</code></td>
+</tr>
+<tr>
+<td><code>PredLine.freq_mhz</code></td>
+<td>3</td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td><code>loader.c:load_existing_assignments</code></td>
+<td>20</td>
+<td><code>algorithms.c:binary_search_pred_lower</code>, <code>algorithms.c:binary_search_pred_upper</code>, <code>controller.c:delete_assignment</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:current_pred_line</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:line_model</code>, <code>loader.c:add_or_update_assignment</code>, <code>loader.c:compare_pred_frequency</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc_counted</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>predfit.c:predfit_render_advanced</code>, <code>view.c:broad_max_between</code>, <code>view.c:broad_value_at</code>, <code>view.c:draw_cursor_overlay</code>, <code>view.c:draw_panel_headers</code>, <code>view.c:draw_prediction_view</code>, <code>view.c:ui_card_row</code></td>
+</tr>
+<tr>
+<td><code>PredLine.mu</code></td>
+<td>3</td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>predfit.c:set_branch_and_dipole</code></td>
+<td>—</td>
+<td>7</td>
+<td><code>intensity_fit.c:fit_relative_dipoles</code>, <code>intensity_fit.c:intensity_fit_run</code>, <code>intensity_fit.c:line_model</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>view.c:draw_pred_line</code>, <code>view.c:ui_card_row</code></td>
 </tr>
 <tr>
 <td><code>SDL_Color.a</code></td>
@@ -12684,102 +12750,6 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:predfit_handle_advanced_event</code></td>
 </tr>
 <tr>
-<td><code>PredLine.Jl</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.Ju</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.Kal</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.Kau</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.Kcl</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.Kcu</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>14</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:read_pred_cat</code>, <code>loader.c:read_pred_cat_alloc</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M1l</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>9</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M1u</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>10</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M2l</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>9</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M2u</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>9</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M3l</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>9</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
-<td><code>PredLine.M3u</code></td>
-<td>2</td>
-<td><code>loader.c:parse_cat_quantum_numbers</code>, <code>predfit.c:import_fit_lines</code></td>
-<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code></td>
-<td>9</td>
-<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
-</tr>
-<tr>
 <td><code>PredLine.line_strength</code></td>
 <td>2</td>
 <td><code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
@@ -13716,9 +13686,105 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <td><code>predfit.c:fit_summary</code></td>
 </tr>
 <tr>
+<td><code>PredLine.Jl</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.Ju</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.Kal</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.Kau</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.Kcl</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.Kcu</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>13</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>layout.c:pred_passes_filter</code>, <code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_cat_record</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:set_branch_and_dipole</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M1l</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>9</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M1u</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>10</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:rescale_predicted_intensities_by_species</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M2l</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>9</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M2u</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>9</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M3l</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>9</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
+<td><code>PredLine.M3u</code></td>
+<td>1</td>
+<td><code>predfit.c:import_fit_lines</code></td>
+<td><code>loader.c:load_existing_assignments</code>, <code>loader.c:parse_assignment_lin_order</code>, <code>loader.c:parse_cat_record</code></td>
+<td>9</td>
+<td><code>controller.c:current_assignment_prediction</code>, <code>controller.c:handle_mouse_down</code>, <code>intensity_fit.c:intensity_fit_export</code>, <code>intensity_fit.c:same_qn</code>, <code>loader.c:same_assignment_transition</code>, <code>predfit.c:format_assignment_qn</code>, <code>predfit.c:import_fit_lines</code>, <code>predfit.c:write_inputs</code>, <code>view.c:format_pred_qn</code></td>
+</tr>
+<tr>
 <td><code>PredLine.cat_lgint</code></td>
 <td>1</td>
-<td><code>loader.c:parse_cat_intensity_fields</code></td>
+<td><code>loader.c:parse_cat_record</code></td>
 <td>—</td>
 <td>3</td>
 <td><code>intensity_fit.c:line_model</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
@@ -13726,7 +13792,7 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <tr>
 <td><code>PredLine.elo_cm</code></td>
 <td>1</td>
-<td><code>loader.c:parse_cat_intensity_fields</code></td>
+<td><code>loader.c:parse_cat_record</code></td>
 <td>—</td>
 <td>3</td>
 <td><code>intensity_fit.c:line_model</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
@@ -13734,7 +13800,7 @@ Pred&Fit; <code>PredFitState</code> contiene anche lo stato di UI della finestra
 <tr>
 <td><code>PredLine.rot_dof</code></td>
 <td>1</td>
-<td><code>loader.c:parse_cat_intensity_fields</code></td>
+<td><code>loader.c:parse_cat_record</code></td>
 <td>—</td>
 <td>3</td>
 <td><code>intensity_fit.c:line_model</code>, <code>loader.c:rescale_predicted_intensities</code>, <code>loader.c:rescale_predicted_intensities_by_species</code></td>
@@ -14994,7 +15060,9 @@ condivisa da render (<a class="src" href="../../view.c#L913-L950" title="apre il
 </tbody></table></div>
 <p>Barra titolo: nomi dei file mostrati (<a class="src" href="../../view.c#L896-L906" title="apre il sorgente">view.c:896-906</a>);
 <code>error_message</code> ha precedenza, <code>status_message</code> compare solo senza dati
-(<a class="src" href="../../view.c#L954-L958" title="apre il sorgente">view.c:954-958</a>). Nessun messaggio di esito per <em>Save all</em>,
+(<a class="src" href="../../view.c#L954-L958" title="apre il sorgente">view.c:954-958</a>). Dal passo #1 <code>set_predictions</code> mette in
+<code>error_message</code> anche il numero di righe del catalogo scartate perché hanno NQN 0
+o &gt; 6. Nessun messaggio di esito per <em>Save all</em>,
 <em>Find peaks</em>, <em>Export list</em>, <em>Export fit</em> (quest&#39;ultimo solo in <code>intfit_message</code>).</p>
 <hr>
 <h2 id="a3-a35-rail"><a class="hlink" href="#a3-a35-rail">#</a>A3.5 Rail</h2>
@@ -15841,7 +15909,10 @@ SPCAT a larghezza fissa come in <code>calcat.c:700-709</code> (vedi <a href="#re
 <li>Esecuzione completa: <code>sh docs/audit/repro/run_all.sh [cartella]</code>
 (<a href="repro/run_all.sh">repro/run_all.sh</a>). I log di questa esecuzione sono in
 <a href="repro/logs/">repro/logs/</a> (percorsi temporanei sostituiti da <code>$RUNS</code>,
-<code>$FIXTURES</code>, <code>$REPO</code>).</li>
+<code>$FIXTURES</code>, <code>$REPO</code>). Il log di uno scenario corretto da un passo di
+<a href="#piano-top">PIANO-FIX.md</a> è sostituito da quello dell&#39;esecuzione dopo quel
+passo (lo scenario lo indica con <strong>Dopo il passo #n</strong>); gli altri restano quelli
+del commit <code>1f4df65</code>.</li>
 <li>Indice AST: <a href="repro/ast_index.py">repro/ast_index.py</a> genera
 <a href="#a1-top">A1</a> e <a href="#a2-top">A2</a> dall&#39;AST JSON di clang.</li>
 <li><strong>Suite di regressione</strong> (dal passo #0 di <a href="#piano-top">PIANO-FIX.md</a>):
@@ -15902,6 +15973,12 @@ cat_letter    J=105 ("A5") -&gt; U=(0 3 0 ...)
 cat_trim      0 righe lette</code></pre>
 </li>
 <li>Esito: <strong>1768/2312 righe di <code>pred.cat</code> (76,5 %) hanno NQN sbagliato.</strong> Bug B-01, B-03, B-04.</li>
+<li><strong>Dopo il passo #1</strong> (log rigenerato): <code>pred.cat</code> 2312 righe tutte con <code>n_qn=3</code>
+(542 / 1174 / 594 / 2 per decina di J), la riga 5999.2867 con <code>n_qn=3</code>;
+<code>model.cat</code> 141 righe con <code>n_qn=4</code>; fixture 303, 304, 305, 306 con <code>n_qn</code> 3, 4, 5, 6
+su ogni riga; <code>cat_letter</code> J=105 → U=(105 3 102); <code>cat_trim</code> 5 righe lette.
+Test: <code>test_cat_nqn_from_qnfmt_3qn</code>, <code>test_cat_nqn_4_5_6</code>,
+<code>test_cat_letter_and_negative_qn</code>, <code>test_cat_trailing_spaces_irrelevant</code>.</li>
 </ul>
 <h3 id="a4-r-17--stesso-difetto-su-un-modelcat-generato-a-specie-singola-qnfmt_single_specieslog"><a class="hlink" href="#a4-r-17--stesso-difetto-su-un-modelcat-generato-a-specie-singola-qnfmt_single_specieslog">#</a>R-17 — Stesso difetto su un <code>model.cat</code> generato a specie singola (<a href="repro/logs/qnfmt_single_species.log">qnfmt_single_species.log</a>)</h3>
 <ul>
@@ -15909,6 +15986,8 @@ cat_trim      0 righe lette</code></pre>
 <li>Osservato: J 10..19 → <code>n_qn=1</code> (872), 20..29 → 2 (917), 30..39 → 3, 40..49 → 4 (59).</li>
 <li>Esito: il difetto non riguarda solo i CAT esterni; è nascosto nella sessione
 corrente solo perché 3 specie forzano QNFMT <code>1404</code>.</li>
+<li><strong>Dopo il passo #1</strong> (log rigenerato): tutte le 3350 righe con <code>n_qn=3</code>
+(543 / 872 / 917 / 959 / 59 per decina di J).</li>
 </ul>
 <h3 id="a4-r-02r-07--round-trip-completo-catalogo--selezione--picco--assignment--save-all--riavvio"><a class="hlink" href="#a4-r-02r-07--round-trip-completo-catalogo--selezione--picco--assignment--save-all--riavvio">#</a>R-02..R-07 — Round-trip completo catalogo → selezione → picco → assignment → <em>Save all</em> → riavvio</h3>
 <p>Log: <a href="repro/logs/rt3.log">rt3</a>, <a href="repro/logs/rt304.log">rt304</a>, <a href="repro/logs/rt1404.log">rt1404</a>,
@@ -16267,35 +16346,35 @@ ogni passo di <a href="#piano-top">PIANO-FIX.md</a>.</p>
 <td>CAT esterno 3 QN, J&lt;10 e J≥10</td>
 <td><code>cat3_303.cat</code>, <code>pred.cat</code></td>
 <td>= <code>n_qn</code> 3 su tutte le righe; = QN interi</td>
-<td>—</td>
+<td><code>test_cat_nqn_from_qnfmt_3qn</code></td>
 </tr>
 <tr>
 <td>T-02</td>
 <td>CAT 4 QN (spin, QNFMT 304) e (stato, 1404)</td>
 <td><code>cat4_304.cat</code>, <code>cat4_1404.cat</code></td>
 <td>= <code>n_qn</code> 4; = F / v nel quarto campo</td>
-<td><code>test_baseline_cat1404_nqn4</code> (solo QNFMT 1404)</td>
+<td><code>test_cat_nqn_4_5_6</code>, <code>test_baseline_cat1404_nqn4</code></td>
 </tr>
 <tr>
 <td>T-03</td>
 <td>CAT 5/6 QN</td>
 <td><code>cat5_305.cat</code>, <code>cat6_306.cat</code></td>
 <td>= <code>n_qn</code> 5/6</td>
-<td>—</td>
+<td><code>test_cat_nqn_4_5_6</code></td>
 </tr>
 <tr>
 <td>T-04</td>
 <td>QN ≥ 100 e ≤ −10 (codice lettera)</td>
 <td><code>cat_letter.cat</code> + riga con <code>a1</code></td>
 <td>= J 105; = −11</td>
-<td>—</td>
+<td><code>test_cat_letter_and_negative_qn</code></td>
 </tr>
 <tr>
 <td>T-05</td>
 <td>Righe senza spazi finali</td>
 <td><code>cat_trim.cat</code></td>
 <td>= numero di righe lette</td>
-<td>—</td>
+<td><code>test_cat_trailing_spaces_irrelevant</code></td>
 </tr>
 <tr>
 <td>T-06</td>

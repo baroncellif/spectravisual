@@ -96,7 +96,7 @@ Le domande complete sono nel report ([§12](README.md#12-domande-bloccanti)).
 | D3 | Dove salvare le esclusioni dal fit (file di Pred&Fit con chiave = identità)? | #8 | — | — |
 | D4 | CalcIntensity in `assignments.txt`: intensità del catalogo o intensità mostrata? | #9 | — | — |
 | D5 | Fit delle intensità con più specie: parametri per specie o una specie scelta? Risultati applicati a Pred&Fit solo su richiesta? | #9 | — | — |
-| D6 | Servono cataloghi con NQN = 0 (10 QN per stato) o NQN > 6? | #1 | — | — |
+| D6 | Servono cataloghi con NQN = 0 (10 QN per stato) o NQN > 6? | #1 | Non servono: le righe con NQN 0 o > 6 non vengono caricate e il loro numero compare nel messaggio di stato. | 2026-09-11 |
 | D7 | All'avvio Pred&Fit si ripristina da solo o solo su richiesta? | #21 | — | — |
 | D8 | Undo ripristina anche la lista degli assignment? | #8 | — | — |
 | D9 | Baseline delle aree del fit delle intensità: quale stima? | #10 | — | — |
@@ -184,7 +184,7 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   - `test_baseline_calculate_single_species`: Calculate con un modello a una
     specie produce `model.cat`;
   - `make test` funziona partendo da un clone pulito.
-- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #1 —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: `dcff7bc` —
   test aggiunti: `test_baseline_cat1404_nqn4`, `test_baseline_roundtrip_qnfmt1404`,
   `test_baseline_reassign_updates_obsfreq`, `test_baseline_right_drag_ascending`,
   `test_baseline_calculate_single_species` (5 PASS, anche su una copia pulita
@@ -230,7 +230,13 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     messaggio (finché D6 non dice altro).
 - **Documentazione**: report §6.1, §7.2, schede B-01/B-03/B-04/B-25, punto 1
   dell'executive summary; A4 R-01 e R-17.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ☑ fatto il 2026-09-11 — commit: hash registrato con il passo #2 —
+  test aggiunti: `test_cat_nqn_from_qnfmt_3qn`, `test_cat_nqn_4_5_6`,
+  `test_cat_letter_and_negative_qn`, `test_cat_trailing_spaces_irrelevant`,
+  `test_cat_fixed_width_numbers`, `test_cat_invalid_nqn_reported` (suite 11/11 PASS).
+  Nuove funzioni in `loader.h`: `parse_cat_record`, `read_pred_cat_alloc_counted`.
+  Con D6 le righe con NQN 0 o > 6 sono scartate e contate in `status_message` ed
+  `error_message`. R-01 e R-17 rieseguiti: nessuna riga con NQN errato.
 
 ### #2 — Nessuna perdita di assignment: restore da `data_dir`, righe `.lin` corte, scrittura sicura, salvataggio automatico
 
@@ -795,4 +801,4 @@ vincoli 1–6 verificati da test dedicati.
 
 | # | Descrizione | Prova | Trovato al passo | Passo in cui correggerlo |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| N-01 | Il numero di righe scartate dal passo #1 sta in `error_message`, che `add_spectrum` azzera a ogni caricamento riuscito ([main.c:282](../../main.c#L282)). All'avvio `spectravisual spettro.txt catalogo.cat` il catalogo è caricato prima dello spettro, quindi l'avviso sparisce subito. È lo stesso canale unico, sovrascritto da qualsiasi messaggio, di U-06. | lettura di `add_spectrum` e dell'ordine di caricamento in `main` (prima il `.cat`, poi gli spettri) | #1 | #24 |

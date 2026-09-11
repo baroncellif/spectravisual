@@ -11,6 +11,19 @@ int read_pred_cat_alloc(const char *fname, PredLine **out,
                         double *xmin, double *xmax,
                         double *global_max_int);
 
+/* One fixed-width .cat record (calpgm/calcat.c:700-709).  Returns 1 and fills
+   *pl - and *err_mhz, which PredLine does not keep, when not NULL - for a
+   record; 0 for a line that is not one (shorter than the QNFMT column, or a
+   non-numeric FREQ/ERR/LGINT/QNFMT); -1 for a record whose NQN (QNFMT % 10)
+   is 0 or above 6, which the app does not support. */
+int parse_cat_record(const char *line, PredLine *pl, double *err_mhz);
+
+/* read_pred_cat_alloc, also counting in *n_unsupported (may be NULL) the
+   records skipped because parse_cat_record returned -1. */
+int read_pred_cat_alloc_counted(const char *fname, PredLine **out,
+                                double *xmin, double *xmax,
+                                double *global_max_int, int *n_unsupported);
+
 // Rescale Pickett catalog intensities from the temperature used to create the
 // .cat to a requested LTE rotational temperature. The partition function uses
 // the rigid-rotor approximation Qrot(T) / Qrot(Tcat) = (T / Tcat)^(DR/2).

@@ -37,7 +37,10 @@ affermazione marcata **[RIPR]** nel resto dell'audit.
 - Esecuzione completa: `sh docs/audit/repro/run_all.sh [cartella]`
   ([repro/run_all.sh](repro/run_all.sh)). I log di questa esecuzione sono in
   [repro/logs/](repro/logs/) (percorsi temporanei sostituiti da `$RUNS`,
-  `$FIXTURES`, `$REPO`).
+  `$FIXTURES`, `$REPO`). Il log di uno scenario corretto da un passo di
+  [PIANO-FIX.md](PIANO-FIX.md) è sostituito da quello dell'esecuzione dopo quel
+  passo (lo scenario lo indica con **Dopo il passo #n**); gli altri restano quelli
+  del commit `1f4df65`.
 - Indice AST: [repro/ast_index.py](repro/ast_index.py) genera
   [A1](A1-funzioni.md) e [A2](A2-campi.md) dall'AST JSON di clang.
 - **Suite di regressione** (dal passo #0 di [PIANO-FIX.md](PIANO-FIX.md)):
@@ -99,12 +102,20 @@ identico / che cosa deve cambiare) e osservato.
   cat_trim      0 righe lette
   ```
 - Esito: **1768/2312 righe di `pred.cat` (76,5 %) hanno NQN sbagliato.** Bug B-01, B-03, B-04.
+- **Dopo il passo #1** (log rigenerato): `pred.cat` 2312 righe tutte con `n_qn=3`
+  (542 / 1174 / 594 / 2 per decina di J), la riga 5999.2867 con `n_qn=3`;
+  `model.cat` 141 righe con `n_qn=4`; fixture 303, 304, 305, 306 con `n_qn` 3, 4, 5, 6
+  su ogni riga; `cat_letter` J=105 → U=(105 3 102); `cat_trim` 5 righe lette.
+  Test: `test_cat_nqn_from_qnfmt_3qn`, `test_cat_nqn_4_5_6`,
+  `test_cat_letter_and_negative_qn`, `test_cat_trailing_spaces_irrelevant`.
 
 ### R-17 — Stesso difetto su un `model.cat` generato a specie singola ([qnfmt_single_species.log](repro/logs/qnfmt_single_species.log))
 - Input: `model.cat` prodotto da SPCAT via Pred&Fit con 1 specie (`.par` "s 1 1 0" → QNFMT `303`).
 - Osservato: J 10..19 → `n_qn=1` (872), 20..29 → 2 (917), 30..39 → 3, 40..49 → 4 (59).
 - Esito: il difetto non riguarda solo i CAT esterni; è nascosto nella sessione
   corrente solo perché 3 specie forzano QNFMT `1404`.
+- **Dopo il passo #1** (log rigenerato): tutte le 3350 righe con `n_qn=3`
+  (543 / 872 / 917 / 959 / 59 per decina di J).
 
 ### R-02..R-07 — Round-trip completo catalogo → selezione → picco → assignment → *Save all* → riavvio
 Log: [rt3](repro/logs/rt3.log), [rt304](repro/logs/rt304.log), [rt1404](repro/logs/rt1404.log),
@@ -452,11 +463,11 @@ ogni passo di [PIANO-FIX.md](PIANO-FIX.md).
 
 | # | Caso | Input | Oracolo | Test |
 |---|---|---|---|---|
-| T-01 | CAT esterno 3 QN, J<10 e J≥10 | `cat3_303.cat`, `pred.cat` | = `n_qn` 3 su tutte le righe; = QN interi | — |
-| T-02 | CAT 4 QN (spin, QNFMT 304) e (stato, 1404) | `cat4_304.cat`, `cat4_1404.cat` | = `n_qn` 4; = F / v nel quarto campo | `test_baseline_cat1404_nqn4` (solo QNFMT 1404) |
-| T-03 | CAT 5/6 QN | `cat5_305.cat`, `cat6_306.cat` | = `n_qn` 5/6 | — |
-| T-04 | QN ≥ 100 e ≤ −10 (codice lettera) | `cat_letter.cat` + riga con `a1` | = J 105; = −11 | — |
-| T-05 | Righe senza spazi finali | `cat_trim.cat` | = numero di righe lette | — |
+| T-01 | CAT esterno 3 QN, J<10 e J≥10 | `cat3_303.cat`, `pred.cat` | = `n_qn` 3 su tutte le righe; = QN interi | `test_cat_nqn_from_qnfmt_3qn` |
+| T-02 | CAT 4 QN (spin, QNFMT 304) e (stato, 1404) | `cat4_304.cat`, `cat4_1404.cat` | = `n_qn` 4; = F / v nel quarto campo | `test_cat_nqn_4_5_6`, `test_baseline_cat1404_nqn4` |
+| T-03 | CAT 5/6 QN | `cat5_305.cat`, `cat6_306.cat` | = `n_qn` 5/6 | `test_cat_nqn_4_5_6` |
+| T-04 | QN ≥ 100 e ≤ −10 (codice lettera) | `cat_letter.cat` + riga con `a1` | = J 105; = −11 | `test_cat_letter_and_negative_qn` |
+| T-05 | Righe senza spazi finali | `cat_trim.cat` | = numero di righe lette | `test_cat_trailing_spaces_irrelevant` |
 | T-06 | Transizioni uguali nei primi 3 QN, diverse nei successivi | `cat4_304` (F), `cat4_1404` (v), `cat5_305` | = due assignment distinti dopo save/reopen | — |
 | T-07 | Save/reopen `assignments.txt` | R-02..R-07 | = QN, NQN, ObsFreq, CalcFreq, CalcInt | `test_baseline_roundtrip_qnfmt1404` (solo QNFMT 1404) |
 | T-08 | Riassegnazione della stessa transizione a un altro picco | 2 picchi, 1 transizione | Δ solo ObsFreq; = numero di assignment | `test_baseline_reassign_updates_obsfreq` |

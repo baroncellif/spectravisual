@@ -22,6 +22,8 @@ def qn2(v):
         return "%2d" % v
     if 100 <= v < 360:                      # Pickett letter code
         return chr(ord('A') + v // 10 - 10) + str(v % 10)
+    if -270 < v <= -10:                     # a0 = -10, a1 = -11, ...
+        return chr(ord('a') + (-v) // 10 - 1) + str((-v) % 10)
     raise ValueError(v)
 
 def line(freq, lgint, qnfmt, up, lo, err=0.0010, dr=3, elo=1.0, gup=11, tag=1):
@@ -74,6 +76,21 @@ write("cat6_306.cat", [
 write("cat_letter.cat", [
     line(3400.0000, -4.0, 303, [105, 3, 102], [104, 3, 101]),
     line(3401.0000, -4.0, 303, [6, 3, 3], [5, 3, 2]),
+])
+# Negative QN: -d is written "-d", -10 and below with a lower-case letter
+write("cat_negative.cat", [
+    line(3402.0000, -4.0, 303, [7, -11, -5], [6, -10, 3]),
+])
+# FREQ and ERR touching (ERR >= 100, as in the last row of .fit/model.cat),
+# ELO and GUP touching (three-digit GUP)
+write("cat_freq_err.cat", [
+    line(6348.1049, -5.1234, 303, [9, 2, 7], [8, 2, 6], err=158.2229, elo=12.3456, gup=123),
+])
+# NQN 0 (10 QN per state) and NQN 7 are not supported (D6)
+write("cat_nqn_invalid.cat", [
+    line(3500.0000, -4.0, 303, [5, 1, 5], [4, 1, 4]),
+    line(3501.0000, -4.0, 300, [5, 1, 5], [4, 1, 4]),
+    line(3502.0000, -4.0, 307, [5, 1, 5], [4, 1, 4]),
 ])
 # A real pred.cat excerpt with trailing blanks stripped (common after editing)
 with open(REFERENCE) as f:

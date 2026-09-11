@@ -353,6 +353,191 @@ static int test_baseline_calculate_single_species(void) {
     DONE();
 }
 
+/* ============================================================== #1 parser */
+
+typedef struct { double freq; int n_qn; int qn[12]; } CatRow;
+
+static const char *fmt_qn(const int q[12]) {
+    static char buf[4][96];
+    static int k;
+    k = (k + 1) % 4;
+    snprintf(buf[k], sizeof(buf[k]), "(%d %d %d %d %d %d ; %d %d %d %d %d %d)",
+             q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11]);
+    return buf[k];
+}
+
+/* Reads `path` and compares every row (frequency order) with `want`. */
+static void check_cat_rows(const char *label, const char *path, const CatRow *want, int n_want) {
+    PredLine *L = NULL;
+    double x0, x1, gmax;
+    int n = read_pred_cat_alloc(path, &L, &x0, &x1, &gmax);
+    char what[160];
+    snprintf(what, sizeof(what), "%s: righe lette", label);
+    CHECK_INT(what, n, n_want);
+    for (int i = 0; i < n && i < n_want; i++) {
+        snprintf(what, sizeof(what), "%s %.4f MHz: frequenza", label, want[i].freq);
+        CHECK_DBL(what, L[i].freq_mhz, want[i].freq, 1e-9);
+        snprintf(what, sizeof(what), "%s %.4f MHz: n_qn", label, want[i].freq);
+        CHECK_INT(what, L[i].n_qn, want[i].n_qn);
+        int q[12];
+        qn_of(&L[i], q);
+        CHECK(memcmp(q, want[i].qn, sizeof(q)) == 0, "%s %.4f MHz: QN attesi %s, ottenuti %s",
+              label, want[i].freq, fmt_qn(want[i].qn), fmt_qn(q));
+    }
+    free(L);
+}
+
+/* T-01: NQN is QNFMT % 10 on every row, whatever the number of digits of J. */
+static int test_cat_nqn_from_qnfmt_3qn(void) {
+    static const CatRow rows[] = {
+        {3000.1000, 3, { 5, 1,  5, 0, 0, 0,   4, 1,  4, 0, 0, 0}},
+        {5980.0000, 3, {11, 1, 11, 0, 0, 0,  10, 1, 10, 0, 0, 0}},
+        {5999.2867, 3, {11, 0, 11, 0, 0, 0,  10, 1,  9, 0, 0, 0}},
+        {7000.0000, 3, {25, 3, 22, 0, 0, 0,  24, 3, 21, 0, 0, 0}},
+        {8000.0000, 3, {45, 2, 43, 0, 0, 0,  44, 2, 42, 0, 0, 0}},
+        {9000.0000, 3, {72, 1, 71, 0, 0, 0,  71, 1, 70, 0, 0, 0}},
+    };
+    check_cat_rows("cat3_303", fx("cat3_303.cat"), rows, 6);
+
+    PredLine *L = NULL;
+    double x0, x1, gmax;
+    int n = read_pred_cat_alloc(fixture("pred_reference.cat"), &L, &x0, &x1, &gmax);
+    CHECK_INT("pred_reference: righe lette", n, 2312);
+    int wrong = 0, first = -1;
+    for (int i = 0; i < n; i++) if (L[i].n_qn != 3) { if (first < 0) first = i; wrong++; }
+    CHECK(wrong == 0, "pred_reference: attese 0 righe con n_qn != 3, ottenute %d (la prima a %.4f MHz con n_qn %d)",
+          wrong, first >= 0 ? L[first].freq_mhz : 0.0, first >= 0 ? L[first].n_qn : 0);
+    static const int want_5999[12] = {11, 0, 11, 0, 0, 0, 10, 1, 9, 0, 0, 0};
+    int found = 0;
+    for (int i = 0; i < n; i++) {
+        if (fabs(L[i].freq_mhz - 5999.2867) > 1e-6) continue;
+        int q[12];
+        qn_of(&L[i], q);
+        found = 1;
+        CHECK_INT("pred_reference 5999.2867 MHz: n_qn", L[i].n_qn, 3);
+        CHECK(memcmp(q, want_5999, sizeof(q)) == 0, "pred_reference 5999.2867 MHz: QN attesi %s, ottenuti %s",
+              fmt_qn(want_5999), fmt_qn(q));
+    }
+    CHECK(found, "pred_reference: attesa la riga a 5999.2867 MHz, non trovata");
+    free(L);
+    DONE();
+}
+
+/* T-02, T-03: four QN with F (304) or v (1404) in the fourth field, five, six. */
+static int test_cat_nqn_4_5_6(void) {
+    static const CatRow c304[] = {
+        {3100.0000, 4, { 3, 1,  2,  4, 0, 0,   2, 1,  1,  3, 0, 0}},
+        {3100.3000, 4, { 3, 1,  2,  3, 0, 0,   2, 1,  1,  2, 0, 0}},
+        {6100.0000, 4, {12, 1, 11, 13, 0, 0,  11, 1, 10, 12, 0, 0}},
+        {6100.3000, 4, {12, 1, 11, 12, 0, 0,  11, 1, 10, 11, 0, 0}},
+    };
+    static const CatRow c1404[] = {
+        {2511.3375, 4, { 4, 1,  4, 0, 0, 0,   3, 1, 3, 0, 0, 0}},
+        {2511.9000, 4, { 4, 1,  4, 1, 0, 0,   3, 1, 3, 1, 0, 0}},
+        {6033.5894, 4, {12, 2, 10, 2, 0, 0,  11, 2, 9, 2, 0, 0}},
+        {6034.0000, 4, {12, 2, 10, 0, 0, 0,  11, 2, 9, 0, 0, 0}},
+    };
+    static const CatRow c305[] = {
+        {3200.0000, 5, { 4, 0,  4,  5,  5, 0,   3, 0,  3,  4,  4, 0}},
+        {3200.3000, 5, { 4, 0,  4,  5,  6, 0,   3, 0,  3,  4,  5, 0}},
+        {6200.0000, 5, {15, 1, 14, 16, 16, 0,  14, 1, 13, 15, 15, 0}},
+    };
+    static const CatRow c306[] = {
+        {3300.0000, 6, { 2, 1,  1,  3,  4,  5,   1, 1,  0,  2,  3,  4}},
+        {3300.3000, 6, { 2, 1,  1,  3,  4,  4,   1, 1,  0,  2,  3,  3}},
+        {6300.0000, 6, {13, 1, 12, 14, 15, 16,  12, 1, 11, 13, 14, 15}},
+    };
+    check_cat_rows("cat4_304", fx("cat4_304.cat"), c304, 4);
+    check_cat_rows("cat4_1404", fx("cat4_1404.cat"), c1404, 4);
+    check_cat_rows("cat5_305", fx("cat5_305.cat"), c305, 3);
+    check_cat_rows("cat6_306", fx("cat6_306.cat"), c306, 3);
+    DONE();
+}
+
+/* T-04: Pickett's letter codes (A5 = 105, a1 = -11) and "-d" (-5). */
+static int test_cat_letter_and_negative_qn(void) {
+    static const CatRow letter[] = {
+        {3400.0000, 3, {105, 3, 102, 0, 0, 0,  104, 3, 101, 0, 0, 0}},
+        {3401.0000, 3, {  6, 3,   3, 0, 0, 0,    5, 3,   2, 0, 0, 0}},
+    };
+    static const CatRow negative[] = {
+        {3402.0000, 3, {7, -11, -5, 0, 0, 0,  6, -10, 3, 0, 0, 0}},
+    };
+    check_cat_rows("cat_letter", fx("cat_letter.cat"), letter, 2);
+    check_cat_rows("cat_negative", fx("cat_negative.cat"), negative, 1);
+    DONE();
+}
+
+/* T-05: the same records with and without trailing blanks. */
+static int test_cat_trailing_spaces_irrelevant(void) {
+    FILE *src = fopen(fixture("pred_reference.cat"), "r");
+    FILE *dst = fopen(work_path("untrimmed.cat"), "w");
+    char line[512];
+    for (int i = 0; i < 5 && src && dst && fgets(line, sizeof(line), src); i++) fputs(line, dst);
+    if (src) fclose(src);
+    if (dst) fclose(dst);
+
+    PredLine *a = NULL, *b = NULL;
+    double x0, x1, gmax;
+    int na = read_pred_cat_alloc(work_path("untrimmed.cat"), &a, &x0, &x1, &gmax);
+    int nb = read_pred_cat_alloc(fx("cat_trim.cat"), &b, &x0, &x1, &gmax);
+    CHECK_INT("righe lette con gli spazi finali", na, 5);
+    CHECK_INT("righe lette senza spazi finali", nb, na);
+    for (int i = 0; i < na && i < nb; i++) {
+        int qa[12], qb[12];
+        qn_of(&a[i], qa); qn_of(&b[i], qb);
+        CHECK_DBL("frequenza", b[i].freq_mhz, a[i].freq_mhz, 0.0);
+        CHECK_DBL("LGINT", b[i].cat_lgint, a[i].cat_lgint, 0.0);
+        CHECK_DBL("ELO", b[i].elo_cm, a[i].elo_cm, 0.0);
+        CHECK_INT("DR", b[i].rot_dof, a[i].rot_dof);
+        CHECK_INT("n_qn", b[i].n_qn, a[i].n_qn);
+        CHECK(memcmp(qa, qb, sizeof(qa)) == 0, "riga %d: QN attesi %s, ottenuti %s", i, fmt_qn(qa), fmt_qn(qb));
+    }
+    free(a); free(b);
+    DONE();
+}
+
+/* B-25: the numeric fields are fixed width (calpgm/calcat.c:700-709), so
+   FREQ/ERR and ELO/GUP that touch are still read apart. */
+static int test_cat_fixed_width_numbers(void) {
+    char line[512] = "";
+    FILE *f = fopen(fx("cat_freq_err.cat"), "r");
+    if (f) { if (!fgets(line, sizeof(line), f)) line[0] = '\0'; fclose(f); }
+    CHECK(strstr(line, "6348.1049158.2229") != NULL, "fixture: attesi FREQ ed ERR a contatto, riga '%s'", line);
+
+    PredLine *L = NULL;
+    double x0, x1, gmax;
+    int n = read_pred_cat_alloc(fx("cat_freq_err.cat"), &L, &x0, &x1, &gmax);
+    CHECK_INT("righe lette", n, 1);
+    if (n == 1) {
+        CHECK_DBL("FREQ", L[0].freq_mhz, 6348.1049, 1e-9);
+        CHECK_DBL("LGINT", L[0].cat_lgint, -5.1234, 1e-9);
+        CHECK_DBL("ELO", L[0].elo_cm, 12.3456, 1e-9);
+        CHECK_INT("DR", L[0].rot_dof, 3);
+    }
+    free(L);
+    /* ERR is not kept in PredLine: parse_cat_record returns it. */
+    PredLine rec;
+    double err = 0.0;
+    CHECK_INT("parse_cat_record", parse_cat_record(line, &rec, &err), 1);
+    CHECK_DBL("ERR", err, 158.2229, 1e-9);
+    DONE();
+}
+
+/* D6: NQN 0 (10 QN per state) and NQN > 6 are not loaded and are counted in
+   the message shown to the user. */
+static int test_cat_invalid_nqn_reported(void) {
+    AppState *s = new_state();
+    set_predictions(s, fx("cat_nqn_invalid.cat"));
+    CHECK_INT("righe caricate", s->n_pred, 1);
+    if (s->n_pred >= 1) CHECK_DBL("riga caricata", s->pred_lines[0].freq_mhz, 3500.0, 1e-9);
+    CHECK(strstr(s->status_message, "2 skipped") != NULL,
+          "messaggio di stato: atteso il conteggio '2 skipped', ottenuto '%s'", s->status_message);
+    CHECK(strstr(s->error_message, "2 skipped") != NULL,
+          "messaggio nella barra del titolo: atteso il conteggio '2 skipped', ottenuto '%s'", s->error_message);
+    DONE();
+}
+
 /* ================================================================ runner */
 typedef struct { const char *name; int (*fn)(void); } Test;
 
@@ -362,6 +547,12 @@ static const Test TESTS[] = {
     {"test_baseline_reassign_updates_obsfreq", test_baseline_reassign_updates_obsfreq},
     {"test_baseline_right_drag_ascending",     test_baseline_right_drag_ascending},
     {"test_baseline_calculate_single_species", test_baseline_calculate_single_species},
+    {"test_cat_nqn_from_qnfmt_3qn",            test_cat_nqn_from_qnfmt_3qn},
+    {"test_cat_nqn_4_5_6",                     test_cat_nqn_4_5_6},
+    {"test_cat_letter_and_negative_qn",        test_cat_letter_and_negative_qn},
+    {"test_cat_trailing_spaces_irrelevant",    test_cat_trailing_spaces_irrelevant},
+    {"test_cat_fixed_width_numbers",           test_cat_fixed_width_numbers},
+    {"test_cat_invalid_nqn_reported",          test_cat_invalid_nqn_reported},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 
