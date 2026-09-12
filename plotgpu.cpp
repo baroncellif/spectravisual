@@ -14,17 +14,24 @@
  * as a user interface.
  */
 static bool  g_ready = false;
-static bool  g_in_frame = false;
 static float g_scale = 1.0f;
 static SDL_Renderer *g_ren = nullptr;
 static std::vector<ImVec2> g_pts;
 
-int plotgpu_init(SDL_Renderer *renderer) {
-    if (g_ready) return 1;
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
+/* One ImGui context per renderer.  The renderer backend keeps its textures in
+   the context, so a second window (the intensity-fit preview draws the very
+   same plot through view.c) needs a context of its own rather than borrowing
+   the main window's font atlas and draw lists. */
+struct Target {
+    SDL_Renderer *renderer;
+    ImGuiContext *context;
+    bool in_frame;
+};
+static const int MAX_TARGETS = 8;
+static Target g_targets[MAX_TARGETS];
+static int g_n_targets = 0;
 
+static void configure_context(void) {
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;      /* no imgui.ini next to the working directory */
     io.LogFilename = nullptr;
@@ -36,30 +43,86 @@ int plotgpu_init(SDL_Renderer *renderer) {
     ImGui::GetStyle().AntiAliasedLines = true;
     ImGui::GetStyle().AntiAliasedLinesUseTex = false;   /* geometry, not a texture ramp */
     ImGui::GetStyle().AntiAliasedFill = true;
+}
 
+static Target *find_target(SDL_Renderer *renderer) {
+    for (int i = 0; i < g_n_targets; i++)
+        if (g_targets[i].renderer == renderer) return &g_targets[i];
+    return nullptr;
+}
+
+static Target *add_target(SDL_Renderer *renderer) {
+    if (!renderer || g_n_targets >= MAX_TARGETS) return nullptr;
+    ImGuiContext *previous = ImGui::GetCurrentContext();
+    ImGuiContext *context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(context);
+    configure_context();
     if (!ImGui_ImplSDLRenderer2_Init(renderer)) {
-        ImPlot::DestroyContext();
-        ImGui::DestroyContext();
-        return 0;
+        ImGui::DestroyContext(context);
+        ImGui::SetCurrentContext(previous);
+        return nullptr;
     }
+    Target *t = &g_targets[g_n_targets++];
+    t->renderer = renderer;
+    t->context = context;
+    t->in_frame = false;
+    return t;
+}
+
+/* The target of `renderer`, made current; created on first use once the main
+   renderer exists. */
+static Target *use_target(SDL_Renderer *renderer) {
+    if (!g_ready) return nullptr;
+    Target *t = find_target(renderer);
+    if (!t) t = add_target(renderer);
+    if (t) ImGui::SetCurrentContext(t->context);
+    return t;
+}
+
+static void destroy_target(int index) {
+    Target *t = &g_targets[index];
+    ImGui::SetCurrentContext(t->context);
+    if (t->in_frame) ImGui::EndFrame();
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui::DestroyContext(t->context);
+    g_targets[index] = g_targets[--g_n_targets];
+    ImGui::SetCurrentContext(g_n_targets > 0 ? g_targets[0].context : nullptr);
+}
+
+int plotgpu_init(SDL_Renderer *renderer) {
+    if (g_ready) return 1;
+    IMGUI_CHECKVERSION();
     g_ready = true;
+    if (!add_target(renderer)) { g_ready = false; return 0; }
+    ImGui::SetCurrentContext(g_targets[0].context);
+    ImPlot::CreateContext();       /* after ImGui: it reads the ImGui style */
     return 1;
+}
+
+void plotgpu_release(SDL_Renderer *renderer) {
+    if (!g_ready) return;
+    for (int i = 1; i < g_n_targets; i++)   /* the main renderer lives until shutdown */
+        if (g_targets[i].renderer == renderer) { destroy_target(i); return; }
 }
 
 void plotgpu_shutdown(void) {
     if (!g_ready) return;
-    if (g_in_frame) { ImGui::EndFrame(); g_in_frame = false; }
-    ImGui_ImplSDLRenderer2_Shutdown();
+    if (g_n_targets > 0) ImGui::SetCurrentContext(g_targets[0].context);
     ImPlot::DestroyContext();
-    ImGui::DestroyContext();
+    while (g_n_targets > 0) destroy_target(g_n_targets - 1);
     g_ready = false;
 }
 
 void plotgpu_begin_frame(SDL_Renderer *renderer, float device_scale) {
-    if (!g_ready) return;
-    if (g_in_frame) { ImGui::EndFrame(); g_in_frame = false; }
+    Target *t = use_target(renderer);
+    if (!t) return;
+    if (t->in_frame) { ImGui::EndFrame(); t->in_frame = false; }
 
-    g_scale = device_scale > 0.1f ? device_scale : 1.0f;
+    /* The renderer's own scale is the logical-to-device factor of the window
+       it draws, which is right for a second window on another display too. */
+    float sx = 0.0f, sy = 0.0f;
+    SDL_RenderGetScale(renderer, &sx, &sy);
+    g_scale = sx > 0.1f ? sx : (device_scale > 0.1f ? device_scale : 1.0f);
     g_ren = renderer;
 
     int dw = 0, dh = 0;
@@ -72,7 +135,14 @@ void plotgpu_begin_frame(SDL_Renderer *renderer, float device_scale) {
 
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui::NewFrame();
-    g_in_frame = true;
+    t->in_frame = true;
+}
+
+/* Geometry is queued into the context of the frame currently being built. */
+static bool in_frame(void) {
+    if (!g_ready || !g_ren) return false;
+    Target *t = find_target(g_ren);
+    return t && t->in_frame && ImGui::GetCurrentContext() == t->context;
 }
 
 /* The pane clip set on the SDL renderer has to be repeated for the draw list:
@@ -99,7 +169,7 @@ static void fill_points(const SDL_FPoint *pts, int n) {
 }
 
 void plotgpu_polyline(const SDL_FPoint *pts, int n, SDL_Color color, float width) {
-    if (!g_ready || !g_in_frame || n < 2) return;
+    if (!in_frame() || n < 2) return;
     fill_points(pts, n);
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
     push_current_clip(dl);
@@ -108,7 +178,7 @@ void plotgpu_polyline(const SDL_FPoint *pts, int n, SDL_Color color, float width
 }
 
 void plotgpu_segments(const SDL_FPoint *pts, int n, SDL_Color color, float width) {
-    if (!g_ready || !g_in_frame || n < 2) return;
+    if (!in_frame() || n < 2) return;
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
     push_current_clip(dl);
     ImU32 col = to_u32(color);
@@ -120,7 +190,7 @@ void plotgpu_segments(const SDL_FPoint *pts, int n, SDL_Color color, float width
 }
 
 void plotgpu_columns(const SDL_FPoint *pts, int n, SDL_Color color, float width) {
-    if (!g_ready || !g_in_frame || n < 2) return;
+    if (!in_frame() || n < 2) return;
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
     push_current_clip(dl);
     ImU32 col = to_u32(color);
@@ -143,10 +213,11 @@ void plotgpu_columns(const SDL_FPoint *pts, int n, SDL_Color color, float width)
 }
 
 void plotgpu_flush(SDL_Renderer *renderer) {
-    if (!g_ready) return;
-    if (!g_in_frame) return;
+    Target *t = g_ready ? find_target(renderer) : nullptr;
+    if (!t || !t->in_frame) return;
+    ImGui::SetCurrentContext(t->context);
     ImGui::Render();
-    g_in_frame = false;
+    t->in_frame = false;
 
     /* Draw at device resolution: the geometry is already in device pixels. */
     float sx = 1.0f, sy = 1.0f;

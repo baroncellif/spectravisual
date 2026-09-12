@@ -3,7 +3,7 @@ CC = gcc
 TARGET = spectravisual
 
 # --- Source and Object Files ---
-SRCS = main.c view.c controller.c algorithms.c layout.c loader.c intensity_fit.c predfit.c settings.c ui_icons.c
+SRCS = main.c view.c controller.c algorithms.c layout.c loader.c intensity_fit.c intensity_window.c predfit.c settings.c ui_icons.c
 
 # Dear ImGui draws the spectrum lines; ImPlot is compiled in and ready for the
 # panes themselves, which still use the application's own axes and decimation.
@@ -79,7 +79,7 @@ $(TARGET): $(OBJS) $(CXXOBJS)
 # never use (tests/plotgpu_stub.c).  `make test` builds and runs all of it;
 # `./tests/test_audit <name>` runs a single test.
 TEST_BIN  = tests/test_audit
-TEST_SRCS = loader.c algorithms.c layout.c settings.c ui_icons.c intensity_fit.c view.c tests/plotgpu_stub.c
+TEST_SRCS = loader.c algorithms.c layout.c settings.c ui_icons.c intensity_fit.c intensity_window.c view.c tests/plotgpu_stub.c
 
 $(TEST_BIN): tests/test_audit.c main.c controller.c predfit.c $(TEST_SRCS) $(HDRS)
 	$(CC) -g -O0 -Wall -Wno-unused-function $(SDL_CFLAGS) -I. -DSV_TESTS_DIR='"$(CURDIR)/tests"' \

@@ -22,6 +22,10 @@ extern "C" {
 int  plotgpu_init(SDL_Renderer *renderer);
 void plotgpu_shutdown(void);
 
+/* Any other renderer gets its own drawing context the first time a frame is
+   begun on it.  Call this before destroying such a renderer. */
+void plotgpu_release(SDL_Renderer *renderer);
+
 /* Once per frame, before anything is queued. */
 void plotgpu_begin_frame(SDL_Renderer *renderer, float device_scale);
 

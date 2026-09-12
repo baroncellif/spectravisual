@@ -16,6 +16,8 @@
 #define MAX_PICKETT_LABEL 128
 #define MAX_PICKETT_SPECIES 16
 #define MAX_PICKETT_HAMILTONIANS 16
+#define MAX_INTFIT_SPECIES (MAX_PICKETT_SPECIES * MAX_PICKETT_HAMILTONIANS)
+#define MAX_INTFIT_GROUPS MAX_INTFIT_SPECIES
 
 // --- DATA STRUCTURES ---
 
@@ -136,6 +138,100 @@ typedef struct {
        chosen", and the default palette answers for it. */
     SDL_Color trace_color;
 } PickettSpecies;
+
+/* The Intensity window owns a complete, disposable copy of its choices and
+ * results.  It must never write a Pred&Fit model: that is what makes a fitted
+ * intensity result a preview rather than an implicit project edit. */
+typedef struct {
+    int hamiltonian_id;
+    int state_index;
+    char name[96];
+    int included;
+    int temperature_group;
+    int fit_dipole[3];
+    double concentration;
+    double temperature_k;
+    double cat_temperature_k;
+    double mu_cat[3];
+    double fitted_concentration;
+    double fitted_temperature_k;
+    double fitted_mu[3];
+} IntensityFitSpecies;
+
+/* The preview keeps a private AppState.  Declaring it here lets the intensity
+ * window own that snapshot without making the fitted result part of the live
+ * Pred&Fit state. */
+typedef struct AppState AppState;
+
+typedef struct {
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    Uint32 window_id;
+    SDL_Window *preview_window;
+    SDL_Renderer *preview_renderer;
+    Uint32 preview_window_id;
+    int open;
+    int preview_open;
+    int initialized;
+    int species_scroll;
+    int report_scroll;
+    int fit_concentration;
+    int fit_temperature;
+    int fit_dipoles;
+    int fit_mode;              /* 0=line observations, 1=profile spectrum */
+    int extraction_mode;       /* 0=sample, 1=local maximum, 2=area */
+    int branch_enabled[3];     /* P, Q, R */
+    int mu_enabled[3];         /* a, b, c */
+    int common_temperature;
+    int residual_weighting;    /* 0=none, 1=fractional, 2=hybrid */
+    int fit_log_space;
+    int exact_temperature_scaling;
+    int loss;                  /* linear/soft_l1/huber/cauchy/arctan */
+    int edit_field;
+    char edit_text[64];
+    double fmin_mhz, fmax_mhz;
+    double extraction_window_mhz;
+    double temp_min_k, temp_max_k;
+    double intensity_uncertainty_fraction;
+    double intensity_uncertainty_floor;
+    int n_species;
+    IntensityFitSpecies species[MAX_INTFIT_SPECIES];
+    /* The Python reference optimiser can take appreciably longer than a
+       frame.  Keep its child process outside SDL's event loop so the analysis
+       window and the rest of Pred&Fit remain responsive while it runs. */
+    int fit_running;
+    int fit_pid;
+    int fit_duplicate_count;
+    char fit_output_dir[700];
+    /* Preview of a fit result: a second instance of the main viewer (view.c,
+       controller.c, layout.c) drawn from a private copy of the application
+       state, whose prediction is recalculated with the fitted concentrations,
+       temperatures and dipoles.  Nothing here is ever written back. */
+    AppState *preview_state;       /* disposable viewer state, owned here  */
+    PredLine *preview_pred_lines;  /* its prediction, fitted intensities    */
+    double preview_fit_anchor;     /* fitted rows / anchor = Pred&Fit intensity scale */
+    double preview_intensity_scale;/* drawn prediction -> experimental units, display only */
+    int preview_scale_lines;       /* observations behind that factor, 0 = peak ratio */
+    int result_generation;         /* bumped by every completed fit         */
+    int preview_generation;        /* the result the preview was built from */
+    /* What the copy was taken from: when the working state replaces any of
+       these buffers the copy is rebuilt instead of reading freed memory. */
+    const PredLine *preview_src_pred;
+    int preview_src_n_pred;
+    double preview_src_pred_max;
+    const double *preview_src_lin;
+    int preview_src_n_lin;
+    int preview_src_n_assignments;
+    int preview_src_n_spectra;
+    const Point *preview_src_raw[MAX_SPECTRA];
+    const Point *preview_src_smooth[MAX_SPECTRA];
+    int preview_src_n_pts[MAX_SPECTRA];
+    int has_result;
+    int n_candidates, n_used, n_rejected, n_parameters;
+    double rss, rmse, raw_rmse;
+    char message[256];
+    char report[65536];
+} IntensityFitWindow;
 
 /* The manually controllable .int fields.  QROT is deliberately absent: it is
    always calculated from A, B, C, T and sigma.  A zero FQLIM or TEMP and
@@ -408,7 +504,7 @@ typedef enum {
 } InputState;
 
 // --- MASTER APP STATE ---
-typedef struct {
+struct AppState {
     // --- Multi-spectrum store ---
     Spectrum spectra[MAX_SPECTRA];
     int n_spectra;
@@ -522,6 +618,7 @@ typedef struct {
     DraggableWindow win_predfit;
 
     PredFitState predfit;
+    IntensityFitWindow intensity_window;
 
     DraggableWindow *drag_target;
     SDL_Point drag_offset;
@@ -582,12 +679,23 @@ typedef struct {
     int measure_phase; 
     double measure_x1;
 
-} AppState;
+    /* Set only in a disposable viewer, such as the intensity-fit preview: the
+       controller then allows navigation (zoom, pan, reset, sync, bar, measure,
+       selection) and nothing that edits the project or writes a file. */
+    int viewer_readonly;
+    char view_caption[160];   /* shown on the prediction pane when not empty */
+
+};
 
 /* Producers include the event controller and Pred&Fit; consumption happens
    in main after events have been collected for the frame. */
 int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
                              const char *path, int generated_catalog);
+
+/* End of a frame's input: the active spectrum takes the edits of its mirror
+   fields and a synchronised prediction pane follows the spectrum pane.  Shared
+   by the main window and every viewer drawn with render_app. */
+void app_sync_view_state(AppState *state);
 
 typedef struct {
     int win_w, win_h;

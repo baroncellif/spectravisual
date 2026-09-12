@@ -551,6 +551,24 @@ static void snapshot_set_parameter(PredFitSnapshot *m, int id, double value, dou
     parameter_label(x);
 }
 
+/* h4 records serialize the Pickett parameter table, which is authoritative;
+ * the convenient a/b/c fields are only its active-state projection.  A
+ * restored inactive Hamiltonian used to retain the default projection until
+ * it was selected.  `write_inputs()` then copied those defaults back into
+ * the parameter table, so Simulate silently produced a default rotor for
+ * every inactive model. */
+static void snapshot_sync_basic_from_parameters(PredFitSnapshot *m) {
+    if (!m) return;
+    int suffix = 0;
+    if (m->active_species >= 0 && m->active_species < m->n_species)
+        suffix = 11 * m->species[m->active_species].state_index;
+    for (int i = 0; i < m->n_param; i++) {
+        if (m->param[i].id == 10000 + suffix) m->a = m->param[i].value;
+        if (m->param[i].id == 20000 + suffix) m->b = m->param[i].value;
+        if (m->param[i].id == 30000 + suffix) m->c = m->param[i].value;
+    }
+}
+
 typedef struct {
     int has_int_settings;
     /* Sessions written before the plot was recorded say nothing about which
@@ -870,6 +888,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
             if (loaded_h[i].model.active_species < 0 ||
                 loaded_h[i].model.active_species >= loaded_h[i].model.n_species)
                 loaded_h[i].model.active_species = 0;
+            snapshot_sync_basic_from_parameters(&loaded_h[i].model);
         }
         memcpy(p->hamiltonian, loaded_h, (size_t)n_loaded_h * sizeof(loaded_h[0]));
         p->n_hamiltonians = n_loaded_h;
@@ -2424,6 +2443,113 @@ static void hamiltonian_cat_path(const PredFitState *p, int h, char *out, size_t
     snprintf(out, size, "%s/%s.cat", p->work_dir, stem);
 }
 
+/* A .cat carries no record of the Hamiltonian that made it.  Merely finding
+ * one beside a restored project is therefore not evidence that it belongs to
+ * that project: a user can save a session after changing constants, TEMP or
+ * dipoles, and the previous catalogue still has the same filename.  Check the
+ * two generated inputs before reattaching a saved plot.  The comparison is
+ * deliberately against the complete saved snapshot, not the active editor,
+ * so it also catches a stale inactive Hamiltonian. */
+static int same_input_number(double a, double b) {
+    double scale = fmax(1.0, fmax(fabs(a), fabs(b)));
+    return isfinite(a) && isfinite(b) && fabs(a - b) <= 1e-10 * scale;
+}
+
+static void hamiltonian_input_path(const PredFitState *p, int h, const char *suffix,
+                                   char *out, size_t size) {
+    char stem[128];
+    name_file_stem(p->hamiltonian[h].name, p->hamiltonian[h].id, stem, sizeof(stem));
+    snprintf(out, size, "%s/%s%s", p->work_dir, stem, suffix);
+}
+
+static int snapshot_state_count(const PredFitSnapshot *m) {
+    int count = 1;
+    for (int i = 0; i < m->n_species; i++)
+        if (m->species[i].state_index + 1 > count) count = m->species[i].state_index + 1;
+    return count;
+}
+
+static double snapshot_fqlim(const PredFitSnapshot *m) {
+    return m->int_settings.fqlim_ghz > 0.0 ? m->int_settings.fqlim_ghz : m->fmax_ghz;
+}
+
+static int snapshot_maxv(const PredFitSnapshot *m) {
+    return m->int_settings.maxv >= 0 ? m->int_settings.maxv : snapshot_state_count(m) - 1;
+}
+
+static int hamiltonian_inputs_match_snapshot(const PredFitState *p, int h) {
+    if (!p || h < 0 || h >= p->n_hamiltonians) return 0;
+    const PredFitSnapshot *m = &p->hamiltonian[h].model;
+    char path[700], line[700];
+
+    hamiltonian_input_path(p, h, ".par", path, sizeof(path));
+    FILE *par = fopen(path, "r");
+    if (!par) return 0;
+    int saved_n_param = -1;
+    int ok = fgets(line, sizeof(line), par) != NULL &&
+             fgets(line, sizeof(line), par) != NULL &&
+             sscanf(line, "%d", &saved_n_param) == 1 &&
+             saved_n_param == m->n_param &&
+             fgets(line, sizeof(line), par) != NULL;
+    if (ok) {
+        line[strcspn(line, "\r\n")] = '\0';
+        ok = strcmp(line, m->hamiltonian_line) == 0;
+    }
+    for (int i = 0; ok && i < m->n_param; i++) {
+        int id = 0, found = 0;
+        double value = 0.0, error = 0.0;
+        rewind(par);
+        /* Header, control card and the Pickett option line. */
+        for (int k = 0; k < 3; k++) if (!fgets(line, sizeof(line), par)) { ok = 0; break; }
+        while (ok && fgets(line, sizeof(line), par)) {
+            if (sscanf(line, "%d %lf %lf", &id, &value, &error) != 3) continue;
+            if (id != m->param[i].id) continue;
+            found = same_input_number(value, m->param[i].value) &&
+                    same_input_number(error, m->param[i].error);
+            break;
+        }
+        if (!found) ok = 0;
+    }
+    fclose(par);
+    if (!ok) return 0;
+
+    hamiltonian_input_path(p, h, ".int", path, sizeof(path));
+    FILE *in = fopen(path, "r");
+    if (!in || !fgets(line, sizeof(line), in) || !fgets(line, sizeof(line), in)) {
+        if (in) fclose(in);
+        return 0;
+    }
+    int flags = 0, tag = 0, fbegin = 0, fend = 0, maxv = 0;
+    double qrot = 0.0, cut0 = 0.0, cut1 = 0.0, fqlim = 0.0, temp = 0.0;
+    ok = sscanf(line, "%d %d %lf %d %d %lf %lf %lf %lf %d",
+                &flags, &tag, &qrot, &fbegin, &fend, &cut0, &cut1, &fqlim, &temp, &maxv) == 10 &&
+         flags == m->int_settings.flags && tag == m->int_settings.tag &&
+         fbegin == m->int_settings.fbegin && fend == m->int_settings.fend &&
+         maxv == snapshot_maxv(m) && same_input_number(cut0, m->int_settings.intensity_cutoff) &&
+         same_input_number(cut1, m->int_settings.intensity_cutoff) &&
+         same_input_number(fqlim, snapshot_fqlim(m)) && same_input_number(temp, m->temp_k);
+    for (int s = 0; ok && s < m->n_species; s++) {
+        const PickettSpecies *sp = &m->species[s];
+        if (!sp->predict_enabled) continue;
+        for (int axis = 0; ok && axis < 3; axis++) {
+            int wanted = 110 * sp->state_index + 1 + axis, id = 0, found = 0;
+            double value = 0.0;
+            rewind(in);
+            /* Skip title and one control card. */
+            if (!fgets(line, sizeof(line), in) || !fgets(line, sizeof(line), in)) { ok = 0; break; }
+            while (fgets(line, sizeof(line), in)) {
+                if (sscanf(line, "%d %lf", &id, &value) != 2 || id != wanted) continue;
+                double expected = sp->mu_excluded[axis] ? 0.0 : sp->mu[axis];
+                found = same_input_number(value, expected);
+                break;
+            }
+            if (!found) ok = 0;
+        }
+    }
+    fclose(in);
+    return ok;
+}
+
 /* A session written before the plot was recorded: take the Simulation page's
    own answer to "which Hamiltonians are drawn" - the checkboxes, which those
    sessions do store - so an old project still reopens with everything it was
@@ -2442,7 +2568,7 @@ static void adopt_checked_hamiltonians_as_plot(AppState *s) {
 
 /* Give back the catalogue file of every model the session left in the plot and
    drop those whose file is gone.  Returns how many are ready to be merged. */
-static int reattach_simulated_catalogs(AppState *s) {
+static int reattach_simulated_catalogs(AppState *s, int require_matching_inputs) {
     PredFitState *p = &s->predfit;
     int kept = 0;
     for (int i = 0; i < p->n_simulated; i++) {
@@ -2451,7 +2577,10 @@ static int reattach_simulated_catalogs(AppState *s) {
         SimulatedCatalog c = p->simulated[i];
         hamiltonian_cat_path(p, h, c.cat_path, sizeof(c.cat_path));
         FILE *f = fopen(c.cat_path, "r");
-        if (!f) continue;
+        if (!f || (require_matching_inputs && !hamiltonian_inputs_match_snapshot(p, h))) {
+            if (f) fclose(f);
+            continue;
+        }
         fclose(f);
         p->simulated[kept++] = c;
     }
@@ -2478,9 +2607,22 @@ int predfit_restore_latest(AppState *s) {
        session that held several simulated Hamiltonians comes back with all of
        them, so their sticks and their per-state broadened traces are there. */
     if (!restore_info.has_plot_record) adopt_checked_hamiltonians_as_plot(s);
-    if (reattach_simulated_catalogs(s) > 0)
+    int plotted_before_reattach = p->n_simulated;
+    /* Old sessions never recorded what a displayed catalogue represented.
+       Keep their established compatibility behaviour.  Modern sessions do,
+       and must reject a same-name catalogue produced by another model. */
+    int ready = reattach_simulated_catalogs(s, restore_info.has_plot_record);
+    if (ready == plotted_before_reattach && ready > 0)
         app_enqueue_pending_load(s, PENDING_LOAD_SIMULATION, p->simulated[0].cat_path, 1);
-    else
+    else if (plotted_before_reattach > 0 && have_program(s->settings.spcat_path)) {
+        /* A partial old plot is worse than no plot: it looks like a project
+           lost most of its Hamiltonians.  Recreate the complete checked set
+           synchronously, exactly as the Simulate button does. */
+        adopt_checked_hamiltonians_as_plot(s);
+        if (!predfit_simulate(s))
+            snprintf(p->status, sizeof(p->status),
+                     "Saved catalogues are stale and could not be rebuilt: %s", p->status);
+    } else
         app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
     p->generated_catalog_pending=1;

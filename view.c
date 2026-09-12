@@ -382,6 +382,19 @@ static SDL_FPoint *plot_buf(int n) {
     return g_plot_buf;
 }
 
+/* The pointer as seen by the window this renderer draws.  SDL reports it
+   relative to whichever window has the mouse, so with two viewers open the
+   crosshair and hover state of one would otherwise be drawn from the other's
+   coordinates.  A renderer without a window (tests) reads the global state. */
+static Uint32 view_mouse_state(SDL_Renderer *ren, int *mx, int *my) {
+    SDL_Window *win = SDL_RenderGetWindow(ren);
+    if (win && SDL_GetMouseFocus() != win) {
+        *mx = *my = -100000;
+        return 0;
+    }
+    return SDL_GetMouseState(mx, my);
+}
+
 // --- MAIN RENDER ENTRY POINT ---
 // Draws one frame without presenting it. Screenshots read the pixels here,
 // because reading them after SDL_RenderPresent returns whatever the driver
@@ -946,7 +959,7 @@ static const char *short_path(const char *path) {
 static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     (void)font;
     int mx, my;
-    int mdown = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    int mdown = (view_mouse_state(ren, &mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     char buf[512];
 
     /* --- document bar: which files this window is showing --- */
@@ -1027,7 +1040,7 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
 // Left rail: one icon per tool panel, in the order the panels stack.
 static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
     int mx, my;
-    int mdown = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    int mdown = (view_mouse_state(ren, &mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
 
     SDL_Rect rail = {0, UI_CONTENT_Y, UI_RAIL_W, l->win_h - UI_CONTENT_Y - UI_STATUS_H};
     ui_fill(ren, rail, UI_CHROME);
@@ -1043,7 +1056,7 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 
     for (int t = 0; t < UI_TOOL_COUNT; t++) {
         SDL_Rect r = ui_rail_rect(t);
-        int on = panels[t]->visible;
+        int on = t == UI_TOOL_DIP ? state->intensity_window.open : panels[t]->visible;
         int hover = ui_button(ren, r, "", ui_tool_icon(t), UI_BTN_QUIET, on, mx, my, mdown);
         if (on) {
             SDL_Rect mark = {0, r.y + 6, 2, r.h - 12};
@@ -1136,6 +1149,8 @@ static void draw_panel_headers(SDL_Renderer *ren, TTF_Font *font, AppState *stat
                   head.x + 12 + ui_text_w(UI_FONT_TITLE, "Prediction") + 16, head, UI_FAINT);
 
         int rx = head.x + head.w - 12, cy = head.y + head.h / 2;
+        if (state->view_caption[0])
+            rx -= draw_chip(ren, rx, cy, state->view_caption, UI_ACCENT_TEXT, 1, UI_FONT_SANS_SM) + 6;
         if (state->broadening_active) {
             if (state->broaden_mode == 1) {
                 double df = spectrum_df(state);
@@ -1161,7 +1176,7 @@ static void draw_status_bar(SDL_Renderer *ren, AppState *state, Layout *l) {
     ui_fill(ren, bar, UI_CHROME);
     ui_hline(ren, 0, l->win_w, bar.y, UI_LINE);
 
-    int mx, my; SDL_GetMouseState(&mx, &my);
+    int mx, my; view_mouse_state(ren, &mx, &my);
     int in_exp = state->data_loaded &&
                  point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h});
     int ty_mono = bar.y + (bar.h - ui_text_h(UI_FONT_MONO)) / 2;
@@ -1282,7 +1297,7 @@ static void panel_hint2(SDL_Renderer *ren, SDL_Rect row, const char *text) {
 static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state, Layout *l) {
     (void)font; (void)l;
     int mx, my;
-    int m_down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    int m_down = (view_mouse_state(ren, &mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     char buf[128];
 
     // 1. ASSIGNMENTS
@@ -1421,7 +1436,10 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
     }
 
     // 5. INTENSITY ANALYSIS
-    if (state->win_dip.visible) {
+    /* The old single-species inspector is retained in the source only for
+       backwards-compatible state loading.  Intensity now has its own
+       multispecies SDL window. */
+    if (state->win_dip.visible && !state->intensity_window.initialized) {
         SDL_RenderSetClipRect(ren, &state->win_dip.clip);
         draw_inspector_section(ren, &state->win_dip, UI_ICON_DIPOLE, mx, my);
         SDL_Rect w = state->win_dip.rect;
@@ -1860,7 +1878,7 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
     (void)font;
     int mx, my;
     char buf[160];
-    SDL_GetMouseState(&mx, &my);
+    view_mouse_state(ren, &mx, &my);
     int in_exp = point_in_rect(mx, my, (SDL_Rect){l->exp_x, l->exp_y, l->exp_w, l->exp_h});
 
     if (state->dragging_offset) {

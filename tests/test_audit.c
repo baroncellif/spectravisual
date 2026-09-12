@@ -1472,10 +1472,14 @@ static int test_multihamiltonian_session_roundtrip(void) {
     AppState *s = new_state();
     PredFitState *p = &s->predfit;
     mono_model(p);
+    p->a = 1111.0; p->b = 222.0; p->c = 123.0;
+    sync_basic_parameters(p);
     p->temp_k = 12.0;
     p->int_settings.intensity_cutoff = -4.0;
     p->species[0].concentration = 0.4;
     CHECK_INT("crea H2", predfit_duplicate_hamiltonian(s, "Independent H"), 1);
+    p->a = 2222.0; p->b = 333.0; p->c = 234.0;
+    sync_basic_parameters(p);
     p->temp_k = 33.0;
     p->int_settings.intensity_cutoff = -16.0;
     p->species[0].mu[2] = 7.0;
@@ -1491,10 +1495,17 @@ static int test_multihamiltonian_session_roundtrip(void) {
     CHECK_DBL("cut H2 dopo restore", r->predfit.int_settings.intensity_cutoff, -16.0, 1e-12);
     CHECK_DBL("mu_c H2 dopo restore", r->predfit.species[0].mu[2], 7.0, 1e-12);
     CHECK_DBL("conc H2 dopo restore", r->predfit.species[0].concentration, 3.0, 1e-12);
+    CHECK_DBL("A H2 dopo restore", r->predfit.a, 2222.0, 1e-12);
+    CHECK_DBL("B H2 dopo restore", r->predfit.b, 333.0, 1e-12);
+    CHECK_DBL("C H2 dopo restore", r->predfit.c, 234.0, 1e-12);
+    CHECK_DBL("snapshot A H1 dopo parse", r->predfit.hamiltonian[0].model.param[0].value, 1111.0, 1e-12);
     CHECK_INT("seleziona H1 dopo restore", predfit_select_hamiltonian(r, 0), 1);
     CHECK_DBL("Trot H1 dopo restore", r->predfit.temp_k, 12.0, 1e-12);
     CHECK_DBL("cut H1 dopo restore", r->predfit.int_settings.intensity_cutoff, -4.0, 1e-12);
     CHECK_DBL("conc H1 dopo restore", r->predfit.species[0].concentration, 0.4, 1e-12);
+    CHECK_DBL("A H1 dopo restore", r->predfit.a, 1111.0, 1e-12);
+    CHECK_DBL("B H1 dopo restore", r->predfit.b, 222.0, 1e-12);
+    CHECK_DBL("C H1 dopo restore", r->predfit.c, 123.0, 1e-12);
     DONE();
 }
 
@@ -2853,6 +2864,190 @@ static int test_intensity_recompute_keeps_concentration(void) {
     DONE();
 }
 
+/* ============================================= Intensity-fit preview viewer */
+
+static void viewer_key(AppState *v, Layout *L, SDL_Keycode key) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_KEYDOWN; e.key.keysym.sym = key;
+    handle_viewer_event(v, L, &e);
+}
+
+static void viewer_button(AppState *v, Layout *L, Uint32 type, int x, int y, Uint8 button) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = type; e.button.x = x; e.button.y = y; e.button.button = button;
+    handle_viewer_event(v, L, &e);
+}
+
+static void viewer_move(AppState *v, Layout *L, int x, int y) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_MOUSEMOTION; e.motion.x = x; e.motion.y = y;
+    handle_viewer_event(v, L, &e);
+}
+
+static double test_population(const PredLine *p, double t) {
+    double nu = p->freq_mhz / 29979.2458;
+    return exp(-1.438776877 * p->elo_cm / t) * -expm1(-1.438776877 * nu / t) / pow(t, 0.5 * p->rot_dof);
+}
+
+/* The fit preview is the main viewer on a private copy of the state: its view
+   opens on the main view, its prediction carries the fitted concentration,
+   Trot and dipoles, its prediction pane is put on the experimental intensity
+   scale by a display-only factor, and its navigation - the controller's own -
+   can neither edit nor write the working project. */
+static int test_fit_preview_is_the_main_viewer_readonly(void) {
+    CHECK_INT("SDL eventi", SDL_Init(SDL_INIT_EVENTS), 0);
+    double pk[2] = {3000.0, 3005.0}, ht[2] = {2.0, 0.5};
+    write_spectrum(work_path("preview.txt"), pk, ht, 2);
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    CHECK_INT("spettro", add_spectrum(s, work_path("preview.txt")), 1);
+    static PredLine lines[3];
+    memset(lines, 0, sizeof(lines));
+    lines[0] = (PredLine){.freq_mhz = 3000.0, .cat_lgint = -3.0, .elo_cm = 1.0, .rot_dof = 3, .n_qn = 4,
+                          .Ju = 1, .Jl = 0, .mu = 'a', .hamiltonian_id = 1};
+    lines[1] = (PredLine){.freq_mhz = 3005.0, .cat_lgint = -4.0, .elo_cm = 5.0, .rot_dof = 3, .n_qn = 4,
+                          .Ju = 2, .Jl = 1, .mu = 'b', .hamiltonian_id = 1};
+    lines[2] = (PredLine){.freq_mhz = 3007.0, .cat_lgint = -2.0, .elo_cm = 2.0, .rot_dof = 3, .n_qn = 4,
+                          .Ju = 3, .Jl = 2, .mu = 'a', .hamiltonian_id = 9};   /* not analysed */
+    s->pred_lines = lines; s->n_pred = 3; s->pxmin = 3000.0; s->pxmax = 3007.0;
+    p->generated_catalog_active = 1;
+    p->n_simulated = 1;
+    p->simulated[0] = (SimulatedCatalog){.hamiltonian_id = 1, .cat_temp_k = 10.0};
+    p->temp_k = 5.0;
+    p->species[0].concentration = 1.0;
+    predfit_recompute_display_intensities(s);
+    double main_int[3], main_max = s->pred_global_max;
+    for (int i = 0; i < 3; i++) main_int[i] = lines[i].linear_int;
+    s->vxmin = s->pvxmin = 2998.0; s->vxmax = s->pvxmax = 3008.0;
+    s->vymin = 0.0; s->vymax = 2.5;
+    s->sync_active = 1;
+    s->assignments[0] = (Assignment){.pred = lines[0], .exp_freq = 3000.0, .fit_enabled = 1, .hamiltonian_id = 1};
+    s->assignments[1] = (Assignment){.pred = lines[1], .exp_freq = 3005.0, .fit_enabled = 1, .hamiltonian_id = 1};
+    s->n_assignments = 2;
+
+    IntensityFitWindow *w = &s->intensity_window;
+    CHECK(intensity_analysis_preview_state(s) == NULL, "senza risultato non c'e' anteprima");
+    w->initialized = 1;
+    w->n_species = 1;
+    w->species[0] = (IntensityFitSpecies){.hamiltonian_id = 1, .state_index = 0, .included = 1,
+        .temperature_group = 1, .concentration = 1.0, .temperature_k = 5.0, .cat_temperature_k = 10.0,
+        .mu_cat = {1.0, 1.0, 1.0}, .fitted_concentration = 1000.0, .fitted_temperature_k = 7.0,
+        .fitted_mu = {2.0, 1.0, 1.0}};
+    for (int i = 0; i < 3; i++) w->branch_enabled[i] = w->mu_enabled[i] = 1;
+    w->fmin_mhz = 2990.0; w->fmax_mhz = 3010.0;
+    w->extraction_mode = 1; w->extraction_window_mhz = 0.05;
+    w->has_result = 1; w->result_generation = 1;
+
+    AppState *v = intensity_analysis_preview_state(s);
+    CHECK(v != NULL && v != s, "anteprima su uno stato privato");
+    if (!v) DONE();
+    CHECK_INT("anteprima in sola lettura", v->viewer_readonly, 1);
+    CHECK_INT("stato di lavoro non in sola lettura", s->viewer_readonly, 0);
+    CHECK(v->pred_lines != s->pred_lines, "righe di predizione copiate");
+
+    /* The fitted intensities, derived independently of the code under test. */
+    double want0 = 1000.0 * pow(10.0, -3.0) * test_population(&lines[0], 7.0) / test_population(&lines[0], 10.0) * 4.0;
+    double want1 = 1000.0 * pow(10.0, -4.0) * test_population(&lines[1], 7.0) / test_population(&lines[1], 10.0);
+    /* One global constant puts them on the working intensity scale (the cut
+       and filters were set for it): the strongest analysed row keeps its
+       working intensity, and the fitted ratio is exact. */
+    double g = fmax(want0, want1) / fmax(main_int[0], main_int[1]);
+    CHECK_DBL("ancoraggio alla scala di lavoro", w->preview_fit_anchor, g, g * 1e-9);
+    CHECK_DBL("riga a: conc, Trot e mu_a fittati", v->pred_lines[0].linear_int, want0 / g, want0 / g * 1e-9);
+    CHECK_DBL("riga b: conc e Trot fittati", v->pred_lines[1].linear_int, want1 / g, want1 / g * 1e-9);
+    CHECK_DBL("rapporto fittato esatto", v->pred_lines[0].linear_int / v->pred_lines[1].linear_int,
+              want0 / want1, want0 / want1 * 1e-9);
+    CHECK_DBL("riga non analizzata come nel plot", v->pred_lines[2].linear_int, main_int[2], 1e-15);
+    CHECK_DBL("lgint della riga fittata", v->pred_lines[0].lgint, log10(want0 / g), 1e-9);
+    CHECK(pred_passes_filter(v, 0) && pred_passes_filter(v, 1), "righe fittate dentro il taglio come nel plot");
+    for (int i = 0; i < 3; i++)
+        CHECK_DBL("predizione di lavoro intatta", s->pred_lines[i].linear_int, main_int[i], 0.0);
+    CHECK_DBL("massimo di lavoro intatto", s->pred_global_max, main_max, 0.0);
+    CHECK_DBL("Trot Pred&Fit intatta", p->temp_k, 5.0, 0.0);
+    CHECK_DBL("concentrazione Pred&Fit intatta", p->species[0].concentration, 1.0, 0.0);
+
+    CHECK_DBL("range x iniziale = plot", v->vxmin, s->vxmin, 0.0);
+    CHECK_DBL("range x finale = plot", v->vxmax, s->vxmax, 0.0);
+    CHECK_DBL("range predizione = plot", v->pvxmax, s->pvxmax, 0.0);
+    CHECK_DBL("range y = plot", v->vymax, s->vymax, 0.0);
+
+    /* Experimental order: median of observed peak / fitted intensity. */
+    double k = 0.5 * (2.0 / (want0 / g) + 0.5 / (want1 / g));
+    CHECK_INT("righe usate per il fattore", w->preview_scale_lines, 2);
+    CHECK_DBL("fattore verso l'ordine sperimentale", w->preview_intensity_scale, k, k * 2e-3);
+    double shown = v->pred_lines[0].linear_int / v->pred_global_max * v->pred_scale;
+    double exp_frac = w->preview_intensity_scale * (want0 / g) / (v->vymax - v->vymin);
+    CHECK_DBL("altezza della riga sulla scala sperimentale", shown, exp_frac, exp_frac * 1e-9);
+    CHECK(strstr(v->view_caption, "not applied") != NULL, "didascalia dell'anteprima");
+
+    /* Navigation through the controller of the main window. */
+    Layout L;
+    app_compute_layout(v, &L, WIN_W, WIN_H);
+    CHECK(L.exp_h > 0 && L.pred_h > 0, "due pannelli come nel plot");
+    double span = v->vxmax - v->vxmin;
+    viewer_key(v, &L, SDLK_e);
+    app_sync_view_state(v);
+    CHECK(v->vxmax - v->vxmin < span, "E ingrandisce l'anteprima");
+    CHECK_DBL("sync: la predizione segue", v->pvxmax - v->pvxmin, v->vxmax - v->vxmin, 1e-9);
+    CHECK_DBL("E non tocca il plot principale", s->vxmax - s->vxmin, span, 0.0);
+    int x0 = L.exp_x + L.exp_w / 4, x1 = L.exp_x + L.exp_w / 2, y = L.exp_y + L.exp_h / 2;
+    double lo = v->vxmin + 0.25 * (v->vxmax - v->vxmin);
+    viewer_button(v, &L, SDL_MOUSEBUTTONDOWN, x0, y, SDL_BUTTON_LEFT);
+    viewer_move(v, &L, x1, y);
+    viewer_button(v, &L, SDL_MOUSEBUTTONUP, x1, y, SDL_BUTTON_LEFT);
+    CHECK_DBL("trascinamento: zoom sul range", v->vxmin, lo, 1e-6);
+    viewer_key(v, &L, SDLK_r);
+    CHECK_DBL("R: range completo", v->vxmin, v->xmin, 0.0);
+    CHECK_DBL("R non tocca il plot principale", s->vxmin, 2998.0, 0.0);
+
+    /* Nothing that edits or writes. */
+    viewer_key(v, &L, SDLK_x);
+    CHECK_INT("X non esporta", v->export_requested + s->export_requested, 0);
+    viewer_key(v, &L, SDLK_COMMA);
+    CHECK_INT("virgola non apre le impostazioni", v->settings.open + s->settings.open, 0);
+    viewer_key(v, &L, SDLK_n);
+    CHECK_INT("N non apre i pannelli", v->win_as.visible, 0);
+    viewer_key(v, &L, SDLK_d);
+    CHECK_INT("D non apre l'analisi", s->intensity_window.open, 0);
+    SDL_Rect save = ui_top_rect(UI_TOP_SAVE, L.win_w);
+    viewer_button(v, &L, SDL_MOUSEBUTTONDOWN, save.x + save.w / 2, save.y + save.h / 2, SDL_BUTTON_LEFT);
+    CHECK_INT("Save session non disponibile", v->input_state, INPUT_NONE);
+    SDL_Rect rail = ui_rail_rect(UI_TOOL_ASSIGN);
+    viewer_button(v, &L, SDL_MOUSEBUTTONDOWN, rail.x + rail.w / 2, rail.y + rail.h / 2, SDL_BUTTON_LEFT);
+    CHECK_INT("barra laterale inerte", v->win_as.visible, 0);
+
+    remove(work_path("assignments.txt"));
+    v->vxmin = v->pvxmin = 2999.0; v->vxmax = v->pvxmax = 3001.0;
+    app_compute_layout(v, &L, WIN_W, WIN_H);
+    int px = L.pred_x + (int)lround((3000.0 - v->pvxmin) / (v->pvxmax - v->pvxmin) * L.pred_w);
+    viewer_button(v, &L, SDL_MOUSEBUTTONDOWN, px, L.pred_y + L.pred_h / 2, SDL_BUTTON_LEFT);
+    CHECK_INT("selezione di una riga", v->n_selected, 1);
+    int a = L.exp_x + (int)lround((2999.8 - v->vxmin) / 2.0 * L.exp_w);
+    int b = L.exp_x + (int)lround((3000.2 - v->vxmin) / 2.0 * L.exp_w);
+    viewer_button(v, &L, SDL_MOUSEBUTTONDOWN, a, y, SDL_BUTTON_RIGHT);
+    viewer_move(v, &L, b, y);
+    viewer_button(v, &L, SDL_MOUSEBUTTONUP, b, y, SDL_BUTTON_RIGHT);
+    CHECK_INT("picco trovato nell'anteprima", v->n_peaks, 1);
+    CHECK_INT("nessuna assegnazione nell'anteprima", v->n_assignments, 2);
+    CHECK_INT("nessuna assegnazione nel progetto", s->n_assignments, 2);
+    struct stat st;
+    CHECK_INT("assignments.txt non scritto", stat(work_path("assignments.txt"), &st), -1);
+
+    /* A replaced working buffer rebuilds the copy, keeping its navigation. */
+    v->vxmin = v->pvxmin = 3001.0; v->vxmax = v->pvxmax = 3002.0;
+    s->pred_global_max *= 2.0;
+    AppState *again = intensity_analysis_preview_state(s);
+    CHECK(again == v, "stesso stato privato dopo la ricostruzione");
+    CHECK_INT("ricostruito per il nuovo massimo", w->preview_src_pred_max == s->pred_global_max, 1);
+    CHECK_DBL("zoom dell'anteprima conservato", v->vxmin, 3001.0, 0.0);
+    CHECK_DBL("righe fittate ricalcolate", v->pred_lines[0].linear_int, want0 / g, want0 / g * 1e-9);
+
+    intensity_analysis_dispose(s);
+    CHECK(w->preview_state == NULL && w->preview_pred_lines == NULL, "anteprima liberata");
+    CHECK_DBL("predizione di lavoro intatta alla fine", s->pred_lines[0].linear_int, main_int[0], 0.0);
+    DONE();
+}
+
 /* PF-02: concentration is an external lower-state population multiplier.
    This matters only for a non-diagonal transition; diagonal rotational rows
    retain the expected state concentration. */
@@ -2969,6 +3164,7 @@ static const Test TESTS[] = {
     {"test_intensity_fit_does_not_touch_predfit", test_intensity_fit_does_not_touch_predfit},
     {"test_intensity_recompute_keeps_concentration", test_intensity_recompute_keeps_concentration},
     {"test_interstate_line_uses_lower_state_concentration", test_interstate_line_uses_lower_state_concentration},
+    {"test_fit_preview_is_the_main_viewer_readonly", test_fit_preview_is_the_main_viewer_readonly},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

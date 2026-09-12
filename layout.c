@@ -37,6 +37,48 @@ SDL_Color color_for_pred(char branch, char mu) {
     return (SDL_Color){180,180,180,255};
 }
 
+void app_compute_layout(AppState *state, Layout *layout, int width, int height) {
+    layout->win_w = width;
+    layout->win_h = height;
+    layout->plot_x = UI_RAIL_W + UI_PLOT_GUTTER;
+    layout->gap = UI_PANEL_HEADER_H;
+
+    int content_top = UI_CONTENT_Y;
+    int content_bottom = height - UI_STATUS_H;
+    update_sidebars(state, layout);
+
+    int has_exp = state->n_spectra > 0;
+    int has_pred = state->n_pred > 0;
+    int avail = content_bottom - content_top;
+    if (avail < 200) avail = 200;
+    if (has_exp && has_pred) {
+        int usable = avail - 2 * UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
+        if (usable < 120) usable = 120;
+        layout->exp_h = (int)(usable * 0.62);
+        layout->pred_h = usable - layout->exp_h;
+        layout->exp_y = content_top + UI_PANEL_HEADER_H;
+        layout->pred_y = layout->exp_y + layout->exp_h + UI_PANEL_HEADER_H;
+    } else if (has_pred) {
+        layout->exp_h = 0;
+        layout->pred_h = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
+        layout->exp_y = content_top + UI_PANEL_HEADER_H;
+        layout->pred_y = layout->exp_y;
+    } else {
+        layout->exp_h = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
+        layout->pred_h = 0;
+        layout->exp_y = content_top + UI_PANEL_HEADER_H;
+        layout->pred_y = layout->exp_y;
+    }
+    if (layout->exp_h < 0) layout->exp_h = 0;
+    if (layout->pred_h < 0) layout->pred_h = 0;
+
+    layout->exp_x = layout->plot_x;
+    layout->exp_w = layout->plot_right - layout->exp_x - 16;
+    if (layout->exp_w < 240) layout->exp_w = 240;
+    layout->pred_x = layout->exp_x;
+    layout->pred_w = layout->exp_w;
+}
+
 // Returns 1 if predicted line `idx` passes the active filters. The intensity
 // cut always applies; the dipole/branch and quantum-number gates only apply
 // when filter_active is set.

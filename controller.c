@@ -238,6 +238,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { *running = 0; return; }
+        if (intensity_analysis_handle_event(state, &e)) continue;
         if (predfit_handle_advanced_event(state, &e)) continue;
         if (settings_handle_event(state, &e)) continue;
 
@@ -246,7 +247,8 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         else if (e.type == SDL_KEYDOWN) window_id = e.key.windowID;
         else if (e.type == SDL_WINDOWEVENT) window_id = e.window.windowID;
         int secondary = window_id != 0 &&
-            (window_id == state->predfit.advanced_window_id || window_id == state->settings.window_id);
+            (window_id == state->predfit.advanced_window_id || window_id == state->settings.window_id ||
+             window_id == state->intensity_window.window_id || window_id == state->intensity_window.preview_window_id);
         if (secondary && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
             state->input_state != INPUT_NONE) {
             state->input_last = (int)state->input_state;
@@ -342,6 +344,23 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
     }
 }
 
+/* One event of a disposable viewer window (the intensity-fit preview).  It
+   goes through exactly the handlers of the main window, so zoom, pan, reset,
+   sync, bar, measure and selection behave the same; state->viewer_readonly
+   keeps every edit and file write out of reach. */
+void handle_viewer_event(AppState *state, Layout *l, const SDL_Event *event) {
+    if (!state || !l || !event || !state->viewer_readonly) return;
+    SDL_Event e = *event;
+    switch (e.type) {
+        case SDL_MOUSEBUTTONDOWN: handle_mouse_down(state, l, &e.button); break;
+        case SDL_MOUSEBUTTONUP:   handle_mouse_up(state, l, &e.button); break;
+        case SDL_MOUSEMOTION:     handle_mouse_motion(state, l, &e.motion); break;
+        case SDL_MOUSEWHEEL:      handle_mouse_wheel(state, l, &e.wheel); break;
+        case SDL_KEYDOWN:         handle_keydown(state, l, &e.key); break;
+        default: break;
+    }
+}
+
 /* The single explicit writer of the session.  Nothing else in the app saves
    .fit/spectravisual.state: a wrong model or a mistaken load can therefore
    never overwrite a good workspace on its way out. */
@@ -364,7 +383,8 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     // 1. Inspector panels.
     //    The panels are docked in the right-hand column; every rectangle below
     //    comes from ui_panels.h, the same header the renderer draws from.
-    {
+    //    A read-only viewer has none: each of them edits the working state.
+    if (!s->viewer_readonly) {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
             &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
@@ -667,6 +687,11 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             if (point_in_rect(mx, my, ui_rail_rect(t))) {
+                if (s->viewer_readonly) return;
+                if (t == UI_TOOL_DIP) {
+                    intensity_analysis_open(s);
+                    return;
+                }
                 panels[t]->visible = !panels[t]->visible;
                 return;
             }
@@ -699,14 +724,16 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
         if (ui_top_right_visible(l->win_w) &&
             point_in_rect(mx, my, ui_top_rect(UI_TOP_SETTINGS, l->win_w))) {
-            settings_open(s);
+            if (!s->viewer_readonly) settings_open(s);
             return;
         }
         if (point_in_rect(mx, my, ui_top_rect(UI_TOP_DELPEAK, l->win_w))) {
             if (s->n_peaks > 0) s->n_peaks--;
             return;
         }
-        if (ui_top_right_visible(l->win_w)) {
+        /* Save, export and the temperature/offset fields change or write the
+           project; a viewer's command bar only navigates. */
+        if (ui_top_right_visible(l->win_w) && !s->viewer_readonly) {
             if (point_in_rect(mx, my, ui_top_rect(UI_TOP_SAVE, l->win_w))) {
                 save_predfit_session(s);
                 return;
@@ -950,7 +977,7 @@ static void run_visible_peak_finder(AppState *s) {
 }
 
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int) {
-    if (s->n_selected <= 0) return;
+    if (s->n_selected <= 0 || s->viewer_readonly) return;
 
     int requested = s->n_selected, assigned = 0;
     for(int k = 0; k < requested; k++) {
@@ -1126,6 +1153,19 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
 
     /* Command on a Mac, Control elsewhere.  The unmodified keys keep their
        meaning: F is the frequency-jump panel and B the transition filter. */
+    /* A viewer keeps the navigation keys of the plot and nothing else: no fit,
+       no save or export, no settings and no tool panels. */
+    if (s->viewer_readonly) {
+        if (mod & (KMOD_GUI | KMOD_CTRL)) return;
+        switch (sym) {
+            case SDLK_COMMA: case SDLK_x:
+            case SDLK_n: case SDLK_m: case SDLK_d: case SDLK_p: case SDLK_t:
+            case SDLK_c: case SDLK_f: case SDLK_b:
+            case SDLK_PAGEUP: case SDLK_PAGEDOWN:
+                return;
+            default: break;
+        }
+    }
     if (mod & (KMOD_GUI | KMOD_CTRL)) {
         if (sym == SDLK_f) { predfit_fit(s); return; }            /* run SPFIT      */
         if (sym == SDLK_b) { predfit_undo_last_fit(s); return; }  /* undo that fit  */
@@ -1163,7 +1203,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     // Toggle Windows
     if (sym == SDLK_n) s->win_as.visible = !s->win_as.visible;
     if (sym == SDLK_m) s->win_br.visible = !s->win_br.visible;
-    if (sym == SDLK_d) s->win_dip.visible = !s->win_dip.visible;
+    if (sym == SDLK_d) intensity_analysis_open(s);
     if (sym == SDLK_p) s->win_pf.visible = !s->win_pf.visible;
     if (sym == SDLK_t) s->win_avg.visible = !s->win_avg.visible;
     if (sym == SDLK_r) { // Reset View

@@ -12,6 +12,7 @@
 #include "ui_theme.h"
 #include "view.h"
 #include "controller.h"
+#include "intensity_fit.h"
 #include "predfit.h"
 #include "settings.h"
 #include "plotgpu.h"
@@ -109,6 +110,11 @@ static void commit_active(AppState *state) {
     sp->rolling_avg_active = state->rolling_avg_active;
 }
 
+void app_sync_view_state(AppState *state) {
+    commit_active(state);
+    if (state->data_loaded && state->sync_active) { state->pvxmin = state->vxmin; state->pvxmax = state->vxmax; }
+}
+
 static void select_spectrum(AppState *state, int idx) {
     if (idx < 0 || idx >= state->n_spectra) return;
     commit_active(state);
@@ -136,6 +142,37 @@ static void restore_session_spectrum(AppState *state, int idx, const SessionSpec
     if (state->active_spec == idx) mirror_active(state);
 }
 
+/* A saved zoom belongs to the document, but it cannot be allowed to make a
+ * restored multi-Hamiltonian project look incomplete.  This happened when a
+ * session was saved on a narrow line: several catalogues were correctly
+ * merged, yet none of their transitions fell inside that old viewport. */
+static int session_view_hides_simulated_model(const AppState *state,
+                                              double fmin, double fmax) {
+    const PredFitState *p = &state->predfit;
+    if (!state->pred_lines || p->n_simulated <= 1 || !(fmax > fmin)) return 0;
+    int seen[MAX_PICKETT_HAMILTONIANS] = {0};
+    for (int i = 0; i < state->n_pred; i++) {
+        const PredLine *line = &state->pred_lines[i];
+        if (line->freq_mhz < fmin || line->freq_mhz > fmax) continue;
+        for (int h = 0; h < p->n_simulated; h++)
+            if (p->simulated[h].hamiltonian_id == line->hamiltonian_id)
+                seen[h] = 1;
+    }
+    for (int h = 0; h < p->n_simulated; h++) if (!seen[h]) return 1;
+    return 0;
+}
+
+static void show_full_simulation_range(AppState *state) {
+    state->pvxmin = state->pxmin;
+    state->pvxmax = state->pxmax;
+    if (state->sync_active) {
+        state->vxmin = state->pxmin;
+        state->vxmax = state->pxmax;
+    }
+    state->bar_x = (state->pxmin + state->pxmax) * 0.5;
+    state->pbar_x = state->bar_x;
+}
+
 static void restore_session_view(AppState *state) {
     if (!state->session_has_view) return;
     if (isfinite(state->session_vxmin) && isfinite(state->session_vxmax) && state->session_vxmax > state->session_vxmin) {
@@ -148,6 +185,16 @@ static void restore_session_view(AppState *state) {
     if (!state->sync_active && isfinite(state->session_pvxmin) && isfinite(state->session_pvxmax) &&
         state->session_pvxmax > state->session_pvxmin) {
         state->pvxmin = state->session_pvxmin; state->pvxmax = state->session_pvxmax;
+    }
+    double pmin = state->sync_active ? state->vxmin : state->pvxmin;
+    double pmax = state->sync_active ? state->vxmax : state->pvxmax;
+    if (session_view_hides_simulated_model(state, pmin, pmax)) {
+        /* pxmin/pxmax are the envelope of every catalogue just merged by
+           set_predictions_simulated().  With sync on, expand both panes. */
+        show_full_simulation_range(state);
+        snprintf(state->status_message, sizeof(state->status_message),
+                 "Restored all %d simulated Hamiltonians; expanded a saved zoom that hid part of the project.",
+                 state->predfit.n_simulated);
     }
     state->session_has_view = 0;  /* restore once; navigation is live afterwards */
 }
@@ -473,6 +520,15 @@ static int set_predictions_simulated(AppState *state) {
     state->n_selected = 0;
     state->pxmin = pxmin;
     state->pxmax = pxmax;
+    /* An explicit Simulate must reveal every checked model.  Keep a normal
+       zoom when it contains them all, but do not leave the user looking at a
+       frequency slice where one or more newly simulated catalogues have no
+       transition at all.  During session restore the saved-view policy below
+       makes the same decision after that view has been read. */
+    if (!state->session_has_view &&
+        session_view_hides_simulated_model(state, state->sync_active ? state->vxmin : state->pvxmin,
+                                            state->sync_active ? state->vxmax : state->pvxmax))
+        show_full_simulation_range(state);
     /* The visible path is the active Hamiltonian's catalogue when it took
        part, so "is this the generated catalogue?" keeps its usual answer. */
     const char *shown = p->simulated[0].cat_path;
@@ -668,62 +724,20 @@ int main(int argc, char *argv[])
                 font = ui_font(UI_FONT_SANS);
             }
         }
-        layout.win_w = w; layout.win_h = h;
-        layout.plot_x = UI_RAIL_W + UI_PLOT_GUTTER;
-        layout.gap = UI_PANEL_HEADER_H;
-
-        int content_top    = UI_CONTENT_Y;
-        int content_bottom = h - UI_STATUS_H;
-
-        // Dock the inspector first: it decides how much width is left.
-        update_sidebars(&state, &layout);
-
-        int has_exp  = (state.n_spectra > 0);
-        int has_pred = (state.n_pred > 0);
-        int avail = content_bottom - content_top;
-        if (avail < 200) avail = 200;
-
-        // Each pane carries a header; the shared frequency axis is drawn once,
-        // under the bottom pane.
-        if (has_exp && has_pred) {
-            int usable = avail - 2 * UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
-            if (usable < 120) usable = 120;
-            layout.exp_h  = (int)(usable * 0.62);
-            layout.pred_h = usable - layout.exp_h;
-            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
-            layout.pred_y = layout.exp_y + layout.exp_h + UI_PANEL_HEADER_H;
-        } else if (has_pred) {
-            layout.exp_h  = 0;
-            layout.pred_h = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
-            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
-            layout.pred_y = content_top + UI_PANEL_HEADER_H;
-        } else {
-            layout.exp_h  = avail - UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
-            layout.pred_h = 0;
-            layout.exp_y  = content_top + UI_PANEL_HEADER_H;
-            layout.pred_y = layout.exp_y;
-        }
-        if (layout.exp_h  < 0) layout.exp_h  = 0;
-        if (layout.pred_h < 0) layout.pred_h = 0;
-
-        layout.exp_x = layout.plot_x;
-        layout.exp_w = layout.plot_right - layout.exp_x - 16;
-        if (layout.exp_w < 240) layout.exp_w = 240;
-        layout.pred_x = layout.plot_x;
-        layout.pred_w = layout.exp_w;
+        app_compute_layout(&state, &layout, w, h);
 
         handle_app_events(&state, &layout, &running);
         process_pending_loads(&state);
         restore_session_view(&state);
         predfit_render_advanced(&state);
+        intensity_analysis_poll(&state);
+        intensity_analysis_render(&state);
         settings_render(&state);
         if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; state.predfit.session_dirty = 1; }
         if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; state.predfit.session_dirty = 1; }
 
         // Keep the active spectrum in sync with the mirror fields the tools edit.
-        commit_active(&state);
-
-        if(state.data_loaded && state.sync_active) { state.pvxmin = state.vxmin; state.pvxmax = state.vxmax; }
+        app_sync_view_state(&state);
 
         render_app(ren, font, &state, &layout);
         if (state.export_requested) {
@@ -741,6 +755,7 @@ int main(int argc, char *argv[])
     free_dataset(&state);
     plotgpu_shutdown();
     settings_dispose(&state);
+    intensity_analysis_dispose(&state);
     predfit_dispose(&state);
     ui_fonts_close();
     SDL_DestroyRenderer(ren);

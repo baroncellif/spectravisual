@@ -10,6 +10,11 @@ double nice_tick(double range);
 int point_in_rect(int mx, int my, SDL_Rect r);
 SDL_Color color_for_pred(char branch, char mu);
 
+/* The one layout calculation used by both the primary window and disposable
+ * viewer windows.  Keeping it here prevents a preview from quietly becoming a
+ * different plot just because its SDL window has another size. */
+void app_compute_layout(AppState *state, Layout *layout, int width, int height);
+
 // --- TYPE ---
 // Labels and controls are set in the sans face, every number in the mono face,
 // so columns of digits line up and a value never changes width as it updates.
