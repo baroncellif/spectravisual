@@ -1511,9 +1511,9 @@ static double int_temperature_of(const char *path) {
                   &fqlim, &temp, &maxv) == 10 ? temp : -1.0;
 }
 
-/* H-03: as soon as a project has more than one Hamiltonian, Pickett files
-   live in Hxxx directories. Each H owns its own control card and cannot
-   overwrite the other Hamiltonian's Trot/cut. */
+/* H-03: every Hamiltonian writes its own Pickett files in .fit, named after
+   it. Each H owns its own control card and cannot overwrite the other
+   Hamiltonian's Trot/cut. */
 static int test_two_hamiltonians_keep_independent_int_controls(void) {
     AppState *s = new_state();
     PredFitState *p = &s->predfit;
@@ -1524,14 +1524,14 @@ static int test_two_hamiltonians_keep_independent_int_controls(void) {
     p->temp_k = 40.0;
     p->int_settings.intensity_cutoff = -18.0;
     CHECK_INT("scrive H2", write_inputs(s, 0), 1);
-    CHECK(access(work_path(".fit/H002/model.int"), F_OK) == 0, "manca H002/model.int");
-    CHECK_DBL("Trot H2 nel proprio .int", int_temperature_of(work_path(".fit/H002/model.int")), 40.0, 1e-12);
+    CHECK(access(work_path(".fit/H2.int"), F_OK) == 0, "manca H2.int");
+    CHECK_DBL("Trot H2 nel proprio .int", int_temperature_of(work_path(".fit/H2.int")), 40.0, 1e-12);
 
     CHECK_INT("seleziona H1", predfit_select_hamiltonian(s, 0), 1);
     CHECK_INT("scrive H1", write_inputs(s, 0), 1);
-    CHECK(access(work_path(".fit/H001/model.int"), F_OK) == 0, "manca H001/model.int");
-    CHECK_DBL("Trot H1 nel proprio .int", int_temperature_of(work_path(".fit/H001/model.int")), 5.0, 1e-12);
-    CHECK_DBL("H2 non viene sovrascritto", int_temperature_of(work_path(".fit/H002/model.int")), 40.0, 1e-12);
+    CHECK(access(work_path(".fit/model.int"), F_OK) == 0, "manca model.int");
+    CHECK_DBL("Trot H1 nel proprio .int", int_temperature_of(work_path(".fit/model.int")), 5.0, 1e-12);
+    CHECK_DBL("H2 non viene sovrascritto", int_temperature_of(work_path(".fit/H2.int")), 40.0, 1e-12);
     DONE();
 }
 

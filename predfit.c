@@ -19,6 +19,29 @@
 
 #define FIT_DIR_NAME ".fit"
 
+static void work_file(const PredFitState *p, const char *name, char *out, size_t size);
+
+/* Pickett takes a basename rather than an arbitrary path.  The visible H name
+   is therefore converted to a portable filename stem; spaces are made `_`,
+   while ordinary letters, digits, `_` and `-` stay readable. */
+static void hamiltonian_file_stem(const PredFitState *p, char *out, size_t size) {
+    const char *name = "model";
+    int id = 1;
+    if (p && p->active_hamiltonian >= 0 && p->active_hamiltonian < p->n_hamiltonians) {
+        const HamiltonianModel *h = &p->hamiltonian[p->active_hamiltonian];
+        if (h->name[0]) name = h->name;
+        id = h->id;
+    }
+    size_t used = 0;
+    for (const unsigned char *c = (const unsigned char *)name; *c && used + 1 < size; c++) {
+        if (isalnum(*c) || *c == '_' || *c == '-') out[used++] = (char)*c;
+        else if (used && out[used - 1] != '_') out[used++] = '_';
+    }
+    while (used && out[used - 1] == '_') used--;
+    if (!used) used = (size_t)snprintf(out, size, "Hamiltonian_%d", id);
+    out[used < size ? used : size - 1] = '\0';
+}
+
 /* Where the Pickett working files live, and which programs run them: both come
    from the settings now.  They used to be absolute paths into one developer's
    home directory, which meant Pred&Fit could not work on anybody else's
@@ -29,21 +52,13 @@ static void fit_root(const AppState *s, char *out, size_t n) {
 }
 
 void predfit_refresh_work_dir(AppState *s) {
-    char root[600];
-    fit_root(s, root, sizeof(root));
-    PredFitState *p = &s->predfit;
-    if (p->n_hamiltonians > 1 && p->active_hamiltonian >= 0 &&
-        p->active_hamiltonian < p->n_hamiltonians)
-        snprintf(p->work_dir, sizeof(p->work_dir), "%s/H%03d", root,
-                 p->hamiltonian[p->active_hamiltonian].id);
-    else
-        snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
+    fit_root(s, s->predfit.work_dir, sizeof(s->predfit.work_dir));
 }
 
 int predfit_is_generated_catalog(const AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0;
     char expected[700];
-    snprintf(expected, sizeof(expected), "%s/model.cat", s->predfit.work_dir);
+    work_file(&s->predfit, "model.cat", expected, sizeof(expected));
     if (strcmp(path, expected) == 0) return 1;
 
     /* Command-line paths and restored sessions can differ only in their
@@ -82,7 +97,7 @@ static int exclusion_key_matches(const FitExclusionKey *key, const PredLine *lin
 }
 
 static void exclusions_path(const AppState *s, char *out, size_t size) {
-    snprintf(out, size, "%s/exclusions.txt", s->predfit.work_dir);
+    work_file(&s->predfit, "model.exclusions.txt", out, size);
 }
 
 /* One small, versioned sidecar holds the transient fitting choice.  The
@@ -226,7 +241,12 @@ static int prepare_fit_dir(AppState *s) {
 }
 
 static void work_file(const PredFitState *p, const char *name, char *out, size_t size) {
-    snprintf(out,size,"%s/%s",p->work_dir,name);
+    char stem[128];
+    hamiltonian_file_stem(p, stem, sizeof(stem));
+    if (strncmp(name, "model", 5) == 0)
+        snprintf(out, size, "%s/%s%s", p->work_dir, stem, name + 5);
+    else
+        snprintf(out, size, "%s/%s", p->work_dir, name);
 }
 
 static PickettSpecies *active_species(PredFitState *p) {
@@ -285,8 +305,8 @@ static int included_state_count(const PredFitState *p) {
 static int current_model_nqn(const AppState *s, int *out) {
     const PredFitState *p = &s->predfit;
     char par_path[700], cat_path[700], line[512];
-    snprintf(par_path, sizeof(par_path), "%s/model.par", p->work_dir);
-    snprintf(cat_path, sizeof(cat_path), "%s/model.cat", p->work_dir);
+    work_file(p, "model.par", par_path, sizeof(par_path));
+    work_file(p, "model.cat", cat_path, sizeof(cat_path));
     FILE *fp = fopen(par_path, "r");
     if (!fp) return 0;
     for (int i = 0; i < 3; i++)
@@ -922,10 +942,13 @@ void predfit_init(AppState *s) {
     p->active_hamiltonian = 0;
     p->next_hamiltonian_id = 2;
     p->hamiltonian[0].id = 1;
-    snprintf(p->hamiltonian[0].name, sizeof(p->hamiltonian[0].name), "Hamiltonian 1");
+    /* `model` is the familiar initial Pickett basename; users can rename it
+       and its next Calculate/Fit will use that visible name as the basename. */
+    snprintf(p->hamiltonian[0].name, sizeof(p->hamiltonian[0].name), "model");
     snapshot_active_model(p, &p->hamiltonian[0].model);
     p->advanced_edit_param = -1;
     p->advanced_edit_species = -1;
+    p->advanced_edit_hamiltonian = -1;
     p->advanced_delete_hamiltonian_id = 0;
     p->advanced_hover_line = -1;
     /* Point at the working directory straight away, so the Fitting tab shows
@@ -1428,7 +1451,9 @@ static int run_program(const char *program, const char *work_dir,
     }
     if (pid == 0) {
         if (chdir(work_dir) != 0) _exit(127);
-        char *const argv[] = {(char *)program, "model", NULL};
+        char stem[128];
+        hamiltonian_file_stem(p, stem, sizeof(stem));
+        char *const argv[] = {(char *)program, stem, NULL};
         execv(program, argv);
         _exit(127);
     }
@@ -1840,6 +1865,7 @@ void predfit_close_advanced(AppState *s) {
     p->advanced_renderer=NULL; p->advanced_window=NULL; p->advanced_open=0; p->advanced_window_id=0;
     p->advanced_edit_param=-1;
     p->advanced_edit_species=-1;
+    p->advanced_edit_hamiltonian=-1;
 }
 
 void predfit_dispose(AppState *s) {
@@ -1880,6 +1906,36 @@ static void advanced_begin_hamiltonian_edit(PredFitState *p) {
     p->advanced_edit_col = 0;
     p->advanced_edit_replace = 1;
     snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%s", p->hamiltonian_line);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
+    SDL_StartTextInput();
+}
+
+static int hamiltonian_name_is_available(const PredFitState *p, int current, const char *name) {
+    PredFitState probe = *p;
+    char candidate[128], existing[128];
+    HamiltonianModel edited = p->hamiltonian[current];
+    snprintf(edited.name, sizeof(edited.name), "%s", name);
+    probe.hamiltonian[current] = edited;
+    probe.active_hamiltonian = current;
+    hamiltonian_file_stem(&probe, candidate, sizeof(candidate));
+    for (int i = 0; i < p->n_hamiltonians; i++) {
+        if (i == current) continue;
+        probe.active_hamiltonian = i;
+        hamiltonian_file_stem(&probe, existing, sizeof(existing));
+        if (strcmp(candidate, existing) == 0) return 0;
+    }
+    return 1;
+}
+
+static void advanced_begin_hamiltonian_name_edit(PredFitState *p) {
+    if (p->active_hamiltonian < 0 || p->active_hamiltonian >= p->n_hamiltonians) return;
+    p->advanced_edit_param = -6;
+    p->advanced_edit_hamiltonian = p->active_hamiltonian;
+    p->advanced_edit_col = 0;
+    p->advanced_edit_replace = 1;
+    snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%s",
+             p->hamiltonian[p->active_hamiltonian].name);
     p->advanced_edit_anchor = 0;
     p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
     SDL_StartTextInput();
@@ -2027,6 +2083,24 @@ static void advanced_commit_edit(PredFitState *p) {
         SDL_StopTextInput();
         return;
     }
+    if (p->advanced_edit_param == -6) {
+        int h = p->advanced_edit_hamiltonian;
+        if (h >= 0 && h < p->n_hamiltonians && p->advanced_edit_buf[0] &&
+            hamiltonian_name_is_available(p, h, p->advanced_edit_buf)) {
+            snprintf(p->hamiltonian[h].name, sizeof(p->hamiltonian[h].name), "%s",
+                     p->advanced_edit_buf);
+            p->session_dirty = 1;
+            snprintf(p->status, sizeof(p->status), "Hamiltonian renamed to %s.", p->hamiltonian[h].name);
+        } else {
+            snprintf(p->status, sizeof(p->status), "Hamiltonian name is empty or has the same file name as another H.");
+        }
+        p->advanced_edit_param = -1;
+        p->advanced_edit_hamiltonian = -1;
+        p->advanced_edit_replace = 0;
+        p->advanced_edit_anchor = p->advanced_edit_caret = 0;
+        SDL_StopTextInput();
+        return;
+    }
     if (p->advanced_edit_param == -3) {
         if (p->advanced_edit_species >= 0 && p->advanced_edit_species < p->n_species) {
             PickettSpecies *sp = &p->species[p->advanced_edit_species];
@@ -2128,7 +2202,7 @@ static int advanced_edit_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { advanced_commit_edit(p); return 1; }
-        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_hamiltonian=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
         return 1;
     }
     return 0;
@@ -2357,7 +2431,7 @@ typedef struct {
     /* This navigator is deliberately present on every page.  A Hamiltonian
        is the unit of a Pickett calculation, while a state is its child: the
        hierarchy must therefore not be hidden behind a separate tab. */
-    SDL_Rect project_nav, project_rows, project_add, project_duplicate, project_delete;
+    SDL_Rect project_nav, project_rows, project_add, project_rename, project_duplicate, project_delete;
     int project_rows_visible;
 } AdvUI;
 
@@ -2378,16 +2452,18 @@ static AdvUI adv_ui(AppState *s, int tab) {
     u.footer  = (SDL_Rect){0, footer_y, u.w, ADV_FOOTER_H};
     u.project_nav = (SDL_Rect){ADV_PAD, ADV_CONTENT_Y, nav_w, footer_y - ADV_CONTENT_Y - 10};
     u.project_rows = (SDL_Rect){u.project_nav.x + 2, u.project_nav.y + 28,
-                                u.project_nav.w - 4, u.project_nav.h - 130};
+                                u.project_nav.w - 4, u.project_nav.h - 164};
     if (u.project_rows.h < 24) u.project_rows.h = 24;
     u.project_rows_visible = u.project_rows.h / 23;
     if (u.project_rows_visible < 1) u.project_rows_visible = 1;
-    u.project_add = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 92,
+    u.project_add = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 126,
                                u.project_nav.w - 16, 26};
-    u.project_duplicate = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 58,
+    u.project_rename = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 92,
                                      (u.project_nav.w - 22) / 2, 26};
-    u.project_delete = (SDL_Rect){u.project_duplicate.x + u.project_duplicate.w + 6,
-                                  u.project_duplicate.y, u.project_duplicate.w, 26};
+    u.project_duplicate = (SDL_Rect){u.project_rename.x + u.project_rename.w + 6,
+                                     u.project_rename.y, u.project_rename.w, 26};
+    u.project_delete = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 58,
+                                  u.project_nav.w - 16, 26};
     u.caption = (SDL_Rect){content_x, ADV_CONTENT_Y, content_w, 18};
 
     int table_top = ADV_CONTENT_Y + 26;
@@ -2493,6 +2569,8 @@ static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, con
         }
     }
     ui_button(r, u->project_add, "+ Hamiltonian", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+    ui_button(r, u->project_rename, "Rename", -1, UI_BTN_QUIET,
+              p->advanced_edit_param == -6, 0, 0, 0);
     ui_button(r, u->project_duplicate, "Duplicate", -1, UI_BTN_QUIET, 0, 0, 0, 0);
     int active_id = (p->active_hamiltonian >= 0 && p->active_hamiltonian < p->n_hamiltonians)
                   ? p->hamiltonian[p->active_hamiltonian].id : 0;
@@ -2576,6 +2654,10 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         if (made) p->advanced_project_scroll =
             adv_scroll_limit(project_row_count(p), u.project_rows_visible);
         p->advanced_delete_hamiltonian_id = 0;
+        return 1;
+    }
+    if (point_in_rect(x, y, u.project_rename)) {
+        advanced_begin_hamiltonian_name_edit(p);
         return 1;
     }
     if (point_in_rect(x, y, u.project_delete)) {
