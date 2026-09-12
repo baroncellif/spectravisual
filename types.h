@@ -202,6 +202,8 @@ typedef struct {
     int fit_running;
     int fit_pid;
     int fit_duplicate_count;
+    int fit_blend_count;        /* blend components summed into another row */
+    int fit_line_count;         /* observed lines handed to the Python fit */
     char fit_output_dir[700];
     /* Preview of a fit result: a second instance of the main viewer (view.c,
        controller.c, layout.c) drawn from a private copy of the application

@@ -23,6 +23,14 @@ int intensity_analysis_handle_event(AppState *state, const SDL_Event *event);
 void intensity_analysis_poll(AppState *state);
 void intensity_analysis_render(AppState *state);
 
+/* Write the spectrum, per-species LIN/CAT/INT and run.json the Python
+   intensity_fit package reads, into the existing directory dir.  config and
+   output receive the paths to hand to it.  Returns 0 with the reason in the
+   window message when nothing can be fitted. */
+int intensity_analysis_write_python_inputs(AppState *state, const char *dir,
+                                           char *config, size_t config_size,
+                                           char *output, size_t output_size);
+
 /* The private state the fit preview window draws with render_app: a copy of
    the working state whose prediction carries the fitted intensities.  Built on
    first use and rebuilt when the working buffers or the result change; NULL

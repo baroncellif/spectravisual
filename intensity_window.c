@@ -351,8 +351,24 @@ static int if_same_temp_transition(const Assignment *a, const IntensityFitSpecie
     return 1;
 }
 
+/* The Python model reads every LGINT as a 300 K intensity and moves it to
+ * Trot with I300 (300/T)^(1+DR/2) exp(-c2 ELO (1/T - 1/300)).  Pred&Fit's
+ * rows are SPCAT's at the .int TEMP (often a fraction of a kelvin), so they
+ * are written through the exact inverse of that model at TEMP: the Python
+ * model then returns SPCAT's own row - its Q(TEMP), its stimulated emission -
+ * at T = TEMP, and the fitted Trot no longer depends on the TEMP the
+ * catalogue happened to be generated at.  Written unconverted, the Boltzmann
+ * factor of TEMP was applied twice and Trot ran off to the upper bound. */
+static double if_lgint_referred_to_300k(double lgint, double elo_cm, int dr, double tcat) {
+    if (!(tcat > 0.0) || !isfinite(lgint)) return lgint;
+    return lgint - (1.0 + 0.5 * dr) * log10(300.0 / tcat)
+                 + IF_C2 * elo_cm * (1.0 / tcat - 1.0 / 300.0) / M_LN10;
+}
+
+/* lgint_at_tcat is the row's intensity at the catalogue TEMP; for a blend it
+   is the sum of its components, written on the strongest one's QNs. */
 static int if_write_lin_cat(FILE *lin, FILE *cat, const Assignment *a,
-                            const IntensityFitSpecies *species) {
+                            const IntensityFitSpecies *species, double lgint_at_tcat) {
     int qn[12];
     int nq = if_temp_qn(a, species, qn);
     /* PredLine is six upper slots followed by six lower slots.  A Pickett
@@ -368,8 +384,10 @@ static int if_write_lin_cat(FILE *lin, FILE *cat, const Assignment *a,
         if (i < 2*nq) fprintf(lin, "%3d", packed[i]); else fputs("   ", lin);
     }
     fprintf(lin, " %14.7f %10.4f %10.4f\n", a->exp_freq, 0.01, 1.0);
+    double lgint = if_lgint_referred_to_300k(lgint_at_tcat, a->pred.elo_cm, a->pred.rot_dof,
+                                             species->cat_temperature_k);
     fprintf(cat, "%13.4f%8.4f%8.4f%2d%10.4f%3d%7d%4d",
-            a->pred.freq_mhz, 0.0, a->pred.cat_lgint, a->pred.rot_dof,
+            a->pred.freq_mhz, 0.0, lgint, a->pred.rot_dof,
             a->pred.elo_cm, 1, 0, 300 + nq);
     for (int i=0;i<2*nq;i++) { char slot[3]; if_qn_slot(slot, packed[i]); fputs(slot, cat); }
     fputc('\n', cat);
@@ -432,9 +450,9 @@ static void finish_python_reference_fit(AppState *s, int status) {
     if (hit) sscanf(hit, "LINES USED=%d  NUMBER OF PARAMETERS=%d", &w->n_candidates, &w->n_parameters);
     hit = strstr(w->report, "RMS ERROR =");
     if (hit) sscanf(hit, "RMS ERROR = %lf", &w->rmse);
-    snprintf(w->message, sizeof(w->message), w->fit_duplicate_count
-             ? "Python fit complete; %d duplicate transition%s omitted (closest assignment kept)."
-             : "Python reference fit complete. Preview is non-destructive.",
+    snprintf(w->message, sizeof(w->message),
+             "Python fit complete: %d lines; %d blend component%s summed, %d duplicate%s omitted. Preview is non-destructive.",
+             w->fit_line_count, w->fit_blend_count, w->fit_blend_count == 1 ? "" : "s",
              w->fit_duplicate_count, w->fit_duplicate_count == 1 ? "" : "s");
 }
 
@@ -456,28 +474,40 @@ void intensity_analysis_poll(AppState *s) {
     poll_python_reference_fit(s);
 }
 
-static int run_python_reference_fit(AppState *s) {
-    IntensityFitWindow *w = &s->intensity_window;
-    if (w->fit_running) {
-        snprintf(w->message, sizeof(w->message), "Python fit is already running; the interface remains usable.");
-        return 0;
+/* Assignments of one species at the same experimental frequency are the
+   components of one blend: they share the measured area. */
+#define IF_BLEND_TOL_MHZ 5e-5
+
+/* Temperature of the first species that contributes lines to a group
+   (group 0: every species). */
+static double if_group_temperature(const IntensityFitWindow *w, const int *line_count, int group) {
+    for (int i = 0; i < w->n_species; i++) {
+        if (!line_count[i]) continue;
+        int g = w->common_temperature ? 1 : w->species[i].temperature_group;
+        if (group == 0 || g == group) return w->species[i].temperature_k;
     }
-    const char *root = getenv("SPECTRAVISUAL_INTENSITY_FIT_ROOT");
-    if (!root || !root[0]) root = "/Users/filippobaroncelli/Desktop/coding/Python/relative_intensity";
-    char probe[700]; snprintf(probe, sizeof(probe), "%s/intensity_fit/workflow.py", root);
-    FILE *check = fopen(probe, "r");
-    if (!check) { snprintf(w->message,sizeof(w->message),"Python reference not found. Set SPECTRAVISUAL_INTENSITY_FIT_ROOT."); return 0; }
-    fclose(check);
+    return 0.0;
+}
+
+int intensity_analysis_write_python_inputs(AppState *s, const char *dir,
+                                           char *config, size_t config_size,
+                                           char *output, size_t output_size) {
+    IntensityFitWindow *w = &s->intensity_window;
     if (w->n_species <= 0) { snprintf(w->message,sizeof(w->message),"Pred&Fit contains no species to analyse."); return 0; }
     if (!s->current_pts || s->n_pts < 2) { snprintf(w->message,sizeof(w->message),"Load an experimental spectrum first."); return 0; }
+    /* The Python fit takes a fixed scale as an absolute factor on the
+       experimental intensity, whose units are arbitrary; Pred&Fit's relative
+       concentrations would pin every line to a meaningless height. */
+    if (!w->fit_concentration) {
+        snprintf(w->message, sizeof(w->message),
+                 "Concentrations must be fitted: the experimental intensity scale is arbitrary.");
+        return 0;
+    }
 
-    char template_path[] = "/private/tmp/spectravisual-intfit-XXXXXX";
-    char *dir = mkdtemp(template_path);
-    if (!dir) { snprintf(w->message,sizeof(w->message),"Cannot create temporary fit directory."); return 0; }
-    char spectrum[700], config[700], output[700];
+    char spectrum[700];
     snprintf(spectrum,sizeof(spectrum),"%s/spectrum.txt",dir);
-    snprintf(config,sizeof(config),"%s/run.json",dir);
-    snprintf(output,sizeof(output),"%s/output",dir);
+    snprintf(config,config_size,"%s/run.json",dir);
+    snprintf(output,output_size,"%s/output",dir);
     FILE *sf=fopen(spectrum,"w");
     if (!sf) { snprintf(w->message,sizeof(w->message),"Cannot write temporary spectrum."); return 0; }
     for(int i=0;i<s->n_pts;i++) fprintf(sf,"%.12g %.12g\n",s->current_pts[i].x,s->current_pts[i].y);
@@ -486,6 +516,8 @@ static int run_python_reference_fit(AppState *s) {
     int line_count[MAX_INTFIT_SPECIES]={0};
     FILE *lin[MAX_INTFIT_SPECIES]={0}, *cat[MAX_INTFIT_SPECIES]={0};
     char lin_path[MAX_INTFIT_SPECIES][700], cat_path[MAX_INTFIT_SPECIES][700], int_path[MAX_INTFIT_SPECIES][700];
+    int *chosen = s->n_assignments > 0 ? malloc((size_t)s->n_assignments * sizeof(*chosen)) : NULL;
+    if (s->n_assignments > 0 && !chosen) { snprintf(w->message,sizeof(w->message),"Not enough memory for the intensity fit."); return 0; }
     for(int i=0;i<w->n_species;i++) if(w->species[i].included) {
         snprintf(lin_path[i],sizeof(lin_path[i]),"%s/species_%03d.lin",dir,i);
         snprintf(cat_path[i],sizeof(cat_path[i]),"%s/species_%03d.cat",dir,i);
@@ -501,8 +533,9 @@ static int run_python_reference_fit(AppState *s) {
     int duplicate_count = 0;
     for (int a = 0; a < s->n_assignments; a++) {
         int sp = -1;
+        chosen[a] = -1;
         if (!if_transition_selected(s, &s->assignments[a], &sp)) continue;
-        int chosen = 1;
+        int keep = 1;
         double this_error = fabs(s->assignments[a].exp_freq - s->assignments[a].pred.freq_mhz);
         for (int b = 0; b < s->n_assignments; b++) {
             int other_sp = -1;
@@ -513,14 +546,36 @@ static int run_python_reference_fit(AppState *s) {
                 continue;
             double other_error = fabs(s->assignments[b].exp_freq - s->assignments[b].pred.freq_mhz);
             if (other_error < this_error || (other_error == this_error && b < a)) {
-                chosen = 0;
+                keep = 0;
                 break;
             }
         }
-        if (!chosen) { duplicate_count++; continue; }
-        if_write_lin_cat(lin[sp], cat[sp], &s->assignments[a], &w->species[sp]);
+        if (!keep) { duplicate_count++; continue; }
+        chosen[a] = sp;
+    }
+    /* Written one by one, every component of a blend was compared with the
+       area of the whole feature.  The blend is one observation instead: its
+       intensity at the catalogue TEMP is the sum of the components, written
+       on the strongest one's QNs (and so with its ELO and dipole component). */
+    int blend_count = 0;
+    for (int a = 0; a < s->n_assignments; a++) {
+        int sp = chosen[a];
+        if (sp < 0) continue;
+        const Assignment *rep = &s->assignments[a];
+        double ref = rep->pred.cat_lgint, sum = 1.0;
+        for (int b = a + 1; b < s->n_assignments; b++) {
+            if (chosen[b] != sp || fabs(s->assignments[b].exp_freq - rep->exp_freq) > IF_BLEND_TOL_MHZ)
+                continue;
+            sum += pow(10.0, s->assignments[b].pred.cat_lgint - ref);
+            if (s->assignments[b].pred.cat_lgint > rep->pred.cat_lgint) rep = &s->assignments[b];
+            chosen[b] = -1;
+            blend_count++;
+        }
+        if_write_lin_cat(lin[sp], cat[sp], rep, &w->species[sp], ref + log10(sum));
         line_count[sp]++;
     }
+    free(chosen);
+    chosen = NULL;
     for(int i=0;i<w->n_species;i++) { if(lin[i])fclose(lin[i]);if(cat[i])fclose(cat[i]);lin[i]=cat[i]=NULL; }
 
     int total_lines = 0;
@@ -536,11 +591,24 @@ static int run_python_reference_fit(AppState *s) {
     fprintf(cf,"    \"fit_mode\": \"%s\",\n",w->fit_mode?"spectrum":"line_intensity");
     fprintf(cf,"    \"common_temperature\": %s,\n",w->common_temperature?"true":"false");
     fputs("    \"species_temperature_groups\": {",cf); int first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){if(!first)fputc(',',cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputc(':',cf);char group[32];snprintf(group,sizeof(group),"G%d",w->common_temperature?1:w->species[i].temperature_group);if_json_string(cf,group);first=0;}fputs("},\n",cf);
+    /* "Fit Trot" off holds each group at its Pred&Fit Trot; without these
+       keys the Python fit frees the temperature regardless. */
+    if (!w->fit_temperature) {
+        if (w->common_temperature) {
+            fprintf(cf,"    \"fixed_temperature_K\": %.12g,\n",if_group_temperature(w,line_count,0));
+        } else {
+            int seen[MAX_INTFIT_GROUPS+1]={0};
+            fputs("    \"fixed_group_temperatures\": {",cf); first=1;
+            for(int i=0;i<w->n_species;i++){int g=w->species[i].temperature_group;if(!line_count[i]||g<1||g>MAX_INTFIT_GROUPS||seen[g])continue;seen[g]=1;if(!first)fputc(',',cf);fprintf(cf,"\"G%d\": %.12g",g,if_group_temperature(w,line_count,g));first=0;}
+            fputs("},\n",cf);
+        }
+    }
+    double temp_init = fmin(fmax(if_group_temperature(w,line_count,0),w->temp_min_k),w->temp_max_k);
     fprintf(cf,"    \"extraction_mode\": \"%s\",\n",w->extraction_mode==0?"sample":w->extraction_mode==1?"local_max":"area");
     fprintf(cf,"    \"extraction_window_MHz\": %.12g,\n",w->extraction_window_mhz);
     fprintf(cf,"    \"fit_in_log_space\": %s,\n",w->fit_log_space?"true":"false");
     fprintf(cf,"    \"use_exact_temperature_scaling\": %s,\n",w->exact_temperature_scaling?"true":"false");
-    fprintf(cf,"    \"temp_init_K\": %.12g, \"temp_min_K\": %.12g, \"temp_max_K\": %.12g,\n",w->species[0].temperature_k,w->temp_min_k,w->temp_max_k);
+    fprintf(cf,"    \"temp_init_K\": %.12g, \"temp_min_K\": %.12g, \"temp_max_K\": %.12g,\n",temp_init,w->temp_min_k,w->temp_max_k);
     fprintf(cf,"    \"intensity_uncertainty_fraction\": %.12g, \"intensity_uncertainty_floor\": %.12g,\n",w->intensity_uncertainty_fraction,w->intensity_uncertainty_floor);
     fprintf(cf,"    \"residual_weighting\": \"%s\", \"loss\": \"linear\", \"loss_f_scale\": 1.0,\n",w->residual_weighting==1?"fractional":w->residual_weighting==2?"hybrid":"none");
     int has_mu=0;for(int i=0;i<w->n_species;i++)for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c])has_mu=1;
@@ -548,8 +616,39 @@ static int run_python_reference_fit(AppState *s) {
     double fwhm = s->gauss_gamma>0 ? 2*s->gauss_gamma : s->lorentz_gamma>0 ? 2*s->lorentz_gamma : 0.10;
     fprintf(cf,"    \"lineshape\": {\"profile\": \"%s\", \"fwhm_MHz\": %.12g, \"fit_fwhm\": false, \"window_MHz\": %.12g, \"normalize\": \"area\"},\n",s->lorentz_gamma>0&&s->gauss_gamma<=0?"lorentzian":"gaussian",fwhm,fmax(5*fwhm,w->extraction_window_mhz));
     fputs("    \"plot\": {\"enabled\": false}\n  },\n  \"species\": [\n",cf);
-    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview\n0 0 1 0 0 0 0 0 %.12g 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(!w->fit_concentration)fprintf(cf,", \"fixed_scale\": %.12g",w->species[i].concentration);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
+    /* The rows were referred to 300 K (if_lgint_referred_to_300k), so the
+       .int states 300 K; its title keeps the TEMP they were generated at. */
+    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview (LGINT referred to 300 K from TEMP %.6g K)\n0 0 1 0 0 0 0 0 300 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
     fputs("\n  ]\n}\n",cf);fclose(cf);
+    w->fit_duplicate_count = duplicate_count;
+    w->fit_blend_count = blend_count;
+    w->fit_line_count = total_lines;
+    return 1;
+write_fail:
+    free(chosen);
+    for(int i=0;i<w->n_species;i++){if(lin[i])fclose(lin[i]);if(cat[i])fclose(cat[i]);}
+    return 0;
+}
+
+static int run_python_reference_fit(AppState *s) {
+    IntensityFitWindow *w = &s->intensity_window;
+    if (w->fit_running) {
+        snprintf(w->message, sizeof(w->message), "Python fit is already running; the interface remains usable.");
+        return 0;
+    }
+    const char *root = getenv("SPECTRAVISUAL_INTENSITY_FIT_ROOT");
+    if (!root || !root[0]) root = "/Users/filippobaroncelli/Desktop/coding/Python/relative_intensity";
+    char probe[700]; snprintf(probe, sizeof(probe), "%s/intensity_fit/workflow.py", root);
+    FILE *check = fopen(probe, "r");
+    if (!check) { snprintf(w->message,sizeof(w->message),"Python reference not found. Set SPECTRAVISUAL_INTENSITY_FIT_ROOT."); return 0; }
+    fclose(check);
+
+    char template_path[] = "/private/tmp/spectravisual-intfit-XXXXXX";
+    char *dir = mkdtemp(template_path);
+    if (!dir) { snprintf(w->message,sizeof(w->message),"Cannot create temporary fit directory."); return 0; }
+    char config[700], output[700];
+    if (!intensity_analysis_write_python_inputs(s, dir, config, sizeof(config), output, sizeof(output)))
+        return 0;
     pid_t pid = fork();
     if (pid == 0) {
         if (chdir(root) != 0) _exit(126);
@@ -562,14 +661,10 @@ static int run_python_reference_fit(AppState *s) {
     }
     w->fit_running = 1;
     w->fit_pid = (int)pid;
-    w->fit_duplicate_count = duplicate_count;
     snprintf(w->fit_output_dir, sizeof(w->fit_output_dir), "%s", output);
     w->has_result = 0;
-    snprintf(w->message, sizeof(w->message), "Python line-intensity fit is running in the background (%d selected transitions)…", total_lines);
+    snprintf(w->message, sizeof(w->message), "Python line-intensity fit is running in the background (%d observed lines)…", w->fit_line_count);
     return 1;
-write_fail:
-    for(int i=0;i<w->n_species;i++){if(lin[i])fclose(lin[i]);if(cat[i])fclose(cat[i]);}
-    return 0;
 }
 
 static int run_fit(AppState *s) {

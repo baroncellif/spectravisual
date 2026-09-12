@@ -3048,6 +3048,98 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     DONE();
 }
 
+/* The Python intensity model reads each LGINT as a 300 K intensity and moves
+   it to Trot with (300/T)^(1+DR/2) exp(-c2 ELO (1/T - 1/300)).  A row written
+   for it must give back, at T = TEMP of the catalogue, the SPCAT row itself;
+   a blend is one observation whose intensity is the sum of its components;
+   "Fit Trot" off must reach the Python fit as a fixed temperature. */
+static double python_model_at(double lgint_written, double elo, int dr, double t) {
+    return lgint_written + (1.0 + 0.5 * dr) * log10(300.0 / t)
+         - 1.438776877 * elo * (1.0 / t - 1.0 / 300.0) / M_LN10;
+}
+
+static int test_python_intensity_inputs(void) {
+    double pk[2] = {3000.0, 3005.0}, ht[2] = {1.0, 0.5};
+    write_spectrum(work_path("intfit.txt"), pk, ht, 2);
+    AppState *s = new_state();
+    CHECK_INT("spettro", add_spectrum(s, work_path("intfit.txt")), 1);
+    PredLine iso = {.freq_mhz = 3000.0, .cat_lgint = -3.0, .elo_cm = 1.0, .rot_dof = 3, .n_qn = 4,
+                    .Ju = 1, .Kcu = 1, .Jl = 0, .mu = 'a', .hamiltonian_id = 1};
+    PredLine strong = {.freq_mhz = 3005.0, .cat_lgint = -4.0, .elo_cm = 2.0, .rot_dof = 3, .n_qn = 4,
+                       .Ju = 2, .Kcu = 2, .Jl = 1, .Kcl = 1, .mu = 'a', .hamiltonian_id = 1};
+    PredLine weak = {.freq_mhz = 3005.01, .cat_lgint = -5.0, .elo_cm = 3.0, .rot_dof = 3, .n_qn = 4,
+                     .Ju = 2, .Kau = 1, .Kcu = 1, .Jl = 1, .Kal = 1, .mu = 'a', .hamiltonian_id = 1};
+    /* The weaker component comes first: the row must still carry the stronger. */
+    s->assignments[0] = (Assignment){.pred = iso, .exp_freq = 3000.0, .fit_enabled = 1, .hamiltonian_id = 1};
+    s->assignments[1] = (Assignment){.pred = weak, .exp_freq = 3005.0, .fit_enabled = 1, .hamiltonian_id = 1};
+    s->assignments[2] = (Assignment){.pred = strong, .exp_freq = 3005.0, .fit_enabled = 1, .hamiltonian_id = 1};
+    s->n_assignments = 3;
+
+    IntensityFitWindow *w = &s->intensity_window;
+    w->initialized = 1;
+    w->n_species = 1;
+    w->species[0] = (IntensityFitSpecies){.hamiltonian_id = 1, .state_index = 0, .included = 1,
+        .temperature_group = 1, .concentration = 0.1, .temperature_k = 0.3, .cat_temperature_k = 0.3,
+        .mu_cat = {1.0, 1.0, 1.0}};
+    for (int i = 0; i < 3; i++) w->branch_enabled[i] = w->mu_enabled[i] = 1;
+    w->fmin_mhz = 2990.0; w->fmax_mhz = 3010.0;
+    w->extraction_mode = 2; w->extraction_window_mhz = 0.05;
+    w->temp_min_k = 0.1; w->temp_max_k = 100.0;
+    w->common_temperature = 1;
+    w->fit_concentration = 1;
+    w->fit_temperature = 0;
+
+    char config[700], output[700];
+    CHECK_INT("input scritti", intensity_analysis_write_python_inputs(s, g_work, config, sizeof(config),
+                                                                     output, sizeof(output)), 1);
+    CHECK_INT("righe osservate", w->fit_line_count, 2);
+    CHECK_INT("componenti di blend sommate", w->fit_blend_count, 1);
+
+    FILE *cat = fopen(work_path("species_000.cat"), "r");
+    CHECK(cat != NULL, "cat temporaneo");
+    if (!cat) DONE();
+    char row[256], field[16];
+    int rows = 0, seen_iso = 0, seen_blend = 0;
+    while (fgets(row, sizeof(row), cat)) {
+        rows++;
+        memcpy(field, row, 13); field[13] = '\0'; double freq = atof(field);
+        memcpy(field, row + 21, 8); field[8] = '\0'; double lg = atof(field);
+        memcpy(field, row + 31, 10); field[10] = '\0'; double elo = atof(field);
+        if (fabs(freq - 3000.0) < 1e-3) {
+            seen_iso = 1;
+            CHECK_DBL("riga isolata = SPCAT a TEMP nel modello Python", python_model_at(lg, elo, 3, 0.3), -3.0, 2e-4);
+        } else {
+            seen_blend = 1;
+            CHECK_DBL("blend sui QN della componente forte", freq, 3005.0, 1e-3);
+            CHECK_DBL("blend con ELO della componente forte", elo, 2.0, 1e-9);
+            CHECK_DBL("blend = somma delle componenti a TEMP", python_model_at(lg, elo, 3, 0.3),
+                      log10(1e-4 + 1e-5), 2e-4);
+        }
+    }
+    fclose(cat);
+    CHECK_INT("una riga per osservazione", rows, 2);
+    CHECK(seen_iso && seen_blend, "righe isolata e blend presenti");
+
+    FILE *cf = fopen(config, "r");
+    char json[8192] = "";
+    if (cf) { json[fread(json, 1, sizeof(json) - 1, cf)] = '\0'; fclose(cf); }
+    CHECK(strstr(json, "\"fixed_temperature_K\": 0.3,") != NULL, "Trot fissa passata al Python:\n%s", json);
+    CHECK(strstr(json, "fixed_scale") == NULL, "nessuna scala assoluta fissata");
+
+    w->fit_temperature = 1;
+    CHECK_INT("input con Trot libera", intensity_analysis_write_python_inputs(s, g_work, config, sizeof(config),
+                                                                             output, sizeof(output)), 1);
+    cf = fopen(config, "r");
+    json[0] = '\0';
+    if (cf) { json[fread(json, 1, sizeof(json) - 1, cf)] = '\0'; fclose(cf); }
+    CHECK(strstr(json, "fixed_temperature_K") == NULL, "Trot libera non fissata");
+
+    w->fit_concentration = 0;
+    CHECK_INT("concentrazioni fisse rifiutate", intensity_analysis_write_python_inputs(s, g_work, config,
+                                                sizeof(config), output, sizeof(output)), 0);
+    DONE();
+}
+
 /* PF-02: concentration is an external lower-state population multiplier.
    This matters only for a non-diagonal transition; diagonal rotational rows
    retain the expected state concentration. */
@@ -3165,6 +3257,7 @@ static const Test TESTS[] = {
     {"test_intensity_recompute_keeps_concentration", test_intensity_recompute_keeps_concentration},
     {"test_interstate_line_uses_lower_state_concentration", test_interstate_line_uses_lower_state_concentration},
     {"test_fit_preview_is_the_main_viewer_readonly", test_fit_preview_is_the_main_viewer_readonly},
+    {"test_python_intensity_inputs", test_python_intensity_inputs},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 
