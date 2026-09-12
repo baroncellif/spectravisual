@@ -232,9 +232,28 @@ static void reopen_predfit_session(AppState *state) {
              state->n_spectra, state->n_spectra == 1 ? "" : "s");
 }
 
+/* A catalogue and a simulation both replace the whole plot, so only the last
+   one asked for can win.  Dropping the superseded requests keeps the queue
+   honest: a catalogue still waiting must not load after - and wipe the model
+   list of - the simulation that replaced it. */
+static void drop_pending_plot_loads(AppState *state) {
+    int kept = 0;
+    for (int i = 0; i < state->pending_load_count; i++) {
+        int from = (state->pending_load_head + i) % MAX_PENDING_LOADS;
+        PendingLoadKind kind = state->pending_loads[from].kind;
+        if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION) continue;
+        int to = (state->pending_load_head + kept) % MAX_PENDING_LOADS;
+        if (to != from) state->pending_loads[to] = state->pending_loads[from];
+        kept++;
+    }
+    state->pending_load_count = kept;
+}
+
 int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
                              const char *path, int generated_catalog) {
     if (!state || !path || !path[0]) return 0;
+    if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION)
+        drop_pending_plot_loads(state);
     if (state->pending_load_count >= MAX_PENDING_LOADS) {
         snprintf(state->error_message, sizeof(state->error_message),
                  "Too many files waiting to load (maximum %d).", MAX_PENDING_LOADS);

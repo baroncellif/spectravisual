@@ -143,6 +143,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #25 | Importazione esplicita di input SPFIT/SPCAT | richiesta utente 2026-09-12 | medio: adozione di modelli esterni senza ricostruzione manuale | fatto `HEAD` |
 | #26 | Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita | richiesta utente 2026-09-12 | medio: workspace leggibile e nessun salvataggio implicito | fatto `HEAD` |
 | #27 | Simulazione: più Hamiltoniani e più dipoli in un solo plot | richiesta utente 2026-09-12 | alto: finora si poteva vedere un Hamiltoniano alla volta | fatto `HEAD` |
+| #28 | Fit di un modello importato senza passi intermedi | segnalazione utente 2026-09-12 | alto: il fit di un `.lin` importato era bloccato | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 **P0.3** → #1; **P1** → #2, #6, #7, #8, #11, #14, #15, #18, #19, #21;
@@ -1122,6 +1123,40 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Nota**: anche l'Hamiltoniano vuoto di partenza è spuntato per default, e
   quindi entra nel plot con il suo rotore di default finché non lo si
   deseleziona o elimina.
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #28 — Fit di un modello importato: nessun passo intermedio richiesto
+
+- **Bug/issue**: dopo l'import (#25) il Fit veniva rifiutato con *"Calculate the
+  current model before Fit: model.cat is missing or predates the option line"*,
+  perché per quell'Hamiltoniano `.fit/` non conteneva ancora nessun catalogo, e
+  il pulsante citato nel messaggio non esiste più (ora è Simulate). Le righe
+  importate da un `.lin` restavano inoltre con `PREDICTED 0.000000`: un `.lin`
+  non contiene frequenze calcolate. Segnalato dall'utente il 2026-09-12 con tre
+  schermate (Lines, Fitting, messaggio dopo Fit).
+- **Cosa è stato fatto**:
+  - `ensure_model_catalog` — il Fit produce da sé il catalogo che gli serve per
+    leggere la forma dei QN (un SPCAT sull'Hamiltoniano attivo) invece di
+    rifiutare; il plot non viene toccato, l'operazione crea solo il file. Il
+    rifiuto resta solo se SPCAT manca o non produce un catalogo usabile, e il
+    messaggio nomina il file vero e il pulsante Simulate;
+  - `refresh_assignment_predictions` — quando un catalogo entra nel plot, ogni
+    assignment di quei modelli riprende dalla riga corrispondente frequenza,
+    intensità ed ELO. L'accoppiamento è su identità (proprietario + numeri
+    quantici), che non viene mai modificata;
+  - `drop_pending_plot_loads` ([main.c](../../main.c)) — catalogo e simulazione
+    sostituiscono entrambi l'intero plot, quindi l'ultimo richiesto vince: una
+    richiesta di catalogo ancora in coda non può più caricarsi *dopo* la
+    simulazione che l'ha sostituita azzerandone l'elenco dei modelli (si vedeva
+    come plot con 476 righe invece di 2770).
+- **Verifica sui file dell'utente**: import dei 5 modelli in `.fit/load/` →
+  Fit immediato su `G-G+ttt` senza altri passaggi: SPFIT gira, RMS 0,011 MHz;
+  163 dei 164 assignment importati riprendono la frequenza predetta. Il
+  164-esimo (16 4 12 ← 16 3 14, 5855,59 MHz) non è nel catalogo perché a
+  TEMP = 1 K resta sotto il cutoff STR0 = −9 del `.int` importato: assente dal
+  `.cat`, non perso dalla lista.
+- **Test che passano**: `test_fit_calculates_the_missing_catalogue`,
+  `test_simulation_supersedes_a_queued_catalog`.
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

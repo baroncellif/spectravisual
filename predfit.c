@@ -89,6 +89,7 @@ static void store_active_hamiltonian(PredFitState *p);
 static void restore_active_model(PredFitState *p, const PredFitSnapshot *snap);
 static void snapshot_active_model(const PredFitState *p, PredFitSnapshot *snap);
 static int assignment_belongs_to_active_hamiltonian(const AppState *s, const Assignment *a);
+static void refresh_assignment_predictions(AppState *s);
 
 static void exclusion_key_from_pred(FitExclusionKey *key, const PredLine *line) {
     const int qn[12] = {line->Ju, line->Kau, line->Kcu, line->M1u, line->M2u, line->M3u,
@@ -897,6 +898,39 @@ void predfit_adopt_generated_catalog(AppState *s) {
     int hamiltonian_id = predfit_active_hamiltonian_id(s);
     for (int i = 0; i < s->n_pred; i++) s->pred_lines[i].hamiltonian_id = hamiltonian_id;
     predfit_recompute_display_intensities(s);
+    refresh_assignment_predictions(s);
+}
+
+static int same_transition(const PredLine *a, const PredLine *b) {
+    return a->n_qn == b->n_qn &&
+           a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
+           a->M1u == b->M1u && a->M2u == b->M2u && a->M3u == b->M3u &&
+           a->Jl == b->Jl && a->Kal == b->Kal && a->Kcl == b->Kcl &&
+           a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;
+}
+
+/* An assignment read from a .lin knows only its quantum numbers: a .lin holds
+   no calculated frequency and no intensity.  As soon as a catalogue contains
+   that exact transition of that exact model, the assignment takes its
+   predicted line from it.  Identity - owner and quantum numbers - is what the
+   match is made on and is therefore never changed by the refresh. */
+static void refresh_assignment_predictions(AppState *s) {
+    PredFitState *p = &s->predfit;
+    if (!s->pred_lines || s->n_pred <= 0 || !p->generated_catalog_active) return;
+    for (int i = 0; i < s->n_assignments; i++) {
+        Assignment *a = &s->assignments[i];
+        for (int k = 0; k < s->n_pred; k++) {
+            const PredLine *q = &s->pred_lines[k];
+            /* Pre-v2 assignments have no owner and belong to H1 by definition. */
+            if (!(q->hamiltonian_id == a->hamiltonian_id ||
+                  (a->hamiltonian_id == 0 && q->hamiltonian_id == 1))) continue;
+            if (!same_transition(q, &a->pred)) continue;
+            int owner = a->pred.hamiltonian_id;
+            a->pred = *q;
+            a->pred.hamiltonian_id = owner ? owner : q->hamiltonian_id;
+            break;
+        }
+    }
 }
 
 /* Counterpart of predfit_adopt_generated_catalog for a simulated plot: the
@@ -912,6 +946,7 @@ void predfit_adopt_simulation(AppState *s) {
     memcpy(s->dipole_cat, p->mu, sizeof(p->mu));
     s->rot_temp_k = p->temp_k;
     predfit_recompute_display_intensities(s);
+    refresh_assignment_predictions(s);
 }
 
 static void snapshot_active_model(const PredFitState *p, PredFitSnapshot *snap) {
@@ -1466,8 +1501,11 @@ static int write_inputs(AppState *s, int for_fit) {
         }
         int model_nqn = 0;
         if (!current_model_nqn(s, &model_nqn)) {
+            char cat_name[700];
+            work_file(p, "model.cat", cat_name, sizeof(cat_name));
             snprintf(p->status, sizeof(p->status),
-                     "Calculate the current model before Fit: model.cat is missing or predates the option line.");
+                     "Simulate %s before Fit: %s is missing or predates the option line.",
+                     p->hamiltonian[p->active_hamiltonian].name, cat_name);
             return 0;
         }
         char rows[128] = "";
@@ -2272,6 +2310,27 @@ int predfit_simulate(AppState *s) {
     return done;
 }
 
+/* SPFIT reads the QN layout of this model from its catalogue.  A model just
+   imported, or one whose option line was edited, has none yet: make it here
+   rather than refusing the fit and asking the user to press another button.
+   The plot is deliberately left alone - this only produces the file. */
+static int ensure_model_catalog(AppState *s) {
+    PredFitState *p = &s->predfit;
+    int nqn = 0;
+    if (current_model_nqn(s, &nqn)) return 1;
+    if (!have_program(s->settings.spcat_path)) {
+        snprintf(p->status, sizeof(p->status), "Set the SPCAT program in Settings > Paths.");
+        return 0;
+    }
+    if (!write_inputs(s, 0)) return 0;
+    if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT")) return 0;
+    if (current_model_nqn(s, &nqn)) return 1;
+    snprintf(p->status, sizeof(p->status),
+             "SPCAT produced no usable catalogue for %s: check the option line and the parameters.",
+             p->hamiltonian[p->active_hamiltonian].name);
+    return 0;
+}
+
 /* After an action that changed a model, refresh the plot the way it was
    built: the whole simulation when several models share it, the active
    Hamiltonian alone otherwise. */
@@ -2285,6 +2344,7 @@ int predfit_fit(AppState *s) {
     for (int i = 0; i < s->n_assignments; i++)
         if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) owned_assignments++;
     if (owned_assignments == 0) { snprintf(p->status, sizeof(p->status), "Assign lines to this Hamiltonian before running SPFIT."); return 0; }
+    if (!ensure_model_catalog(s)) return 0;
     predfit_publish_shared_state(s);
     if (!push_fit_snapshot(s)) return 0;
     if (!write_inputs(s, 1)) { p->history_count--; return 0; }

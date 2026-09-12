@@ -1772,6 +1772,63 @@ static int test_simulated_intensities_follow_their_own_model(void) {
     DONE();
 }
 
+/* H-11: a model that has never been calculated - one just imported from a
+   .lin - is calculated by Fit itself instead of being refused, and the
+   assignments of a .lin get their predicted line from that catalogue. */
+static int test_fit_calculates_the_missing_catalogue(void) {
+    AppState *s = new_state();
+    if (!have_program(s->settings.spcat_path) || !have_program(s->settings.spfit_path))
+        SKIP("SPCAT/SPFIT non trovati da autodetect_program");
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    CHECK_INT("primo calcolo", predfit_calculate(s), 1);
+    pump(s);
+    CHECK(s->n_pred >= 2, "righe predette: attese >= 2, ottenute %d", s->n_pred);
+    if (s->n_pred < 2) DONE();
+    for (int k = 0; k < 2; k++) {
+        s->n_selected = 1;
+        s->selected_indices[0] = k;
+        assign_selected_predictions(s, s->pred_lines[k].freq_mhz + 0.001, 1.0);
+    }
+    CHECK_INT("due assignment", s->n_assignments, 2);
+
+    /* An import leaves exactly this: a model with assignments and no
+       catalogue of its own. */
+    unlink(work_path(".fit/model.cat"));
+    CHECK_INT("Fit senza catalogo", predfit_fit(s), 1);
+    CHECK(access(work_path(".fit/model.cat"), F_OK) == 0,
+          "Fit non ha ricreato il catalogo del modello (stato: %s)", p->status);
+
+    /* A .lin knows only quantum numbers: the predicted line comes back with
+       the next catalogue, without touching the identity of the assignment. */
+    int ju = s->assignments[0].pred.Ju, jl = s->assignments[0].pred.Jl;
+    s->assignments[0].pred.freq_mhz = 0.0;
+    s->assignments[0].pred.linear_int = 0.0;
+    CHECK_INT("ricalcolo", predfit_calculate(s), 1);
+    pump(s);
+    CHECK(s->assignments[0].pred.freq_mhz > 0.0,
+          "frequenza predetta non ripristinata: %.6f", s->assignments[0].pred.freq_mhz);
+    CHECK_INT("J superiore invariato", s->assignments[0].pred.Ju, ju);
+    CHECK_INT("J inferiore invariato", s->assignments[0].pred.Jl, jl);
+    DONE();
+}
+
+/* H-12: a catalogue still queued must not load after the simulation that
+   replaced it - it would wipe the models the merged plot is made of. */
+static int test_simulation_supersedes_a_queued_catalog(void) {
+    AppState *s = new_state();
+    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, "/tmp/superseded.cat", 1);
+    app_enqueue_pending_load(s, PENDING_LOAD_SPECTRUM, "/tmp/keep-me.txt", 0);
+    app_enqueue_pending_load(s, PENDING_LOAD_SIMULATION, "/tmp/simulation.cat", 1);
+    CHECK_INT("richieste rimaste in coda", s->pending_load_count, 2);
+    int kind[2] = {-1, -1};
+    for (int i = 0; i < s->pending_load_count && i < 2; i++)
+        kind[i] = s->pending_loads[(s->pending_load_head + i) % MAX_PENDING_LOADS].kind;
+    CHECK_INT("lo spettro resta in coda", kind[0], PENDING_LOAD_SPECTRUM);
+    CHECK_INT("resta solo la simulazione", kind[1], PENDING_LOAD_SIMULATION);
+    DONE();
+}
+
 /* H-04: the same QN transition may legitimately appear in two independent
    Hamiltonians. Ownership is therefore part of assignment identity and
    survives assignments.txt format 2. */
@@ -2536,6 +2593,8 @@ static const Test TESTS[] = {
     {"test_simulation_plots_every_checked_hamiltonian", test_simulation_plots_every_checked_hamiltonian},
     {"test_dipole_checkbox_zeroes_the_int", test_dipole_checkbox_zeroes_the_int},
     {"test_simulated_intensities_follow_their_own_model", test_simulated_intensities_follow_their_own_model},
+    {"test_fit_calculates_the_missing_catalogue", test_fit_calculates_the_missing_catalogue},
+    {"test_simulation_supersedes_a_queued_catalog", test_simulation_supersedes_a_queued_catalog},
     {"test_session_saved_only_on_request", test_session_saved_only_on_request},
     {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
