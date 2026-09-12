@@ -1045,6 +1045,40 @@ static int same_transition(const PredLine *a, const PredLine *b) {
            a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;
 }
 
+/* An assignments.txt can outlive a session whose Hamiltonians were imported
+ * again.  Its numeric owner IDs then no longer exist, even though the saved
+ * QNs and calculated frequency still identify the catalogue row exactly.
+ * Recover only an orphaned owner and only when one current catalogue row is
+ * unambiguously closest: a valid owner, a legacy owner (0), or an ambiguous
+ * transition is never silently reassigned. */
+static int recover_stale_assignment_owner(AppState *s, Assignment *a) {
+    PredFitState *p = &s->predfit;
+    if (a->hamiltonian_id <= 0 || hamiltonian_index_by_id(p, a->hamiltonian_id) >= 0)
+        return 0;
+    const PredLine *best = NULL;
+    double best_delta = HUGE_VAL, next_delta = HUGE_VAL;
+    for (int k = 0; k < s->n_pred; k++) {
+        const PredLine *q = &s->pred_lines[k];
+        if (q->hamiltonian_id <= 0 || hamiltonian_index_by_id(p, q->hamiltonian_id) < 0 ||
+            !same_transition(q, &a->pred)) continue;
+        double delta = fabs(q->freq_mhz - a->pred.freq_mhz);
+        if (delta < best_delta) {
+            next_delta = best_delta;
+            best_delta = delta;
+            best = q;
+        } else if (delta < next_delta && (!best || q->hamiltonian_id != best->hamiltonian_id)) {
+            next_delta = delta;
+        }
+    }
+    /* A frequency tie between models cannot be repaired safely.  Frequency
+       values are persisted at microhertz precision, so 1e-6 MHz is generous
+       for their textual round trip yet avoids guessing between real blends. */
+    if (!best || next_delta <= best_delta + 1e-6) return 0;
+    a->hamiltonian_id = best->hamiltonian_id;
+    a->pred = *best;
+    return 1;
+}
+
 /* An assignment read from a .lin knows only its quantum numbers: a .lin holds
    no calculated frequency and no intensity.  As soon as a catalogue contains
    that exact transition of that exact model, the assignment takes its
@@ -1053,8 +1087,10 @@ static int same_transition(const PredLine *a, const PredLine *b) {
 static void refresh_assignment_predictions(AppState *s) {
     PredFitState *p = &s->predfit;
     if (!s->pred_lines || s->n_pred <= 0 || !p->generated_catalog_active) return;
+    int recovered = 0;
     for (int i = 0; i < s->n_assignments; i++) {
         Assignment *a = &s->assignments[i];
+        recovered += recover_stale_assignment_owner(s, a);
         for (int k = 0; k < s->n_pred; k++) {
             const PredLine *q = &s->pred_lines[k];
             /* Pre-v2 assignments have no owner and belong to H1 by definition. */
@@ -1066,6 +1102,12 @@ static void refresh_assignment_predictions(AppState *s) {
             a->pred.hamiltonian_id = owner ? owner : q->hamiltonian_id;
             break;
         }
+    }
+    if (recovered) {
+        p->session_dirty = 1;
+        snprintf(s->status_message, sizeof(s->status_message),
+                 "Recovered the Hamiltonian owner for %d assignment%s; Save all to persist it.",
+                 recovered, recovered == 1 ? "" : "s");
     }
 }
 

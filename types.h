@@ -145,7 +145,13 @@ typedef struct {
 typedef struct {
     int hamiltonian_id;
     int state_index;
+    /* `name` is the state label the user gave the species.  The Python
+       backend must see that label in its reports too: opaque S0/S1 aliases
+       make an otherwise useful fit export impossible to interpret. */
     char name[96];
+    /* Normally identical to name.  Only colliding labels from different
+       Hamiltonians need a small disambiguator for the Python dictionary. */
+    char backend_name[128];
     int included;
     int temperature_group;
     int fit_dipole[3];
@@ -205,6 +211,7 @@ typedef struct {
     int fit_blend_count;        /* blend components summed into another row */
     int fit_line_count;         /* observed lines handed to the Python fit */
     char fit_output_dir[700];
+    char fit_console_path[700]; /* stdout/stderr of the Python CLI run       */
     /* Preview of a fit result: a second instance of the main viewer (view.c,
        controller.c, layout.c) drawn from a private copy of the application
        state, whose prediction is recalculated with the fitted concentrations,
@@ -232,6 +239,10 @@ typedef struct {
     int n_candidates, n_used, n_rejected, n_parameters;
     double rss, rmse, raw_rmse;
     char message[256];
+    /* The CLI summary is deliberately retained separately from the detailed
+       .ifit export: the window presents the same terminal-style log the
+       Python command prints, in a monospace panel. */
+    char console_log[65536];
     char report[65536];
 } IntensityFitWindow;
 

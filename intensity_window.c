@@ -9,6 +9,7 @@
 #include "view.h"
 
 #include <float.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -109,7 +110,22 @@ static void initialise_from_predfit(AppState *s) {
             IntensityFitSpecies *dst = &w->species[w->n_species++];
             dst->hamiltonian_id = h_id;
             dst->state_index = sp->state_index;
-            snprintf(dst->name, sizeof(dst->name), "H%d / %s", h_id, sp->name);
+            snprintf(dst->name, sizeof(dst->name), "%s", sp->name[0] ? sp->name : "Species");
+            snprintf(dst->backend_name, sizeof(dst->backend_name), "%s", dst->name);
+            /* Python indexes fit data by species name.  Keep the user's
+               label exactly when it is unique; a repeated state label from
+               another Hamiltonian is the one case that needs disambiguation. */
+            int duplicate_name = 0;
+            for (int k = 0; k < w->n_species - 1; k++) {
+                IntensityFitSpecies *prior = &w->species[k];
+                if (strcmp(prior->name, dst->name) != 0) continue;
+                duplicate_name = 1;
+                snprintf(prior->backend_name, sizeof(prior->backend_name), "%s [H%d]",
+                         prior->name, prior->hamiltonian_id);
+            }
+            if (duplicate_name)
+                snprintf(dst->backend_name, sizeof(dst->backend_name), "%s [H%d]",
+                         dst->name, dst->hamiltonian_id);
             dst->included = sp->predict_enabled != 0;
             dst->temperature_group = 1;
             dst->concentration = sp->concentration > 0.0 ? sp->concentration : 1.0;
@@ -390,12 +406,50 @@ static int if_copy_file_to_buffer(const char *path, char *out, size_t out_size) 
     return !err;
 }
 
+/* Pandas writes proper CSV (including quoted names).  Do not use strtok here:
+ * a perfectly valid species label may contain a comma, and the first field is
+ * the link between Python's result and the state shown in this window. */
+static int if_csv_field(const char *line, int wanted, char *out, size_t out_size) {
+    int field = 0, quoted = 0;
+    size_t used = 0;
+    if (!line || !out || out_size == 0) return 0;
+    out[0] = '\0';
+    for (const char *p = line; ; p++) {
+        char c = *p;
+        if (c == '"') {
+            if (quoted && p[1] == '"') {
+                if (field == wanted && used + 1 < out_size) out[used++] = '"';
+                p++;
+                continue;
+            }
+            quoted = !quoted;
+            continue;
+        }
+        if ((c == ',' && !quoted) || c == '\0' || c == '\n' || c == '\r') {
+            if (field == wanted) { out[used] = '\0'; return 1; }
+            if (c == ',' && !quoted) { field++; used = 0; continue; }
+            return 0;
+        }
+        if (field == wanted && used + 1 < out_size) out[used++] = c;
+    }
+}
+
+static int if_summary_species_index(const IntensityFitWindow *w, const char *name) {
+    for (int i = 0; i < w->n_species; i++)
+        if (strcmp(w->species[i].backend_name, name) == 0) return i;
+    return -1;
+}
+
 static void finish_python_reference_fit(AppState *s, int status) {
     IntensityFitWindow *w = &s->intensity_window;
     w->fit_running = 0;
     w->fit_pid = 0;
+    w->console_log[0] = '\0';
+    if (w->fit_console_path[0])
+        if_copy_file_to_buffer(w->fit_console_path, w->console_log, sizeof(w->console_log));
+    w->report_scroll = 0;
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        snprintf(w->message, sizeof(w->message), "Python reference fit failed; see terminal output.");
+        snprintf(w->message, sizeof(w->message), "Python reference fit failed; see the fit log below.");
         return;
     }
     char report_path[700];
@@ -410,19 +464,20 @@ static void finish_python_reference_fit(AppState *s, int status) {
     if (sum) {
         fgets(line, sizeof(line), sum);
         while (fgets(line, sizeof(line), sum)) {
-            char *tok = strtok(line, ","), *fields[32] = {0}; int nf = 0;
-            while (tok && nf < 32) { fields[nf++] = tok; tok = strtok(NULL, ","); }
-            if (nf < 16 || !fields[0]) continue;
-            int i = atoi(fields[0] + 1);
-            if (i >= 0 && i < w->n_species) {
-                w->species[i].fitted_concentration = strtod(fields[11], NULL);
-                w->species[i].fitted_temperature_k = strtod(fields[15], NULL);
+            char species_name[sizeof(w->species[0].backend_name)], scale[64], temperature[64];
+            if (!if_csv_field(line, 0, species_name, sizeof(species_name)) ||
+                !if_csv_field(line, 11, scale, sizeof(scale)) ||
+                !if_csv_field(line, 15, temperature, sizeof(temperature))) continue;
+            int i = if_summary_species_index(w, species_name);
+            if (i >= 0) {
+                w->species[i].fitted_concentration = strtod(scale, NULL);
+                w->species[i].fitted_temperature_k = strtod(temperature, NULL);
             }
         }
         fclose(sum);
     }
     for (int i = 0; i < w->n_species; i++) for (int c = 0; c < 3; c++) {
-        char key[64]; snprintf(key, sizeof(key), "S%d:mu_%c", i, 'a' + c);
+        char key[192]; snprintf(key, sizeof(key), "%s:mu_%c", w->species[i].backend_name, 'a' + c);
         char *mu_line = strstr(w->report, key);
         if (!mu_line) continue;
         char *scale_word = strstr(mu_line, "scale=");
@@ -447,7 +502,11 @@ static void poll_python_reference_fit(AppState *s) {
     if (!w->fit_running || w->fit_pid <= 0) return;
     int status = 0;
     pid_t result = waitpid((pid_t)w->fit_pid, &status, WNOHANG);
-    if (result == 0) return;
+    if (result == 0) {
+        if (w->fit_console_path[0])
+            if_copy_file_to_buffer(w->fit_console_path, w->console_log, sizeof(w->console_log));
+        return;
+    }
     if (result < 0) {
         w->fit_running = 0; w->fit_pid = 0;
         snprintf(w->message, sizeof(w->message), "Could not collect the Python fit process.");
@@ -488,6 +547,15 @@ int intensity_analysis_write_python_inputs(AppState *s, const char *dir,
         snprintf(w->message, sizeof(w->message),
                  "Concentrations must be fitted: the experimental intensity scale is arbitrary.");
         return 0;
+    }
+    /* Tests and old in-memory sessions can predate backend_name.  Give those
+       rows a readable label too; never silently fall back to S0/S1. */
+    for (int i = 0; i < w->n_species; i++) {
+        if (w->species[i].backend_name[0]) continue;
+        if (w->species[i].name[0])
+            snprintf(w->species[i].backend_name, sizeof(w->species[i].backend_name), "%s", w->species[i].name);
+        else
+            snprintf(w->species[i].backend_name, sizeof(w->species[i].backend_name), "Species %d", i + 1);
     }
 
     char spectrum[700];
@@ -576,7 +644,7 @@ int intensity_analysis_write_python_inputs(AppState *s, const char *dir,
     fputs("{\n  \"run\": {\"name\": \"liveplot_intensity\", \"spectrum\": ",cf);if_json_string(cf,spectrum);fputs(", \"output_dir\": ",cf);if_json_string(cf,output);fputs("},\n  \"fit\": {\n",cf);
     fprintf(cf,"    \"fit_mode\": \"%s\",\n",w->fit_mode?"spectrum":"line_intensity");
     fprintf(cf,"    \"common_temperature\": %s,\n",w->common_temperature?"true":"false");
-    fputs("    \"species_temperature_groups\": {",cf); int first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){if(!first)fputc(',',cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputc(':',cf);char group[32];snprintf(group,sizeof(group),"G%d",w->common_temperature?1:w->species[i].temperature_group);if_json_string(cf,group);first=0;}fputs("},\n",cf);
+    fputs("    \"species_temperature_groups\": {",cf); int first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){if(!first)fputc(',',cf);if_json_string(cf,w->species[i].backend_name);fputc(':',cf);char group[32];snprintf(group,sizeof(group),"G%d",w->common_temperature?1:w->species[i].temperature_group);if_json_string(cf,group);first=0;}fputs("},\n",cf);
     /* "Fit Trot" off holds each group at its Pred&Fit Trot; without these
        keys the Python fit frees the temperature regardless. */
     if (!w->fit_temperature) {
@@ -604,7 +672,7 @@ int intensity_analysis_write_python_inputs(AppState *s, const char *dir,
     fputs("    \"plot\": {\"enabled\": false}\n  },\n  \"species\": [\n",cf);
     /* The .int TEMP is the temperature the CAT rows were generated at: the
        Python model scales every intensity of the species from it to Trot. */
-    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview\n0 0 1 0 0 0 0 0 %.12g 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
+    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview\n0 0 1 0 0 0 0 0 %.12g 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);if_json_string(cf,w->species[i].backend_name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
     fputs("\n  ]\n}\n",cf);fclose(cf);
     w->fit_duplicate_count = duplicate_count;
     w->fit_blend_count = blend_count;
@@ -635,8 +703,17 @@ static int run_python_reference_fit(AppState *s) {
     char config[700], output[700];
     if (!intensity_analysis_write_python_inputs(s, dir, config, sizeof(config), output, sizeof(output)))
         return 0;
+    snprintf(w->fit_console_path, sizeof(w->fit_console_path), "%s/intensity_fit_console.log", dir);
+    w->console_log[0] = '\0';
+    w->report_scroll = 0;
     pid_t pid = fork();
     if (pid == 0) {
+        int log_fd = open(w->fit_console_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (log_fd >= 0) {
+            dup2(log_fd, STDOUT_FILENO);
+            dup2(log_fd, STDERR_FILENO);
+            close(log_fd);
+        }
         if (chdir(root) != 0) _exit(126);
         execlp("python3", "python3", "-m", "intensity_fit", "run", config, (char *)NULL);
         _exit(127);
@@ -684,6 +761,90 @@ static SDL_Rect if_button(int x,int y,int w){return (SDL_Rect){x,y,w,25};}
 static SDL_Rect if_field(int x,int y){return (SDL_Rect){x,y,112,25};}
 static SDL_Rect if_species_row(int y,int row){return (SDL_Rect){18,y+row*28,964,26};}
 
+/* Reserve a real terminal panel in every usable window size.  The species
+ * list remains scrollable, so the log never disappears merely because a
+ * project has many states. */
+static int if_visible_species_rows(int height) {
+    int rows = (height - 150 - 12 - 25 - 12 - 170 - 18) / 28;
+    if (rows < 3) rows = 3;
+    if (rows > 14) rows = 14;
+    return rows;
+}
+
+static int if_actions_y(int height) {
+    return 150 + if_visible_species_rows(height) * 28 + 10;
+}
+
+static SDL_Rect if_log_rect(int width, int height) {
+    int y = if_actions_y(height) + 35;
+    return (SDL_Rect){18, y, width - 36, height - y - 18};
+}
+
+static int if_log_line_count(const char *text) {
+    if (!text || !*text) return 1;
+    int lines = 1;
+    for (const char *p = text; *p; p++) if (*p == '\n' && p[1]) lines++;
+    return lines;
+}
+
+static const char *if_log_line_at(const char *text, int line) {
+    if (!text) return "";
+    while (line-- > 0) {
+        text = strchr(text, '\n');
+        if (!text) return "";
+        text++;
+    }
+    return text;
+}
+
+static void render_fit_log(SDL_Renderer *r, IntensityFitWindow *w, int width, int height) {
+    SDL_Rect box = if_log_rect(width, height);
+    if (box.h < 40) return;
+    ui_fill(r, box, UI_INPUT);
+    ui_frame(r, box, UI_LINE);
+    ui_text(r, UI_FONT_MONO_SM, "PYTHON FIT LOG", box.x + 8, box.y + 5, UI_ACCENT_TEXT);
+
+    SDL_Rect clip = {box.x + 7, box.y + 22, box.w - 14, box.h - 28};
+    const char *text = w->console_log[0] ? w->console_log :
+                       w->fit_running ? "[ intensity_fit is running… ]" :
+                       "[ Run fit to produce the Python intensity_fit log ]";
+    int line_h = ui_text_h(UI_FONT_MONO_SM) + 2;
+    int visible = clip.h / line_h;
+    int line_count = if_log_line_count(text);
+    int max_scroll = line_count > visible ? line_count - visible : 0;
+    if (w->report_scroll < 0) w->report_scroll = 0;
+    if (w->report_scroll > max_scroll) w->report_scroll = max_scroll;
+    int max_chars = (clip.w - 4) / fmax(1, ui_text_w(UI_FONT_MONO_SM, "0"));
+
+    SDL_RenderSetClipRect(r, &clip);
+    for (int row = 0; row < visible; row++) {
+        const char *start = if_log_line_at(text, w->report_scroll + row);
+        if (!*start) break;
+        char line[1024];
+        size_t n = strcspn(start, "\r\n");
+        if ((int)n > max_chars && max_chars > 3) {
+            n = (size_t)(max_chars - 3);
+            if (n >= sizeof(line) - 4) n = sizeof(line) - 4;
+            memcpy(line, start, n);
+            memcpy(line + n, "...", 4);
+        } else {
+            if (n >= sizeof(line)) n = sizeof(line) - 1;
+            memcpy(line, start, n);
+            line[n] = '\0';
+        }
+        ui_text(r, UI_FONT_MONO_SM, line, clip.x + 2, clip.y + row * line_h, UI_TEXT);
+    }
+    SDL_RenderSetClipRect(r, NULL);
+    if (max_scroll) {
+        char position[64];
+        int last_visible = w->report_scroll + visible;
+        if (last_visible > line_count) last_visible = line_count;
+        snprintf(position, sizeof(position), "%d-%d / %d", w->report_scroll + 1,
+                 last_visible, line_count);
+        ui_text_right(r, UI_FONT_MONO_SM, position, box.x + box.w - 7, box.y + 5, UI_DIM);
+    }
+}
+
 static void begin_edit(IntensityFitWindow *w,int field,double value){w->edit_field=field;snprintf(w->edit_text,sizeof(w->edit_text),"%.10g",value);SDL_StartTextInput();}
 static void commit_edit(IntensityFitWindow *w){double v=strtod(w->edit_text,NULL);if(isfinite(v)){if(w->edit_field==IF_EDIT_FMIN)w->fmin_mhz=v;else if(w->edit_field==IF_EDIT_FMAX)w->fmax_mhz=v;else if(w->edit_field==IF_EDIT_WINDOW&&v>0)w->extraction_window_mhz=v;else if(w->edit_field==IF_EDIT_TMIN&&v>0)w->temp_min_k=v;else if(w->edit_field==IF_EDIT_TMAX&&v>w->temp_min_k)w->temp_max_k=v;else if(w->edit_field==IF_EDIT_FRACTION&&v>=0)w->intensity_uncertainty_fraction=v;else if(w->edit_field==IF_EDIT_FLOOR&&v>=0)w->intensity_uncertainty_floor=v;}w->edit_field=IF_EDIT_NONE;SDL_StopTextInput();}
 
@@ -694,8 +855,9 @@ void intensity_analysis_open(AppState *s) {
     if(w->window){SDL_RaiseWindow(w->window);return;}
     /* Reinitialising clears the result, so a preview of it closes first. */
     if (!w->fit_running) { preview_close(s); initialise_from_predfit(s); }
-    w->window=SDL_CreateWindow("Intensity analysis",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1000,760,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
+    w->window=SDL_CreateWindow("Intensity analysis",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1000,900,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
     if(!w->window){snprintf(s->status_message,sizeof(s->status_message),"Could not open Intensity analysis.");return;}
+    SDL_SetWindowMinimumSize(w->window, 1000, 760);
     w->renderer=SDL_CreateRenderer(w->window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
     if(!w->renderer){SDL_DestroyWindow(w->window);w->window=NULL;snprintf(s->status_message,sizeof(s->status_message),"Could not create Intensity renderer.");return;}
     w->window_id=SDL_GetWindowID(w->window);w->open=1;
@@ -1200,13 +1362,120 @@ void intensity_analysis_dispose(AppState *s) {
     intensity_analysis_close(s);
 }
 
-int intensity_analysis_handle_event(AppState *s,const SDL_Event *e){IntensityFitWindow*w=&s->intensity_window;if(w->preview_open&&w->preview_window_id&&preview_event_window(e)==w->preview_window_id)return preview_handle_event(s,e);Uint32 id=e->type==SDL_WINDOWEVENT?e->window.windowID:e->type==SDL_MOUSEBUTTONDOWN?e->button.windowID:e->type==SDL_MOUSEBUTTONUP?e->button.windowID:e->type==SDL_MOUSEMOTION?e->motion.windowID:e->type==SDL_MOUSEWHEEL?e->wheel.windowID:e->type==SDL_KEYDOWN?e->key.windowID:e->type==SDL_TEXTINPUT?e->text.windowID:0;if(!w->open || !w->window_id || id!=w->window_id)return 0;if(e->type==SDL_WINDOWEVENT&&e->window.event==SDL_WINDOWEVENT_CLOSE){intensity_analysis_close(s);return 1;}if(e->type==SDL_TEXTINPUT&&w->edit_field){size_t n=strlen(w->edit_text),a=strlen(e->text.text);if(n+a<sizeof(w->edit_text))memcpy(w->edit_text+n,e->text.text,a+1);return 1;}if(e->type==SDL_KEYDOWN&&w->edit_field){if(e->key.keysym.sym==SDLK_RETURN||e->key.keysym.sym==SDLK_KP_ENTER)commit_edit(w);else if(e->key.keysym.sym==SDLK_ESCAPE){w->edit_field=0;SDL_StopTextInput();}else if(e->key.keysym.sym==SDLK_BACKSPACE){size_t n=strlen(w->edit_text);if(n)w->edit_text[n-1]='\0';}return 1;}if(e->type==SDL_MOUSEWHEEL){w->species_scroll-=e->wheel.y;if(w->species_scroll<0)w->species_scroll=0;return 1;}if(e->type!=SDL_MOUSEBUTTONDOWN||e->button.button!=SDL_BUTTON_LEFT)return 1;int x=e->button.x,y=e->button.y; if(w->edit_field)commit_edit(w);
-    if(point_in_rect(x,y,if_button(18,52,104))){w->fit_concentration=!w->fit_concentration;return 1;} if(point_in_rect(x,y,if_button(128,52,104))){w->fit_temperature=!w->fit_temperature;return 1;}if(point_in_rect(x,y,if_button(238,52,104))){w->fit_dipoles=!w->fit_dipoles;return 1;}if(point_in_rect(x,y,if_button(348,52,104))){w->common_temperature=!w->common_temperature;return 1;}
-    for(int i=0;i<3;i++){if(point_in_rect(x,y,if_button(18+i*54,86,48))){w->branch_enabled[i]=!w->branch_enabled[i];return 1;}if(point_in_rect(x,y,if_button(192+i*54,86,48))){w->mu_enabled[i]=!w->mu_enabled[i];return 1;}}
-    if(point_in_rect(x,y,if_button(365,86,95))){w->extraction_mode=(w->extraction_mode+1)%3;return 1;}if(point_in_rect(x,y,if_button(467,86,95))){w->fit_mode=!w->fit_mode;return 1;}
-    if(point_in_rect(x,y,if_field(690,52))){begin_edit(w,IF_EDIT_FMIN,w->fmin_mhz);return 1;}if(point_in_rect(x,y,if_field(850,52))){begin_edit(w,IF_EDIT_FMAX,w->fmax_mhz);return 1;}if(point_in_rect(x,y,if_field(690,86))){begin_edit(w,IF_EDIT_WINDOW,w->extraction_window_mhz);return 1;}if(point_in_rect(x,y,if_field(850,86))){begin_edit(w,IF_EDIT_FRACTION,w->intensity_uncertainty_fraction);return 1;}
-    if(point_in_rect(x,y,if_button(18,708,90))){run_fit(s);return 1;}if(point_in_rect(x,y,if_button(116,708,90))){export_report(s);return 1;}if(point_in_rect(x,y,if_button(214,708,110))){open_preview(s);return 1;}
-    int first=w->species_scroll;for(int r=0;r<18;r++){int i=first+r;if(i>=w->n_species)break;SDL_Rect row=if_species_row(150,r);if(!point_in_rect(x,y,row))continue;IntensityFitSpecies*sp=&w->species[i];if(x<48){sp->included=!sp->included;return 1;}if(x>=510&&x<580){sp->temperature_group=sp->temperature_group%MAX_INTFIT_GROUPS+1;return 1;}if(x>=760&&x<910){int c=(x-760)/50;if(c>=0&&c<3){sp->fit_dipole[c]=!sp->fit_dipole[c];return 1;}}}
-    return 1;}
+int intensity_analysis_handle_event(AppState *s, const SDL_Event *e) {
+    IntensityFitWindow *w = &s->intensity_window;
+    if (w->preview_open && w->preview_window_id && preview_event_window(e) == w->preview_window_id)
+        return preview_handle_event(s, e);
+    Uint32 id = e->type == SDL_WINDOWEVENT ? e->window.windowID :
+                e->type == SDL_MOUSEBUTTONDOWN ? e->button.windowID :
+                e->type == SDL_MOUSEBUTTONUP ? e->button.windowID :
+                e->type == SDL_MOUSEMOTION ? e->motion.windowID :
+                e->type == SDL_MOUSEWHEEL ? e->wheel.windowID :
+                e->type == SDL_KEYDOWN ? e->key.windowID :
+                e->type == SDL_TEXTINPUT ? e->text.windowID : 0;
+    if (!w->open || !w->window_id || id != w->window_id) return 0;
+    if (e->type == SDL_WINDOWEVENT && e->window.event == SDL_WINDOWEVENT_CLOSE) {
+        intensity_analysis_close(s); return 1;
+    }
+    if (e->type == SDL_TEXTINPUT && w->edit_field) {
+        size_t n = strlen(w->edit_text), a = strlen(e->text.text);
+        if (n + a < sizeof(w->edit_text)) memcpy(w->edit_text + n, e->text.text, a + 1);
+        return 1;
+    }
+    if (e->type == SDL_KEYDOWN && w->edit_field) {
+        if (e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_KP_ENTER) commit_edit(w);
+        else if (e->key.keysym.sym == SDLK_ESCAPE) { w->edit_field = 0; SDL_StopTextInput(); }
+        else if (e->key.keysym.sym == SDLK_BACKSPACE) { size_t n = strlen(w->edit_text); if (n) w->edit_text[n - 1] = '\0'; }
+        return 1;
+    }
+    int ww, hh; SDL_GetWindowSize(w->window, &ww, &hh);
+    if (e->type == SDL_MOUSEWHEEL) {
+        int mx, my; SDL_GetMouseState(&mx, &my);
+        if (point_in_rect(mx, my, if_log_rect(ww, hh))) w->report_scroll -= e->wheel.y;
+        else w->species_scroll -= e->wheel.y;
+        if (w->report_scroll < 0) w->report_scroll = 0;
+        if (w->species_scroll < 0) w->species_scroll = 0;
+        int max_species = w->n_species - if_visible_species_rows(hh);
+        if (max_species < 0) max_species = 0;
+        if (w->species_scroll > max_species) w->species_scroll = max_species;
+        return 1;
+    }
+    if (e->type != SDL_MOUSEBUTTONDOWN || e->button.button != SDL_BUTTON_LEFT) return 1;
+    int x = e->button.x, y = e->button.y;
+    if (w->edit_field) commit_edit(w);
+    if (point_in_rect(x,y,if_button(18,52,104))) { w->fit_concentration = !w->fit_concentration; return 1; }
+    if (point_in_rect(x,y,if_button(128,52,104))) { w->fit_temperature = !w->fit_temperature; return 1; }
+    if (point_in_rect(x,y,if_button(238,52,104))) { w->fit_dipoles = !w->fit_dipoles; return 1; }
+    if (point_in_rect(x,y,if_button(348,52,104))) { w->common_temperature = !w->common_temperature; return 1; }
+    for (int i=0;i<3;i++) {
+        if (point_in_rect(x,y,if_button(18+i*54,86,48))) { w->branch_enabled[i] = !w->branch_enabled[i]; return 1; }
+        if (point_in_rect(x,y,if_button(192+i*54,86,48))) { w->mu_enabled[i] = !w->mu_enabled[i]; return 1; }
+    }
+    if (point_in_rect(x,y,if_button(365,86,95))) { w->extraction_mode = (w->extraction_mode + 1) % 3; return 1; }
+    if (point_in_rect(x,y,if_button(467,86,95))) { w->fit_mode = !w->fit_mode; return 1; }
+    if (point_in_rect(x,y,if_field(690,52))) { begin_edit(w,IF_EDIT_FMIN,w->fmin_mhz); return 1; }
+    if (point_in_rect(x,y,if_field(850,52))) { begin_edit(w,IF_EDIT_FMAX,w->fmax_mhz); return 1; }
+    if (point_in_rect(x,y,if_field(690,86))) { begin_edit(w,IF_EDIT_WINDOW,w->extraction_window_mhz); return 1; }
+    if (point_in_rect(x,y,if_field(850,86))) { begin_edit(w,IF_EDIT_FRACTION,w->intensity_uncertainty_fraction); return 1; }
+    int actions_y = if_actions_y(hh);
+    if (point_in_rect(x,y,if_button(18,actions_y,90))) { run_fit(s); return 1; }
+    if (point_in_rect(x,y,if_button(116,actions_y,90))) { export_report(s); return 1; }
+    if (point_in_rect(x,y,if_button(214,actions_y,110))) { open_preview(s); return 1; }
+    for (int row=0; row<if_visible_species_rows(hh); row++) {
+        int i = w->species_scroll + row;
+        if (i >= w->n_species) break;
+        SDL_Rect row_rect = if_species_row(150,row);
+        if (!point_in_rect(x,y,row_rect)) continue;
+        IntensityFitSpecies *sp = &w->species[i];
+        if (x < 48) { sp->included = !sp->included; return 1; }
+        if (x >= 510 && x < 580) { sp->temperature_group = sp->temperature_group % MAX_INTFIT_GROUPS + 1; return 1; }
+        if (x >= 760 && x < 910) { int c=(x-760)/50; if(c>=0&&c<3) { sp->fit_dipole[c]=!sp->fit_dipole[c]; return 1; } }
+    }
+    return 1;
+}
 
-void intensity_analysis_render(AppState*s){IntensityFitWindow*w=&s->intensity_window;if(w->open&&w->renderer){SDL_Renderer*r=w->renderer;int ww,hh;SDL_GetWindowSize(w->window,&ww,&hh);SDL_SetRenderDrawColor(r,19,20,22,255);SDL_RenderClear(r);ui_text(r,UI_FONT_TITLE,"Intensity analysis",18,14,UI_TEXT);ui_text(r,UI_FONT_SANS_SM,"Python intensity_fit workflow — preview-only results",18,35,UI_ACCENT_TEXT);int mx,my;int down=(SDL_GetMouseState(&mx,&my)&SDL_BUTTON(SDL_BUTTON_LEFT))!=0;ui_button(r,if_button(18,52,104),"Fit conc.",-1,UI_BTN_QUIET,w->fit_concentration,mx,my,down);ui_button(r,if_button(128,52,104),"Fit Trot",-1,UI_BTN_QUIET,w->fit_temperature,mx,my,down);ui_button(r,if_button(238,52,104),"Fit dipoles",-1,UI_BTN_QUIET,w->fit_dipoles,mx,my,down);ui_button(r,if_button(348,52,104),w->common_temperature?"Common T":"Groups",-1,UI_BTN_QUIET,w->common_temperature,mx,my,down);const char*br[]={"P","Q","R"};const char*mu[]={"mu a","mu b","mu c"};for(int i=0;i<3;i++){ui_button(r,if_button(18+i*54,86,48),br[i],-1,UI_BTN_QUIET,w->branch_enabled[i],mx,my,down);ui_button(r,if_button(192+i*54,86,48),mu[i],-1,UI_BTN_QUIET,w->mu_enabled[i],mx,my,down);}ui_button(r,if_button(365,86,95),w->extraction_mode==0?"sample":w->extraction_mode==1?"local max":"area",-1,UI_BTN_QUIET,0,mx,my,down);ui_button(r,if_button(467,86,95),w->fit_mode?"spectrum":"line fit",-1,UI_BTN_QUIET,w->fit_mode,mx,my,down);char b[96];snprintf(b,sizeof(b),"%.6g",w->fmin_mhz);ui_field(r,if_field(690,52),"f min",w->edit_field==IF_EDIT_FMIN?w->edit_text:b,w->edit_field==IF_EDIT_FMIN);snprintf(b,sizeof(b),"%.6g",w->fmax_mhz);ui_field(r,if_field(850,52),"f max",w->edit_field==IF_EDIT_FMAX?w->edit_text:b,w->edit_field==IF_EDIT_FMAX);snprintf(b,sizeof(b),"%.5g",w->extraction_window_mhz);ui_field(r,if_field(690,86),"window",w->edit_field==IF_EDIT_WINDOW?w->edit_text:b,w->edit_field==IF_EDIT_WINDOW);snprintf(b,sizeof(b),"%.3g",w->intensity_uncertainty_fraction);ui_field(r,if_field(850,86),"unc. frac",w->edit_field==IF_EDIT_FRACTION?w->edit_text:b,w->edit_field==IF_EDIT_FRACTION);SDL_Rect head={18,124,ww-36,22};ui_fill(r,head,UI_INPUT);ui_text(r,UI_FONT_MONO_SM,"USE  SPECIES / mu cat(a,b,c)          Tcat    Trot    concentration   group     mu fit (a b c)",head.x+7,head.y+4,UI_DIM);for(int row=0;row<18;row++){int i=w->species_scroll+row;if(i>=w->n_species)break;IntensityFitSpecies*sp=&w->species[i];SDL_Rect rr=if_species_row(150,row);rr.w=ww-36;ui_fill(r,rr,sp->included?UI_PANEL:UI_INPUT);ui_frame(r,rr,UI_LINE_SOFT);ui_text(r,UI_FONT_MONO_SM,sp->included?"[x]":"[ ]",rr.x+7,rr.y+5,sp->included?UI_OK:UI_FAINT);ui_text(r,UI_FONT_SANS_SM,sp->name,rr.x+48,rr.y+5,sp->included?UI_TEXT:UI_DIM);snprintf(b,sizeof(b),"%.3g/%.3g/%.3g",sp->mu_cat[0],sp->mu_cat[1],sp->mu_cat[2]);ui_text(r,UI_FONT_MONO_SM,b,rr.x+215,rr.y+5,UI_DIM);snprintf(b,sizeof(b),"%6.2f",sp->cat_temperature_k);ui_text(r,UI_FONT_MONO_SM,b,rr.x+420,rr.y+5,UI_DIM);snprintf(b,sizeof(b),"%6.2f",sp->temperature_k);ui_text(r,UI_FONT_MONO_SM,b,rr.x+500,rr.y+5,UI_DIM);snprintf(b,sizeof(b),"%10.4g",sp->concentration);ui_text(r,UI_FONT_MONO_SM,b,rr.x+580,rr.y+5,UI_DIM);snprintf(b,sizeof(b),"G%d",w->common_temperature?1:sp->temperature_group);ui_button(r,(SDL_Rect){rr.x+690,rr.y+2,52,22},b,-1,UI_BTN_QUIET,0,mx,my,down);for(int c=0;c<3;c++)ui_button(r,(SDL_Rect){rr.x+742+c*50,rr.y+2,46,22},mu[c]+3,-1,UI_BTN_QUIET,sp->fit_dipole[c],mx,my,down);}ui_hline(r,18,ww-18,690,UI_LINE);ui_button(r,if_button(18,708,90),"Run fit",-1,UI_BTN_PRIMARY,0,mx,my,down);ui_button(r,if_button(116,708,90),"Export txt",-1,UI_BTN_QUIET,0,mx,my,down);ui_button(r,if_button(214,708,110),"Open preview",-1,UI_BTN_QUIET,0,mx,my,down);ui_text(r,UI_FONT_SANS_SM,w->message[0]?w->message:"Select species, filters and free parameters; source values stay untouched.",342,714,w->has_result?UI_OK:UI_DIM);SDL_RenderPresent(r);}render_preview(s);}
+void intensity_analysis_render(AppState *s) {
+    IntensityFitWindow *w = &s->intensity_window;
+    if (w->open && w->renderer) {
+        SDL_Renderer *r = w->renderer; int ww, hh;
+        SDL_GetWindowSize(w->window, &ww, &hh);
+        SDL_SetRenderDrawColor(r,19,20,22,255); SDL_RenderClear(r);
+        ui_text(r,UI_FONT_TITLE,"Intensity analysis",18,14,UI_TEXT);
+        ui_text(r,UI_FONT_SANS_SM,"Python intensity_fit workflow — preview-only results",18,35,UI_ACCENT_TEXT);
+        int mx,my; int down=(SDL_GetMouseState(&mx,&my)&SDL_BUTTON(SDL_BUTTON_LEFT))!=0;
+        ui_button(r,if_button(18,52,104),"Fit conc.",-1,UI_BTN_QUIET,w->fit_concentration,mx,my,down);
+        ui_button(r,if_button(128,52,104),"Fit Trot",-1,UI_BTN_QUIET,w->fit_temperature,mx,my,down);
+        ui_button(r,if_button(238,52,104),"Fit dipoles",-1,UI_BTN_QUIET,w->fit_dipoles,mx,my,down);
+        ui_button(r,if_button(348,52,104),w->common_temperature?"Common T":"Groups",-1,UI_BTN_QUIET,w->common_temperature,mx,my,down);
+        const char *br[]={"P","Q","R"}, *mu[]={"mu a","mu b","mu c"};
+        for(int i=0;i<3;i++) { ui_button(r,if_button(18+i*54,86,48),br[i],-1,UI_BTN_QUIET,w->branch_enabled[i],mx,my,down); ui_button(r,if_button(192+i*54,86,48),mu[i],-1,UI_BTN_QUIET,w->mu_enabled[i],mx,my,down); }
+        ui_button(r,if_button(365,86,95),w->extraction_mode==0?"sample":w->extraction_mode==1?"local max":"area",-1,UI_BTN_QUIET,0,mx,my,down);
+        ui_button(r,if_button(467,86,95),w->fit_mode?"spectrum":"line fit",-1,UI_BTN_QUIET,w->fit_mode,mx,my,down);
+        char b[96]; snprintf(b,sizeof(b),"%.6g",w->fmin_mhz); ui_field(r,if_field(690,52),"f min",w->edit_field==IF_EDIT_FMIN?w->edit_text:b,w->edit_field==IF_EDIT_FMIN);
+        snprintf(b,sizeof(b),"%.6g",w->fmax_mhz); ui_field(r,if_field(850,52),"f max",w->edit_field==IF_EDIT_FMAX?w->edit_text:b,w->edit_field==IF_EDIT_FMAX);
+        snprintf(b,sizeof(b),"%.5g",w->extraction_window_mhz); ui_field(r,if_field(690,86),"window",w->edit_field==IF_EDIT_WINDOW?w->edit_text:b,w->edit_field==IF_EDIT_WINDOW);
+        snprintf(b,sizeof(b),"%.3g",w->intensity_uncertainty_fraction); ui_field(r,if_field(850,86),"unc. frac",w->edit_field==IF_EDIT_FRACTION?w->edit_text:b,w->edit_field==IF_EDIT_FRACTION);
+        SDL_Rect head={18,124,ww-36,22}; ui_fill(r,head,UI_INPUT);
+        ui_text(r,UI_FONT_MONO_SM,"USE  SPECIES / mu cat(a,b,c)          Tcat    Trot    concentration   group     mu fit (a b c)",head.x+7,head.y+4,UI_DIM);
+        for(int row=0;row<if_visible_species_rows(hh);row++) {
+            int i=w->species_scroll+row; if(i>=w->n_species) break;
+            IntensityFitSpecies *sp=&w->species[i]; SDL_Rect rr=if_species_row(150,row); rr.w=ww-36;
+            ui_fill(r,rr,sp->included?UI_PANEL:UI_INPUT); ui_frame(r,rr,UI_LINE_SOFT);
+            ui_text(r,UI_FONT_MONO_SM,sp->included?"[x]":"[ ]",rr.x+7,rr.y+5,sp->included?UI_OK:UI_FAINT);
+            ui_text(r,UI_FONT_SANS_SM,sp->name,rr.x+48,rr.y+5,sp->included?UI_TEXT:UI_DIM);
+            snprintf(b,sizeof(b),"%.3g/%.3g/%.3g",sp->mu_cat[0],sp->mu_cat[1],sp->mu_cat[2]); ui_text(r,UI_FONT_MONO_SM,b,rr.x+215,rr.y+5,UI_DIM);
+            snprintf(b,sizeof(b),"%6.2f",sp->cat_temperature_k); ui_text(r,UI_FONT_MONO_SM,b,rr.x+420,rr.y+5,UI_DIM);
+            snprintf(b,sizeof(b),"%6.2f",sp->temperature_k); ui_text(r,UI_FONT_MONO_SM,b,rr.x+500,rr.y+5,UI_DIM);
+            snprintf(b,sizeof(b),"%10.4g",sp->concentration); ui_text(r,UI_FONT_MONO_SM,b,rr.x+580,rr.y+5,UI_DIM);
+            snprintf(b,sizeof(b),"G%d",w->common_temperature?1:sp->temperature_group); ui_button(r,(SDL_Rect){rr.x+690,rr.y+2,52,22},b,-1,UI_BTN_QUIET,0,mx,my,down);
+            for(int c=0;c<3;c++) ui_button(r,(SDL_Rect){rr.x+742+c*50,rr.y+2,46,22},mu[c]+3,-1,UI_BTN_QUIET,sp->fit_dipole[c],mx,my,down);
+        }
+        int actions_y=if_actions_y(hh); ui_hline(r,18,ww-18,actions_y-10,UI_LINE);
+        ui_button(r,if_button(18,actions_y,90),"Run fit",-1,UI_BTN_PRIMARY,0,mx,my,down);
+        ui_button(r,if_button(116,actions_y,90),"Export txt",-1,UI_BTN_QUIET,0,mx,my,down);
+        ui_button(r,if_button(214,actions_y,110),"Open preview",-1,UI_BTN_QUIET,0,mx,my,down);
+        ui_text(r,UI_FONT_SANS_SM,w->message[0]?w->message:"Select species, filters and free parameters; source values stay untouched.",342,actions_y+6,w->has_result?UI_OK:UI_DIM);
+        render_fit_log(r,w,ww,hh); SDL_RenderPresent(r);
+    }
+    render_preview(s);
+}

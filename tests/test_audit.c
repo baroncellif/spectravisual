@@ -2192,6 +2192,37 @@ static int test_assignment_owner_keeps_same_qn_in_two_hamiltonians(void) {
     DONE();
 }
 
+/* A saved assignments.txt can refer to IDs from a project that was imported
+ * again.  Simulation has all current catalogue rows, so an orphaned owner is
+ * recoverable only when QNs and saved calculated frequency pick one model;
+ * a true frequency tie must remain untouched. */
+static int test_simulation_recovers_stale_assignment_owner(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    p->n_hamiltonians = 2;
+    p->hamiltonian[0].id = 7;
+    p->hamiltonian[1].id = 11;
+    p->generated_catalog_active = 1;
+    PredLine rows[2] = {
+        {.freq_mhz = 3000.0000, .n_qn = 3, .Ju = 4, .Kau = 1, .Kcu = 3, .Jl = 3, .Kal = 0, .Kcl = 3, .hamiltonian_id = 7},
+        {.freq_mhz = 3000.2000, .n_qn = 3, .Ju = 4, .Kau = 1, .Kcu = 3, .Jl = 3, .Kal = 0, .Kcl = 3, .hamiltonian_id = 11},
+    };
+    s->pred_lines = rows;
+    s->n_pred = 2;
+    s->assignments[0] = (Assignment){.pred = rows[0], .hamiltonian_id = 99};
+    s->assignments[0].pred.freq_mhz = 3000.001;
+    s->assignments[1] = (Assignment){.pred = rows[0], .hamiltonian_id = 98};
+    s->assignments[1].pred.freq_mhz = 3000.100;
+    s->n_assignments = 2;
+
+    refresh_assignment_predictions(s);
+    CHECK_INT("owner obsoleto ricostruito", s->assignments[0].hamiltonian_id, 7);
+    CHECK_INT("catalogo corretto riletto", s->assignments[0].pred.hamiltonian_id, 7);
+    CHECK_INT("pareggio fra cataloghi non indovinato", s->assignments[1].hamiltonian_id, 98);
+    CHECK_INT("riparazione da salvare", p->session_dirty, 1);
+    DONE();
+}
+
 /* H-05: the Project tab's hierarchy is deterministic: each Hamiltonian row
    is followed by exactly its states, rather than relying on a hidden current
    index or previous/next navigation. */
@@ -3073,7 +3104,7 @@ static int test_python_intensity_inputs(void) {
     IntensityFitWindow *w = &s->intensity_window;
     w->initialized = 1;
     w->n_species = 1;
-    w->species[0] = (IntensityFitSpecies){.hamiltonian_id = 1, .state_index = 0, .included = 1,
+    w->species[0] = (IntensityFitSpecies){.hamiltonian_id = 1, .state_index = 0, .name = "G-G+ttt", .included = 1,
         .temperature_group = 1, .concentration = 0.1, .temperature_k = 0.3, .cat_temperature_k = 0.3,
         .mu_cat = {1.0, 1.0, 1.0}};
     for (int i = 0; i < 3; i++) w->branch_enabled[i] = w->mu_enabled[i] = 1;
@@ -3130,6 +3161,9 @@ static int test_python_intensity_inputs(void) {
     if (cf) { json[fread(json, 1, sizeof(json) - 1, cf)] = '\0'; fclose(cf); }
     CHECK(strstr(json, "\"fixed_temperature_K\": 0.3,") != NULL, "Trot fissa passata al Python:\n%s", json);
     CHECK(strstr(json, "fixed_scale") == NULL, "nessuna scala assoluta fissata");
+    CHECK(strstr(json, "\"name\": \"G-G+ttt\"") != NULL,
+          "il nome della specie deve arrivare al Python: %s", json);
+    CHECK(strstr(json, "\"S0\"") == NULL, "nessun alias S0 nel config: %s", json);
 
     w->fit_temperature = 1;
     CHECK_INT("input con Trot libera", intensity_analysis_write_python_inputs(s, g_work, config, sizeof(config),
@@ -3230,6 +3264,7 @@ static const Test TESTS[] = {
     {"test_session_saved_only_on_request", test_session_saved_only_on_request},
     {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
+    {"test_simulation_recovers_stale_assignment_owner", test_simulation_recovers_stale_assignment_owner},
     {"test_project_rows_are_hamiltonian_state_hierarchy", test_project_rows_are_hamiltonian_state_hierarchy},
     {"test_add_hamiltonian_starts_fresh_and_keeps_source", test_add_hamiltonian_starts_fresh_and_keeps_source},
     {"test_delete_hamiltonian_removes_its_assignments_and_keeps_one", test_delete_hamiltonian_removes_its_assignments_and_keeps_one},

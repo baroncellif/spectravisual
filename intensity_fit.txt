@@ -1,0 +1,127 @@
+INTFIT: RELATIVE INTENSITY FIT
+Run name: liveplot_intensity
+Spectrum: /private/tmp/spectravisual-intfit-tKgkQy/spectrum.txt
+
+FIT QUALITY
+ LINES USED=  701  NUMBER OF PARAMETERS=  11  DOF=  690
+ RMS ERROR =     0.004867   MAX |OBS-CALC|/ERROR =     0.063692
+ RAW AVG =  5.002574e-04   RAW RMS =  4.829016e-03   RAW MAX =  6.369198e-02
+
+OPTIONS
+ extraction_mode        local_max
+ extraction_window_MHz  0.050000
+ fit_in_log_space       False
+ exact_T_scaling        False
+ common_temperature     True
+ fit_mode               line_intensity
+
+INPUT FILES AND PARSED METADATA
+ species                    lin cat int out egy var   mu_a/D      mu_b/D      mu_c/D      fit_mu
+ donor                      yes yes yes  no  no  no   0.450000   0.340000   0.570000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ acc                        yes yes yes  no  no  no   1.860000   0.550000   0.090000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ G-G+tg+t                   yes yes yes  no  no  no   0.030000   0.000000   1.210000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ G-G+tg-t                   yes yes yes  no  no  no   0.050000   1.200000   0.380000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ G-G+ttg+                   yes yes yes  no  no  no   0.890000   0.100000   1.190000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ G-G+ttg-                   yes yes yes  no  no  no   0.300000   0.750000   0.540000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ G-G+ttt                    yes yes yes  no  no  no   0.747223   0.212373  -1.141963 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ TTtg+t                     yes yes yes  no  no  no   2.430000   0.620000   0.170000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ TTttg+                     yes yes yes  no  no  no   2.540000   1.200000   0.150000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+ TTttt                      yes yes yes  no  no  no   2.560000   0.300000   0.200000 -
+   .int title: SpectraVisual intensity preview
+   .int controls: tag=0 qrot_input=1 temperature_K=0.3 freq_max_GHz=0
+   catalogue TEMP: 0.3 K (.int); intensities are scaled from here to Trot
+
+OPTIMIZER
+ success       True
+ status        1
+ message       `gtol` termination condition is satisfied.
+ nfev          13
+ optimality    1.882493e-09
+
+GLOBAL FIT STATISTICS
+ n_obs         701
+ n_par         11
+ dof           690
+ rss           1.63468996e-02
+ rms           4.86735645e-03  unit-weight, sqrt(RSS/dof)
+ rms/obs       4.82901649e-03  sqrt(RSS/n_obs)
+ rms(raw)      4.82901649e-03  intensity units
+ rms(raw)*1e3  4.829016
+ resid.std     4.80646426e-03
+ sigma^2       2.36911588e-05
+ cond(JTJ)     2.886978e+05
+ intensity_unc 0.2000
+ intensity_floor 2.00000000e-02
+ weighting     none
+ loss          linear
+ lineshape     gaussian, FWHM=0.100000 MHz, fitted=False
+ n_mc          5000
+
+TEMPERATURES
+ G1             0.317817 +/- 0.006592 K
+
+DIPOLE SCALES
+ none fitted
+
+FINAL SPECIES RESULTS
+ species                    n_lines  used  scale          rel_%     relmax    Trot/K    line_rmse  abc
+ donor                           91    91  8.29223e-04    0.001   0.0000    0.3178     2.5783 32/30/29
+ acc                             72    72  2.59653e+00    2.686   0.0468    0.3178     1.1199 72/0/0
+ G-G+tg+t                        78    78  7.68420e+00    7.950   0.1384    0.3178     2.3346 45/0/33
+ G-G+tg-t                        57    57  1.39530e+01   14.436   0.2514    0.3178     2.7984 0/33/24
+ G-G+ttg+                        64    64  4.09771e+00    4.240   0.0738    0.3178     1.2137 40/0/24
+ G-G+ttg-                        89    89  5.02415e+00    5.198   0.0905    0.3178     2.7283 49/25/15
+ G-G+ttt                         69    69  5.55025e+01   57.425   1.0000    0.3178    12.6184 33/12/24
+ TTtg+t                          63    63  1.66615e+00    1.724   0.0300    0.3178     1.6330 34/29/0
+ TTttg+                          64    64  6.84403e-01    0.708   0.0123    0.3178     1.5593 42/22/0
+ TTttt                           54    54  5.44313e+00    5.632   0.0981    0.3178     7.0885 54/0/0
+
+WORST LINES BY ABSOLUTE RESIDUAL
+ species                    lin_freq/MHz  exp            calc           residual       QN
+ G-G+ttt                      2733.61560  1.099439e-01  4.625194e-02  6.369198e-02 [3, 1, 2, 0, 2, 0, 2, 0]
+ G-G+ttt                      3770.22580  2.698854e-02  6.751240e-02 -4.052385e-02 [2, 2, 1, 0, 1, 1, 1, 0]
+ G-G+ttt                      2511.33750  5.405584e-02  2.115966e-02  3.289618e-02 [4, 1, 4, 0, 3, 1, 3, 0]
+ G-G+ttt                      5671.60540  4.837061e-02  7.699842e-02 -2.862781e-02 [5, 2, 4, 0, 4, 1, 4, 0]
+ G-G+ttt                      4644.07510  9.260208e-02  6.454204e-02  2.806004e-02 [6, 1, 5, 0, 5, 0, 5, 0]
+ TTttt                        4149.44850  5.315223e-02  3.214589e-02  2.100634e-02 [7, 0, 7, 0, 6, 0, 6, 0]
+ G-G+ttt                      3146.47300  5.134666e-02  3.274029e-02  1.860638e-02 [5, 0, 5, 0, 4, 0, 4, 0]
+ TTttt                        2988.83350  1.182505e-02  2.895003e-02 -1.712497e-02 [5, 1, 4, 0, 4, 1, 3, 0]
+ G-G+ttt                      5018.46490  1.902423e-02  2.842358e-03  1.618187e-02 [4, 2, 3, 0, 3, 1, 2, 0]
+ TTttt                        2391.16720  5.927704e-03  2.171357e-02 -1.578586e-02 [4, 1, 3, 0, 3, 1, 2, 0]
+ G-G+ttt                      5046.32490  4.416470e-03  1.833702e-02 -1.392055e-02 [8, 1, 7, 0, 7, 1, 6, 0]
+ TTttt                        5975.38450  2.152294e-02  8.209689e-03  1.331325e-02 [10, 1, 9, 0, 9, 1, 8, 0]
+ G-G+ttt                      5925.50600  2.234016e-02  3.560376e-02 -1.326360e-02 [8, 1, 7, 0, 7, 0, 7, 0]
+ G-G+ttt                      3368.91540  7.611036e-02  6.290512e-02  1.320523e-02 [4, 1, 3, 0, 3, 0, 3, 0]
+ TTttt                        5922.08730  2.281932e-02  9.656205e-03  1.316312e-02 [10, 0, 10, 0, 9, 0, 9, 0]
+ TTttt                        5297.49990  2.712816e-02  1.435511e-02  1.277305e-02 [9, 1, 9, 0, 8, 1, 8, 0]
+ G-G+ttt                      4005.72130  8.147572e-02  6.949963e-02  1.197609e-02 [5, 1, 4, 0, 4, 0, 4, 0]
+ TTttt                        2943.82110  1.694983e-02  2.856266e-02 -1.161283e-02 [5, 1, 5, 0, 4, 1, 4, 0]
+ G-G+ttg-                     2187.70940  1.176267e-02  2.846893e-04  1.147798e-02 [3, 0, 3, 0, 2, 0, 2, 0]
+ TTttt                        5331.76690  2.778665e-02  1.640385e-02  1.138280e-02 [9, 0, 9, 0, 8, 0, 8, 0]
