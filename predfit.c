@@ -3238,6 +3238,30 @@ static FitRowState fitting_row(const AppState *s, const Assignment *a, FitObserv
     return fitting_row_state(a, row);
 }
 
+/* Lines lists the whole assignment list; Fitting is the page of one SPFIT
+   run, so it lists the lines of the Hamiltonian that run was about - with
+   five conformers in the project, the other four models' lines would bury
+   them.  Both pages therefore address their rows through these two, which
+   turn what is on screen into a place in the assignment list. */
+static int adv_row_count(const AppState *s, int tab) {
+    if (tab != 2) return s->n_assignments;
+    int n = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) n++;
+    return n;
+}
+
+static int adv_row_index(const AppState *s, int tab, int row) {
+    if (row < 0) return -1;
+    if (tab != 2) return row < s->n_assignments ? row : -1;
+    int n = 0;
+    for (int i = 0; i < s->n_assignments; i++) {
+        if (!assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) continue;
+        if (n++ == row) return i;
+    }
+    return -1;
+}
+
 /* The assignment editor is the owner of the measured frequency.  A .fit file
    is only the record of a particular SPFIT run, and is therefore stale as soon
    as the same transition is assigned to a different experimental peak. */
@@ -3562,7 +3586,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         int total   = p->advanced_tab == 0 ? p->n_param :
                       p->advanced_tab == 3 ? p->n_species :
                       (p->advanced_tab == 4 || p->advanced_tab == 5) ? project_row_count(p)
-                                                                     : s->n_assignments;
+                                                                     : adv_row_count(s, p->advanced_tab);
         *scroll -= e->wheel.y;
         if (*scroll < 0) *scroll = 0;
         int limit = adv_scroll_limit(total, u.rows_visible);
@@ -3574,7 +3598,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         p->advanced_hover_line = -1;
         if ((p->advanced_tab == 1 || p->advanced_tab == 2) && point_in_rect(e->motion.x, e->motion.y, u.rows)) {
             int row = p->advanced_line_scroll + (e->motion.y - u.rows.y) / u.row_h;
-            if (row >= 0 && row < s->n_assignments) p->advanced_hover_line = row;
+            p->advanced_hover_line = adv_row_index(s, p->advanced_tab, row);
         }
         return 1;
     }
@@ -3829,14 +3853,15 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     }
 
     if (point_in_rect(x, y, u.rows)) {
-        int row = p->advanced_line_scroll + (y - u.rows.y) / u.row_h;
-        if (row >= 0 && row < s->n_assignments) {
+        int row = adv_row_index(s, p->advanced_tab,
+                                p->advanced_line_scroll + (y - u.rows.y) / u.row_h);
+        if (row >= 0) {
             int del_x = u.table.x + u.table.w - 32;
             if (x >= del_x) {
                 /* This is deliberately the same deletion as the main
                    Assignments panel: the assignment disappears everywhere. */
                 delete_assignment(s, row);
-                int limit = adv_scroll_limit(s->n_assignments, u.rows_visible);
+                int limit = adv_scroll_limit(adv_row_count(s, p->advanced_tab), u.rows_visible);
                 if (p->advanced_line_scroll > limit) p->advanced_line_scroll = limit;
             } else {
                 int previous = s->assignments[row].fit_enabled;
@@ -4176,8 +4201,12 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
-        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
-            int actual = p->advanced_line_scroll + i;
+        /* The two pages share one scroll and no longer hold the same number
+           of rows, so the shorter one pulls it back into range. */
+        int line_limit = adv_scroll_limit(adv_row_count(s, 1), u.rows_visible);
+        if (p->advanced_line_scroll > line_limit) p->advanced_line_scroll = line_limit;
+        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < adv_row_count(s, 1); i++) {
+            int actual = adv_row_index(s, 1, p->advanced_line_scroll + i);
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
             SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
@@ -4200,10 +4229,14 @@ void predfit_render_advanced(AppState *s) {
                 u.caption.x, u.footer.y + 17, UI_FAINT);
 
     } else {
-        ui_text(r, UI_FONT_SANS, "SPFIT output", u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        /* The page lists one model, so it says which one. */
+        char caption[128];
+        snprintf(caption, sizeof(caption), "SPFIT output — %s",
+                 p->hamiltonian[p->active_hamiltonian].name);
+        ui_text(r, UI_FONT_SANS, caption, u.caption.x, u.caption.y, UI_ACCENT_TEXT);
         ui_text(r, UI_FONT_MONO_SM,
                 p->status[0] ? p->status : "Run SPFIT after selecting the assignments to fit.",
-                u.caption.x + 110, u.caption.y + 2, UI_TEXT);
+                u.caption.x + ui_text_w(UI_FONT_SANS, caption) + 20, u.caption.y + 2, UI_TEXT);
 
         /* Every fitted parameter, in the form SPFIT reports it:
               1         10000       A  /       1151.36042( 32)   -0.00000     */
@@ -4236,8 +4269,12 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
-        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < s->n_assignments; i++) {
-            int actual = p->advanced_line_scroll + i;
+        /* The two pages share one scroll and no longer hold the same number
+           of rows, so the shorter one pulls it back into range. */
+        int line_limit = adv_scroll_limit(adv_row_count(s, 2), u.rows_visible);
+        if (p->advanced_line_scroll > line_limit) p->advanced_line_scroll = line_limit;
+        for (int i = 0; i < u.rows_visible && p->advanced_line_scroll + i < adv_row_count(s, 2); i++) {
+            int actual = adv_row_index(s, 2, p->advanced_line_scroll + i);
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
             FitObservation o;

@@ -1653,6 +1653,37 @@ static int test_fitting_view_ignores_another_model(void) {
     DONE();
 }
 
+/* H-20: the Fitting page is the page of one SPFIT run.  With five conformers
+   in the project the lines of the other four would bury the ones just
+   fitted - the user sees a screen of "belongs to ..." - so that page lists
+   the active Hamiltonian alone, and a click on its Nth row must reach the Nth
+   line of that model, not the Nth assignment of the whole list. */
+static int test_fitting_page_lists_the_active_model(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    int first = predfit_active_hamiltonian_id(s);
+    add_line(s, 2, 1, 1, 1, 0, 1, 2043.34240);          /* first model  */
+    add_line(s, 6, 1, 5, 5, 2, 3, 2207.38930);          /* first model  */
+    CHECK_INT("secondo Hamiltoniano", predfit_add_hamiltonian(s, "second"), 1);
+    int second = predfit_active_hamiltonian_id(s);
+    CHECK(second != first, "i due Hamiltoniani devono avere id diversi");
+    Assignment *mine = add_line(s, 7, 1, 7, 6, 2, 4, 2024.96550);
+
+    CHECK_INT("Lines elenca tutto", adv_row_count(s, 1), 3);
+    CHECK_INT("Fitting elenca il modello attivo", adv_row_count(s, 2), 1);
+    CHECK_INT("prima riga di Fitting", adv_row_index(s, 2, 0), (int)(mine - s->assignments));
+    CHECK_INT("Fitting non ha una seconda riga", adv_row_index(s, 2, 1), -1);
+    CHECK_INT("prima riga di Lines", adv_row_index(s, 1, 0), 0);
+
+    /* Back on the first model the page follows the selection. */
+    CHECK_INT("selezione del primo H", predfit_select_hamiltonian(s, 0), 1);
+    CHECK_INT("Fitting elenca il primo modello", adv_row_count(s, 2), 2);
+    CHECK_INT("prima riga", adv_row_index(s, 2, 0), 0);
+    CHECK_INT("seconda riga", adv_row_index(s, 2, 1), 1);
+    (void)p;
+    DONE();
+}
+
 /* H-16: Import is idempotent.  Pressing it twice - or pressing it once in an
    app that already read assignments.txt at startup - must leave one copy of
    each model and one copy of each of its lines, not two. */
@@ -2891,6 +2922,7 @@ static const Test TESTS[] = {
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
     {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
     {"test_fitting_view_reads_the_report_back", test_fitting_view_reads_the_report_back},
+    {"test_fitting_page_lists_the_active_model", test_fitting_page_lists_the_active_model},
     {"test_fitting_view_ignores_another_model", test_fitting_view_ignores_another_model},
     {"test_import_twice_keeps_one_copy", test_import_twice_keeps_one_copy},
     {"test_import_reads_predictions_from_the_catalog", test_import_reads_predictions_from_the_catalog},

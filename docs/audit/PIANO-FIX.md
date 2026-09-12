@@ -146,6 +146,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #28 | Fit di un modello importato senza passi intermedi | segnalazione utente 2026-09-12 | alto: il fit di un `.lin` importato era bloccato | fatto `HEAD` |
 | #30 | Import idempotente e colonna PREDICTED degli import | segnalazione utente 2026-09-12 (stesso problema dopo #28) | alto: righe duplicate e predizioni vuote su tutti i modelli importati | fatto `HEAD` |
 | #31 | La schermata Fitting rilegge il report di SPFIT | segnalazione utente 2026-09-12 | alto: dopo un fit riuscito ogni riga diceva «not read by SPFIT» | fatto `HEAD` |
+| #32 | La pagina Fitting elenca il modello che si sta fittando | schermata dell'utente 2026-09-12 | alto: le righe fittate erano sepolte sotto quelle degli altri quattro modelli | fatto `HEAD` |
 | #29 | Sottotracce del broadening, una per specie, con colore | richiesta utente 2026-09-12 | medio: si vede il contributo di ogni specie alla somma | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
@@ -1290,6 +1291,30 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Test che passano**: `test_fitting_view_reads_the_report_back`,
   `test_fitting_view_ignores_another_model` (verificati falliti sul codice
   precedente e passati su quello corretto).
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #32 — Fitting: la pagina elenca il modello che si sta fittando
+
+- **Bug/issue**: schermata dell'utente con H3 `G-G+tg-t` selezionato e il fit
+  eseguito (RMS 0,0378 MHz), e tutta la tabella che diceva «belongs to
+  G-G+tg+t». La pagina Fitting elencava **tutti** i 651 assignment del
+  progetto nell'ordine della lista: le 296 righe di H2 vengono prima, quindi
+  le 164 righe appena fittate erano centinaia di righe più in basso. L'etichetta
+  introdotta in #31 le ha rese riconoscibili, non raggiungibili.
+- **Cosa è stato fatto** ([predfit.c](../../predfit.c)): `adv_row_count` /
+  `adv_row_index` — le due pagine indirizzano le righe attraverso la pagina su
+  cui sono. **Lines** resta la lista completa; **Fitting**, che è la pagina di
+  una corsa di SPFIT, elenca l'Hamiltoniano attivo e basta. La mappatura vale
+  anche per il click (escludi/elimina), l'hover e la rotellina: la riga N di
+  Fitting è la riga N *di quel modello*, non l'assignment N della lista. Lo
+  scroll è condiviso fra le due pagine, quindi ciascuna lo riporta nel proprio
+  intervallo quando disegna, e la didascalia dice quale modello si sta
+  guardando («SPFIT output — *nome*»).
+- **Verifica sui file dell'utente**: import dei 5 modelli, selezione di
+  `G-G+tg-t`, Fit → la pagina elenca 164 righe di quel modello con CALCULATED,
+  OBS-CALC e /UNC (la prima: 7 1 7 ← 6 2 4, 2024,96550 → 2024,95523,
+  +0,01027, +1,03 sigma). Confermato dall'utente.
+- **Test che passano**: `test_fitting_page_lists_the_active_model`.
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)
