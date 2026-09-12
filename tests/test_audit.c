@@ -3048,16 +3048,11 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     DONE();
 }
 
-/* The Python intensity model reads each LGINT as a 300 K intensity and moves
-   it to Trot with (300/T)^(1+DR/2) exp(-c2 ELO (1/T - 1/300)).  A row written
-   for it must give back, at T = TEMP of the catalogue, the SPCAT row itself;
-   a blend is one observation whose intensity is the sum of its components;
-   "Fit Trot" off must reach the Python fit as a fixed temperature. */
-static double python_model_at(double lgint_written, double elo, int dr, double t) {
-    return lgint_written + (1.0 + 0.5 * dr) * log10(300.0 / t)
-         - 1.438776877 * elo * (1.0 / t - 1.0 / 300.0) / M_LN10;
-}
-
+/* The Python intensity model scales each species from the TEMP of its .int
+   to Trot, so a row reaches it as SPCAT's LGINT at that TEMP and the .int
+   states the catalogue TEMP; a blend is one observation whose intensity is
+   the sum of its components; "Fit Trot" off must reach the Python fit as a
+   fixed temperature. */
 static int test_python_intensity_inputs(void) {
     double pk[2] = {3000.0, 3005.0}, ht[2] = {1.0, 0.5};
     write_spectrum(work_path("intfit.txt"), pk, ht, 2);
@@ -3107,16 +3102,26 @@ static int test_python_intensity_inputs(void) {
         memcpy(field, row + 31, 10); field[10] = '\0'; double elo = atof(field);
         if (fabs(freq - 3000.0) < 1e-3) {
             seen_iso = 1;
-            CHECK_DBL("riga isolata = SPCAT a TEMP nel modello Python", python_model_at(lg, elo, 3, 0.3), -3.0, 2e-4);
+            CHECK_DBL("riga isolata = LGINT SPCAT a TEMP", lg, -3.0, 1e-9);
         } else {
             seen_blend = 1;
             CHECK_DBL("blend sui QN della componente forte", freq, 3005.0, 1e-3);
             CHECK_DBL("blend con ELO della componente forte", elo, 2.0, 1e-9);
-            CHECK_DBL("blend = somma delle componenti a TEMP", python_model_at(lg, elo, 3, 0.3),
-                      log10(1e-4 + 1e-5), 2e-4);
+            CHECK_DBL("blend = somma delle componenti a TEMP", lg, log10(1e-4 + 1e-5), 1e-4);
         }
     }
     fclose(cat);
+    FILE *inf = fopen(work_path("species_000.int"), "r");
+    double int_temp = 0.0;
+    if (inf) {
+        double v[10] = {0};
+        if (fgets(row, sizeof(row), inf) && fgets(row, sizeof(row), inf) &&
+            sscanf(row, "%lf %lf %lf %lf %lf %lf %lf %lf %lf", &v[0], &v[1], &v[2], &v[3], &v[4],
+                   &v[5], &v[6], &v[7], &v[8]) == 9)
+            int_temp = v[8];
+        fclose(inf);
+    }
+    CHECK_DBL("TEMP del .int = TEMP del catalogo", int_temp, 0.3, 1e-12);
     CHECK_INT("una riga per osservazione", rows, 2);
     CHECK(seen_iso && seen_blend, "righe isolata e blend presenti");
 

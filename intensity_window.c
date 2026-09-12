@@ -351,22 +351,10 @@ static int if_same_temp_transition(const Assignment *a, const IntensityFitSpecie
     return 1;
 }
 
-/* The Python model reads every LGINT as a 300 K intensity and moves it to
- * Trot with I300 (300/T)^(1+DR/2) exp(-c2 ELO (1/T - 1/300)).  Pred&Fit's
- * rows are SPCAT's at the .int TEMP (often a fraction of a kelvin), so they
- * are written through the exact inverse of that model at TEMP: the Python
- * model then returns SPCAT's own row - its Q(TEMP), its stimulated emission -
- * at T = TEMP, and the fitted Trot no longer depends on the TEMP the
- * catalogue happened to be generated at.  Written unconverted, the Boltzmann
- * factor of TEMP was applied twice and Trot ran off to the upper bound. */
-static double if_lgint_referred_to_300k(double lgint, double elo_cm, int dr, double tcat) {
-    if (!(tcat > 0.0) || !isfinite(lgint)) return lgint;
-    return lgint - (1.0 + 0.5 * dr) * log10(300.0 / tcat)
-                 + IF_C2 * elo_cm * (1.0 / tcat - 1.0 / 300.0) / M_LN10;
-}
-
-/* lgint_at_tcat is the row's intensity at the catalogue TEMP; for a blend it
-   is the sum of its components, written on the strongest one's QNs. */
+/* lgint_at_tcat is SPCAT's intensity at the catalogue TEMP, written as it is:
+   the Python model scales each species from the TEMP of its .int, which
+   states species->cat_temperature_k.  For a blend it is the sum of the
+   components, written on the strongest one's QNs. */
 static int if_write_lin_cat(FILE *lin, FILE *cat, const Assignment *a,
                             const IntensityFitSpecies *species, double lgint_at_tcat) {
     int qn[12];
@@ -384,10 +372,8 @@ static int if_write_lin_cat(FILE *lin, FILE *cat, const Assignment *a,
         if (i < 2*nq) fprintf(lin, "%3d", packed[i]); else fputs("   ", lin);
     }
     fprintf(lin, " %14.7f %10.4f %10.4f\n", a->exp_freq, 0.01, 1.0);
-    double lgint = if_lgint_referred_to_300k(lgint_at_tcat, a->pred.elo_cm, a->pred.rot_dof,
-                                             species->cat_temperature_k);
     fprintf(cat, "%13.4f%8.4f%8.4f%2d%10.4f%3d%7d%4d",
-            a->pred.freq_mhz, 0.0, lgint, a->pred.rot_dof,
+            a->pred.freq_mhz, 0.0, lgint_at_tcat, a->pred.rot_dof,
             a->pred.elo_cm, 1, 0, 300 + nq);
     for (int i=0;i<2*nq;i++) { char slot[3]; if_qn_slot(slot, packed[i]); fputs(slot, cat); }
     fputc('\n', cat);
@@ -616,9 +602,9 @@ int intensity_analysis_write_python_inputs(AppState *s, const char *dir,
     double fwhm = s->gauss_gamma>0 ? 2*s->gauss_gamma : s->lorentz_gamma>0 ? 2*s->lorentz_gamma : 0.10;
     fprintf(cf,"    \"lineshape\": {\"profile\": \"%s\", \"fwhm_MHz\": %.12g, \"fit_fwhm\": false, \"window_MHz\": %.12g, \"normalize\": \"area\"},\n",s->lorentz_gamma>0&&s->gauss_gamma<=0?"lorentzian":"gaussian",fwhm,fmax(5*fwhm,w->extraction_window_mhz));
     fputs("    \"plot\": {\"enabled\": false}\n  },\n  \"species\": [\n",cf);
-    /* The rows were referred to 300 K (if_lgint_referred_to_300k), so the
-       .int states 300 K; its title keeps the TEMP they were generated at. */
-    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview (LGINT referred to 300 K from TEMP %.6g K)\n0 0 1 0 0 0 0 0 300 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
+    /* The .int TEMP is the temperature the CAT rows were generated at: the
+       Python model scales every intensity of the species from it to Trot. */
+    first=1;for(int i=0;i<w->n_species;i++)if(line_count[i]){FILE*inf=fopen(int_path[i],"w");if(!inf){fclose(cf);snprintf(w->message,sizeof(w->message),"Cannot write temporary dipoles.");return 0;}fprintf(inf,"SpectraVisual intensity preview\n0 0 1 0 0 0 0 0 %.12g 0\n1 %.12g /a dipole/\n2 %.12g /b dipole/\n3 %.12g /c dipole/\n",w->species[i].cat_temperature_k,w->species[i].mu_cat[0],w->species[i].mu_cat[1],w->species[i].mu_cat[2]);fclose(inf);if(!first)fputs(",\n",cf);fputs("    {\"name\": ",cf);char name[32];snprintf(name,sizeof(name),"S%d",i);if_json_string(cf,name);fputs(", \"lin\": ",cf);if_json_string(cf,lin_path[i]);fputs(", \"cat\": ",cf);if_json_string(cf,cat_path[i]);fputs(", \"int\": ",cf);if_json_string(cf,int_path[i]);if(w->fit_dipoles&&has_mu){fputs(", \"fit_dipole_components\": [",cf);int comma=0;for(int c=0;c<3;c++)if(w->species[i].fit_dipole[c]){if(comma++)fputc(',',cf);fprintf(cf,"\"%c\"",'a'+c);}fputc(']',cf);}fputc('}',cf);first=0;}
     fputs("\n  ]\n}\n",cf);fclose(cf);
     w->fit_duplicate_count = duplicate_count;
     w->fit_blend_count = blend_count;
