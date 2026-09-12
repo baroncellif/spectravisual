@@ -251,7 +251,10 @@ static int fit_relative_dipoles(AppState *s, FitWork *work, int n) {
     return changed;
 }
 
-int intensity_fit_run(AppState *s) {
+/* This implementation may update the candidate state while it searches for a
+ * solution.  The public entry point below commits those changes only after a
+ * complete fit, so an invalid Run fit cannot alter temperatures or dipoles. */
+static int intensity_fit_run_candidate(AppState *s) {
     if (!s || !s->current_pts || s->n_pts < 2 || s->n_pred <= 0 || s->n_assignments < 2) {
         if (s) snprintf(s->intfit_message, sizeof(s->intfit_message), "Need spectrum, catalog, and at least 2 assignments.");
         return 0;
@@ -308,7 +311,6 @@ int intensity_fit_run(AppState *s) {
     s->intfit_scale = scale;
     s->intfit_log_rms = rms;
     if (s->intfit_fit_temperature) s->rot_temp_k = temp;
-    predfit_adopt_shared_state(s);
     for (int i = 0; i < s->n_assignments; i++) s->intfit_lines[i].valid = 0;
     for (int i = 0; i < n; i++) {
         IntFitLine *r = &s->intfit_lines[work[i].assignment_index];
@@ -323,6 +325,46 @@ int intensity_fit_run(AppState *s) {
     }
     snprintf(s->intfit_message, sizeof(s->intfit_message), "%d/%d lines used; log RMS %.3g", used, n, rms);
     free(work);
+    return 1;
+}
+
+int intensity_fit_run(AppState *s) {
+    if (!s) return 0;
+
+    /* The fit adjusts trial temperature and relative dipoles iteratively.
+       Keep all of that work off the live state until every validation and
+       numerical step has succeeded.  AppState contains pointers to immutable
+       spectrum/catalogue data here, so a shallow copy is intentional. */
+    AppState *trial = malloc(sizeof(*trial));
+    if (!trial) {
+        snprintf(s->intfit_message, sizeof(s->intfit_message), "Not enough memory for fit.");
+        return 0;
+    }
+    *trial = *s;
+    if (!intensity_fit_run_candidate(trial)) {
+        snprintf(s->intfit_message, sizeof(s->intfit_message), "%s", trial->intfit_message);
+        free(trial);
+        return 0;
+    }
+
+    /* Intensity analysis owns these results.  In particular, do not call
+       predfit_adopt_shared_state(): a Run fit must never change the active
+       Pred&Fit species or mark its session dirty. */
+    s->rot_temp_k = trial->rot_temp_k;
+    memcpy(s->dipole_red, trial->dipole_red, sizeof(s->dipole_red));
+    s->intfit_has_result = trial->intfit_has_result;
+    s->intfit_n_candidate = trial->intfit_n_candidate;
+    s->intfit_n_used = trial->intfit_n_used;
+    s->intfit_n_rejected = trial->intfit_n_rejected;
+    s->intfit_reference_component = trial->intfit_reference_component;
+    memcpy(s->intfit_component_n, trial->intfit_component_n, sizeof(s->intfit_component_n));
+    s->intfit_scale = trial->intfit_scale;
+    s->intfit_log_rms = trial->intfit_log_rms;
+    memcpy(s->intfit_component_scale, trial->intfit_component_scale,
+           sizeof(s->intfit_component_scale));
+    memcpy(s->intfit_lines, trial->intfit_lines, sizeof(s->intfit_lines));
+    snprintf(s->intfit_message, sizeof(s->intfit_message), "%s", trial->intfit_message);
+    free(trial);
     return 1;
 }
 

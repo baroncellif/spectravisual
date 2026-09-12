@@ -36,11 +36,12 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
                                    double *global_max_int);
 
 /* For a common multi-state SPCAT catalogue, rescale every diagonal-state
-   transition from its shared Tcat to that state's Tred, then apply the
-   species concentration.  State identity comes from the state QN printed by
+   transition from its shared Tcat to the Hamiltonian's Trot, then apply the
+   state concentration. State identity comes from the state QN printed by
    SPCAT (the fourth QN in its standard multistate record). */
 void rescale_predicted_intensities_by_species(PredLine *lines, int n,
                                               double cat_temp_k,
+                                              double rot_temp_k,
                                               const PickettSpecies *species, int n_species,
                                               double *global_max_int);
 
@@ -57,14 +58,15 @@ int find_assigned_frequency_file(char *out_path, int out_size);
 int read_assigned_frequencies(const char *fname, double *out, int maxn);
 
 // Assignment helpers
-void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i);
+void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i,
+                              int hamiltonian_id);
 /* An assignment is identified by its complete upper/lower quantum-number
    tuple, never by a calculated frequency (which changes after SPFIT). */
 void deduplicate_assignments(Assignment *list, int *n);
 void load_existing_assignments(const char *filename, Assignment *list, int *n);
 
 /* Version written in the header line of assignments.txt. */
-#define ASSIGNMENT_FORMAT 1
+#define ASSIGNMENT_FORMAT 2
 
 /* What reading assignments.txt had to decide, for the message shown to the user. */
 typedef struct {

@@ -91,7 +91,7 @@ Le domande complete sono nel report ([§12](README.md#12-domande-bloccanti)).
 
 | # | Domanda (breve) | Passi | Risposta | Data |
 |---|---|---|---|---|
-| D1 | Le specie sono molecole diverse o stati vibrazionali dello stesso Hamiltoniano? | #5, #14, #14b | Entrambe: una specie può essere uno stato vibrazionale del modello condiviso (un solo `.par`, NVIB ≥ stati: il modello di oggi) oppure una molecola distinta, con il proprio `.par/.var`, il proprio SPCAT/SPFIT, T rot e cut di intensità propri (SPFIT gestisce al massimo 9 stati per modello). La modalità «molecola distinta» è il passo nuovo #14b. Per #5, con NVIB troppo piccolo: Calculate e Fit rifiutati con il valore minimo nel messaggio. | 2026-09-11 |
+| D1 | Le specie sono molecole diverse o stati vibrazionali dello stesso Hamiltoniano? | #5, #14, #14b | Il progetto contiene più **Hamiltoniani**. Ogni Hamiltoniano possiede un solo `.par/.var/.lin/.int`, un solo SPFIT/SPCAT e uno o più stati; gli stati di quello Hamiltoniano condividono T rot, range e cut della sola carta di controllo `.int`, ma hanno dipoli e concentrazione separati. Stati accoppiati (tunneling incluso) devono quindi appartenere allo stesso Hamiltoniano; specie davvero indipendenti sono Hamiltoniani distinti. Per #5, con NVIB troppo piccolo: Calculate e Fit rifiutano con il minimo richiesto. | 2026-09-12 |
 | D2 | Assignment con forma dei QN diversa dal modello: rifiutarli o convertirli, e con quale regola? | #6 (la conversione) | — | — |
 | D3 | Dove salvare le esclusioni dal fit (file di Pred&Fit con chiave = identità)? | #8 | — | — |
 | D4 | CalcIntensity in `assignments.txt`: intensità del catalogo o intensità mostrata? | #9 | — | — |
@@ -107,7 +107,9 @@ Le domande complete sono nel report ([§12](README.md#12-domande-bloccanti)).
 #1–#8 correggono corruzione o perdita di dati (catalogo, lista, file, modello,
 fit); #9–#15 risultati scientifici sbagliati (intensità, specie, parametri);
 #16–#20 comportamenti che inducono errori (tastiera, spettro attivo,
-impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
+impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI;
+#25 aggiunge l'importazione esplicita di un modello Pickett esterno, dopo che le
+funzioni di base di Pred&Fit saranno state stabilizzate.
 
 | # | Titolo | Bug/issue | Impatto | Bloccato da |
 |---|---|---|---|---|
@@ -137,6 +139,7 @@ impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI.
 | #22 | Prestazioni del caricamento della lista | B-48 | basso | parziale `7169e8b` |
 | #23 | Vista iniziale, estensioni, input numerici | B-31, B-50, U-14, B-37, M-02, U-18 | basso | — |
 | #24 | UI e pulizia | U-01, U-05, U-07, U-09, U-10, U-11, U-12, M-04, M-05 | basso | — |
+| #25 | Importazione esplicita di input SPFIT/SPCAT | richiesta utente 2026-09-12 | medio: adozione di modelli esterni senza ricostruzione manuale | dopo #21 e funzioni base Pred&Fit stabili |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 **P0.3** → #1; **P1** → #2, #6, #7, #8, #11, #14, #15, #18, #19, #21;
@@ -536,9 +539,17 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   senza effetti non sono bloccati).
 - **Documentazione**: report executive summary punto 6, §4 flusso 7, §5.5, §5.9,
   schede B-11/B-13/B-21/B-27/B-32; A2.1; A4 R-12 e R-22.
-- **Stato**: ☐ sospeso per decisione di progetto — il fit delle intensità dovrà
-  essere progettato insieme come fit globale di tutte le specie o di un sottoinsieme
-  esplicitamente selezionato; non va reso indipendente nel frattempo.
+- **Stato**: ◐ sospeso per decisione di progetto il 2026-09-12 — sono state
+  introdotte soltanto le protezioni di confine: il fit è transazionale (un
+  rifiuto non modifica T rot o μ red), un risultato non viene adottato dalla
+  specie Pred&Fit e il ricalcolo della visualizzazione conserva le
+  concentrazioni di tutte le specie dei cataloghi generati.
+  `test_intensity_fit_does_not_touch_predfit` e
+  `test_intensity_recompute_keeps_concentration` coprono questi casi (suite
+  69/69 PASS). Il design e l'implementazione del fit delle intensità restano
+  deliberatamente fermi finché Pred&Fit non sarà stato definito e stabilizzato;
+  solo allora si decideranno D4/D5 e si affronteranno
+  B-11/B-13/B-21/B-27/B-32.
 
 ### #10 — Aree del fit delle intensità con baseline sottratta
 
@@ -634,36 +645,97 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Documentazione**: report §4 flusso 6, schede B-19/B-24/B-43; A4 R-32.
 - **Stato**: ☐ non fatto — commit: —
 
-### #14b — Specie come molecole distinte (richiesta di D1)
+### #14b — Progetto Pred&Fit: Hamiltoniani indipendenti e stati condivisi
 
-- **Bug/issue**: risposta a D1 (2026-09-11). Oltre agli stati vibrazionali di un
-  Hamiltoniano condiviso servono specie che siano molecole distinte: ciascuna con
-  il proprio `.par/.var` (riga opzioni e parametri propri), il proprio `.int` (T,
-  FQLIM, cut di intensità) e il proprio SPCAT/SPFIT, anche perché SPFIT gestisce al
-  massimo 9 stati per modello. Le due modalità devono poter convivere.
-- **Cosa fare** (proposta, da confermare con l'utente prima di iniziare):
-  `PickettSpecies` con un tipo (stato del modello condiviso oppure molecola
-  distinta); per ogni molecola distinta una cartella `.fit/species_XX/` con i propri
-  `model.par/.var/.int/.lin`; Calculate esegue SPCAT per il modello condiviso e per
-  ogni molecola e unisce i cataloghi in `.fit/model.cat`, distinguendo la
-  provenienza con il TAG del `.int` (colonne 45–51 del record SPCAT, da conservare in
-  `PredLine`); il riscalamento delle intensità ricava la specie dal TAG per le
-  molecole distinte e da v per gli stati; Fit esegue SPFIT per ogni modello con i
-  soli assignment delle sue righe; la sessione salva tipo, parametri e riga opzioni
-  di ogni molecola.
+- **Decisione di progetto (2026-09-12)**: non esistono due "tipi" di specie.
+  L'unità eseguibile è l'**Hamiltoniano**; uno stato è sempre figlio di un
+  Hamiltoniano. Il progetto è quindi:
+
+  ```text
+  Pred&Fit project
+  ├─ Hamiltoniano H1 → H1.par / H1.var / H1.lin / H1.int → SPFIT/SPCAT H1
+  │  ├─ Stato 0     → dipoli μa, μb, μc; concentrazione esterna c0
+  │  ├─ Stato 1     → dipoli μa, μb, μc; concentrazione esterna c1
+  │  └─ Stato 2     → dipoli μa, μb, μc; concentrazione esterna c2
+  └─ Hamiltoniano H2 → H2.par / H2.var / H2.lin / H2.int → SPFIT/SPCAT H2
+     ├─ Stato 0     → dipoli; c0
+     └─ Stato 1     → dipoli; c1
+  ```
+
+  In ciascun `H.int`, FLAGS/TAG/QROT/FBGN/FEND/STR0/STR1/FQLIM/TEMP/MAXV sono
+  comuni. Le sole carte ripetute sono `IDIP,DIPOLE`, una terna per stato: per
+  esempio `1/2/3` per v=0, `111/112/113` per v=1. Questo segue direttamente il
+  formato di SPCAT documentato in *spinv15 annotated* §"Format of the .int
+  File" e nel CRIB sheet. La concentrazione non è un parametro Pickett e non va
+  scritta nel `.int`: è un moltiplicatore SpectraVisual applicato dopo SPCAT.
+  Per una transizione fra stati diversi useremo la concentrazione dello **stato
+  inferiore**, perché è la sua popolazione a pesare l'assorbimento; per le righe
+  diagonali coincide naturalmente con lo stato della riga.
+
+- **Cosa fare**:
+  1. estrarre da `PredFitState` una struttura `HamiltonianModel` con nome/ID,
+     parametri e riga opzioni, impostazioni `.int` (inclusi T rot e cut), stati,
+     storico SPFIT e directory `.fit/Hxx/`; `PredFitState` conserva la lista e
+     l'Hamiltoniano attivo per l'editor;
+  2. uno `StateModel` contiene solo `state_index`, nome, abilitazione alla
+     predizione, `mu[3]` e `concentration` (default 1). Non contiene T rot,
+     cutoff, range o file propri;
+  3. associare ogni `Assignment` e ogni riga di catalogo generata al suo
+     `hamiltonian_id`; Fit scrive nell'unico `H.lin` esclusivamente gli
+     assignment di H. Le righe restano miste nello stesso `.lin` quando gli
+     stati sono accoppiati, preservando i fit di tunneling;
+  4. Calculate/Fit operano su H attivo oppure, nel comando "all", una volta per
+     Hamiltoniano. I CAT risultanti sono uniti solo per la visualizzazione,
+     senza perdere provenienza; T rot/cut/dipoli di H1 non possono influire su
+     H2;
+  5. la sessione serializza tutti gli Hamiltoniani, i loro stati e la proprietà
+     di ogni assignment. La migrazione della sessione v3 crea H1 dal modello
+     unico corrente;
+  6. l'editor mostra prima la lista degli Hamiltoniani (aggiungi, duplica,
+     rinomina, seleziona), poi i parametri e gli stati dell'H selezionato. Il
+     vecchio "Species" diventa esplicitamente "States of Hx".
+
+- **Sequenza di implementazione**:
+  1. consolidare subito il singolo Hamiltoniano: un solo `.int`, T rot comune,
+     dipoli e concentrazioni per stato, migrazione delle sessioni esistenti;
+  2. introdurre il contenitore `HamiltonianModel` e la migrazione H1 senza
+     cambiare ancora l'interfaccia di calcolo;
+  3. aggiungere selezione/creazione H e directory per-H;
+  4. aggiungere provenienza agli assignment/CAT e Calculate/Fit per-H;
+  5. solo dopo riprendere il fit delle intensità: potrà fittare le
+     concentrazioni esterne per stato, mai riscrivere `H.int`.
 - **Test che devono passare**:
-  - `test_species_molecules_separate_models`: due molecole con A/B/C diversi → due
-    SPCAT, catalogo unito con TAG distinti;
-  - `test_species_molecule_own_trot_and_cut`: T rot e cut di intensità di una
-    molecola applicati solo alle sue righe;
-  - `test_fit_per_molecule_uses_own_lines`: il `.lin` di ogni molecola contiene solo
-    i suoi assignment;
-  - `test_species_mixed_states_and_molecules`: stati del modello condiviso e
-    molecole distinte nella stessa sessione.
-- **Bloccato da**: conferma del progetto (formato della sessione, uso del TAG,
-  cartelle di lavoro).
+  - `test_multistate_writes_one_int_with_shared_trot`: H con due stati → solo
+    `model.int`, una TEMP comune e IDIP 1/2/3 + 111/112/113; concentrazione
+    assente dal file;
+  - `test_two_hamiltonians_keep_independent_int_controls`: H1/H2 hanno T rot e
+    cut diversi → due `.int`, ciascuno con solo i propri valori;
+  - `test_fit_per_hamiltonian_uses_own_lines`: il `.lin` di H contiene solo gli
+    assignment di H ma conserva insieme tutti i suoi stati;
+  - `test_multihamiltonian_session_roundtrip`: stati, concentrazioni e ownership
+    degli assignment sopravvivono a save/load;
+  - `test_interstate_line_uses_lower_state_concentration`.
+- **Bloccato da**: — (design confermato dall'utente).
 - **Documentazione**: report §4 flussi 5 e 6, §6.4, §6.5, §6.7, §10; A4 scenario nuovo.
-- **Stato**: ☐ non fatto — commit: —
+- **Stato**: ◐ fasi 1–4 parzialmente implementate il 2026-09-12 — il singolo
+  Hamiltoniano scrive un solo `.int` multi-stato con T rot comune; le sessioni
+  precedenti con Tred per specie sono migrate allo stato selezionato. Il nuovo
+  contenitore `HamiltonianModel` conserva H indipendenti, selezionabili e
+  creati nuovi o duplicati dalla sidebar permanente di Advanced; la stessa
+  gerarchia H → stati resta visibile in Parameters, Lines, Fitting e States.
+  "Add Hamiltonian" crea il modello Pickett di default, mentre "Duplicate"
+  resta esplicitamente il template dell'H selezionato. Una sessione v5 salva
+  tutti gli H in record `h4*`. Dal secondo H in poi i file Pickett vivono in `.fit/Hxxx/`.
+  `assignments.txt` formato 2 conserva inoltre `HamiltonianID`, e un Fit scrive
+  solo gli assignment del modello attivo. Test aggiunti:
+  `test_multistate_writes_one_int_with_shared_trot`,
+  `test_hamiltonian_switch_keeps_independent_models`,
+  `test_multihamiltonian_session_roundtrip`,
+  `test_two_hamiltonians_keep_independent_int_controls`,
+  `test_assignment_owner_keeps_same_qn_in_two_hamiltonians`,
+  `test_add_hamiltonian_starts_fresh_and_keeps_source` (suite 71/71 PASS).
+  Restano l'unione dei CAT per la visualizzazione e il comando "Calculate all"
+  per tutti gli H; report ed esclusioni SPFIT sono già separati per H.
 
 ### #15 — Validazione di parametri e dipoli
 
@@ -913,6 +985,56 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     verificati a vista e annotati nel commit.
 - **Documentazione**: A3 A3.13 (stato di U-01…U-18); `README.md` del progetto.
 - **Stato**: ☐ non fatto — commit: —
+
+### #25 — Importazione esplicita di un modello SPFIT/SPCAT esterno
+
+- **Richiesta**: l'utente deve poter consegnare al programma i file di input
+  Pickett già esistenti, senza dover ricreare a mano parametri, righe di fit e
+  opzioni. La proposta di convenzione è una cartella
+  `data_dir/.fit/load/` contenente un sottoinsieme di `model.par`, `model.var`,
+  `model.lin` e `model.int` (oppure file con lo stesso suffisso e un prefisso
+  comune). Non è un restore automatico: l'import parte solo da un'azione
+  esplicita nella UI Pred&Fit, ad esempio **Import model**.
+- **Cosa fare**:
+  - rilevare e mostrare il contenuto di `.fit/load/` solo dopo il comando
+    esplicito; accettare anche una scelta di cartella/file dalla UI, se il
+    backend dei dialog lo consente;
+  - validare ogni file prima di cambiare lo stato: `.par/.var` devono avere un
+    modello e parametri Pickett leggibili, `.lin` righe con NQN compatibile,
+    `.int` opzioni e specie coerenti. Un set parziale è importabile, ma le
+    funzioni che richiedono dati mancanti (Calculate/Fit) devono dirlo e non
+    creare file nuovi;
+  - caricare i dati nei normali contesti in memoria (parametri/opzioni,
+    assignment, impostazioni di intensità), passandoli per gli stessi
+    validatori e deduplicazioni dell'editing UI; non trattare il testo esterno
+    come stato fidato;
+  - mostrare un riepilogo e richiedere conferma prima di sostituire un modello
+    Pred&Fit o assignment già presenti. In caso di errore l'import deve essere
+    transazionale: nessuna modifica parziale dello stato attivo;
+  - dopo la conferma, copiare i file validati nella directory di lavoro
+    `.fit/` con nomi canonici, mantenendo in `load/` gli originali come input
+    non modificato. `load/` non viene mai usata come directory di output da
+    Calculate/Fit;
+  - aggiornare catalogo, selezioni e rendering soltanto quando esiste un
+    catalogo importato o dopo un Calculate esplicito. Nessun SPCAT/SPFIT viene
+    eseguito dall'operazione di importazione stessa.
+- **Test che devono passare**:
+  - `test_import_complete_pickett_model`: import di `.par/.var/.lin/.int`
+    valido → stato Pred&Fit e assignment corrispondenti, senza eseguire
+    programmi esterni;
+  - `test_import_partial_model_reports_missing_requirements`: set parziale →
+    le parti disponibili sono caricate, mentre Calculate/Fit riportano in modo
+    esplicito il file o il dato mancante;
+  - `test_import_invalid_model_is_transactional`: un file malformato o NQN
+    incompatibile non modifica il modello o gli assignment già attivi;
+  - `test_import_requires_confirmation_before_replace`: un modello attivo non
+    viene sovrascritto senza conferma;
+  - `test_import_load_directory_never_overwritten`: Calculate/Fit scrivono
+    solo in `.fit/`, mai in `.fit/load/`.
+- **Documentazione**: README (workflow Pred&Fit), A3 (controllo UI e messaggi),
+  A4 (persistenza e rami di errore); aggiungere fixture Pickett minime nei test.
+- **Stato**: ☐ pianificato su richiesta utente il 2026-09-12 — da iniziare solo
+  dopo la stabilizzazione delle funzioni base di Pred&Fit e dopo #21.
 
 ## Dopo i fix (facoltativo)
 

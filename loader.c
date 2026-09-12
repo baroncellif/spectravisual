@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>
 
 // --- PRIVATE HELPER FUNCTIONS ---
 
@@ -416,6 +417,7 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
 
 void rescale_predicted_intensities_by_species(PredLine *lines, int n,
                                               double cat_temp_k,
+                                              double rot_temp_k,
                                               const PickettSpecies *species, int n_species,
                                               double *global_max_int)
 {
@@ -427,19 +429,23 @@ void rescale_predicted_intensities_by_species(PredLine *lines, int n,
         /* In SPCAT's multistate rotational record the first three QNs are
            rotor QNs and the next one is the state.  We use the number that
            SPCAT printed, without altering the QN representation. */
-        int state = p->n_qn >= 4 ? p->M1u : 0;
+        /* A concentration represents the population prepared in the lower
+           state. For ordinary rotational (diagonal) lines this is identical
+           to the upper state; for an explicitly inter-state transition it is
+           the physically relevant choice. */
+        int state = p->n_qn >= 4 ? p->M1l : 0;
         const PickettSpecies *sp = NULL;
         for (int k = 0; k < n_species; k++)
             if (species[k].state_index == state) { sp = &species[k]; break; }
-        if (!sp || !(sp->temp_k > 0.0) || !(cat_temp_k > 0.0)) {
+        if (!sp || !(rot_temp_k > 0.0) || !(cat_temp_k > 0.0)) {
             p->line_strength = 0.0;
             p->linear_int = pow(10.0, p->cat_lgint);
         } else {
             double nu_cm = p->freq_mhz / mhz_per_cm;
-            double stim_red = -expm1(-c2 * nu_cm / sp->temp_k);
+            double stim_red = -expm1(-c2 * nu_cm / rot_temp_k);
             double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
-            double pop_red = exp(-c2 * p->elo_cm / sp->temp_k) * stim_red
-                           / pow(sp->temp_k, 0.5 * p->rot_dof);
+            double pop_red = exp(-c2 * p->elo_cm / rot_temp_k) * stim_red
+                           / pow(rot_temp_k, 0.5 * p->rot_dof);
             double pop_cat = exp(-c2 * p->elo_cm / cat_temp_k) * stim_cat
                            / pow(cat_temp_k, 0.5 * p->rot_dof);
             double base = pow(10.0, p->cat_lgint);
@@ -575,13 +581,18 @@ static int same_assignment_transition(const PredLine *a, const PredLine *b) {
            a->M1l == b->M1l && a->M2l == b->M2l && a->M3l == b->M3l;
 }
 
+static int same_assignment_owner(const Assignment *a, const Assignment *b) {
+    return a->hamiltonian_id == b->hamiltonian_id &&
+           same_assignment_transition(&a->pred, &b->pred);
+}
+
 void deduplicate_assignments(Assignment *list, int *n) {
     if (!list || !n || *n < 2) return;
     int keep = 0;
     for (int i = 0; i < *n; i++) {
         int seen = -1;
         for (int j = 0; j < keep; j++)
-            if (same_assignment_transition(&list[j].pred, &list[i].pred)) { seen = j; break; }
+            if (same_assignment_owner(&list[j], &list[i])) { seen = j; break; }
         if (seen >= 0) {
             /* Keep the latest assignment: when an old session is read, or a
                line is reassigned, the final occurrence is the user's choice. */
@@ -594,13 +605,15 @@ void deduplicate_assignments(Assignment *list, int *n) {
     *n = keep;
 }
 
-void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i) {
+void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i,
+                              int hamiltonian_id) {
     /* Frequencies from SPCAT are model-dependent.  QNs are the identity of a
        transition, so a post-fit prediction must update the old row rather
        than append a visually identical assignment. */
     deduplicate_assignments(list, n);
     for(int i=0; i<*n; i++) {
-        if (same_assignment_transition(&list[i].pred, &p)) {
+        if (list[i].hamiltonian_id == hamiltonian_id &&
+            same_assignment_transition(&list[i].pred, &p)) {
             int fit_enabled = list[i].fit_enabled;
             list[i].exp_freq = exp_f;
             list[i].exp_int  = exp_i;
@@ -619,6 +632,7 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
         list[*n].exp_int = exp_i;
         list[*n].fit_enabled = 1;
         list[*n].needs_reassign = 0;
+        list[*n].hamiltonian_id = hamiltonian_id;
         (*n)++;
         printf("Added assignment for %.4f MHz\n", p.freq_mhz);
     }
@@ -677,16 +691,23 @@ static void set_row_qn(PredLine *p, const double *upper, const double *lower, in
 }
 
 /* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity, NQN. */
-static int parse_assignment_row(const NumberRow *r, PredLine *p, double *exp_freq) {
-    if (r->n < 6 || !r->integer[r->n - 1]) return 0;
-    int nq = (int)lround(r->v[r->n - 1]);
-    if (nq < 1 || nq > 6 || r->n != 2 * nq + 4 || !all_integers(r, 0, 2 * nq)) return 0;
+static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
+                                double *exp_freq, int *hamiltonian_id) {
+    int tail = format >= 2 ? 2 : 1;
+    if (r->n < 5 + tail || !r->integer[r->n - tail]) return 0;
+    int nq = (int)lround(r->v[r->n - tail]);
+    if (nq < 1 || nq > 6 || r->n != 2 * nq + 3 + tail || !all_integers(r, 0, 2 * nq)) return 0;
     set_row_qn(p, r->v, r->v + nq, nq);
     *exp_freq = r->v[2 * nq];
     p->freq_mhz = r->v[2 * nq + 1];
     p->linear_int = r->v[2 * nq + 2];
     p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
     p->n_qn = nq;
+    *hamiltonian_id = 0;
+    if (format >= 2) {
+        if (!r->integer[r->n - 1] || r->v[r->n - 1] < 0.0 || r->v[r->n - 1] > INT_MAX) return 0;
+        *hamiltonian_id = (int)lround(r->v[r->n - 1]);
+    }
     return 1;
 }
 
@@ -751,8 +772,10 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         PredLine p;
         memset(&p, 0, sizeof(p));
         double ef = 0.0, ei = 0.0;                       /* the file has no observed intensity */
+        int hamiltonian_id = 0;
         int ok = numbers > 0 && rep->format <= ASSIGNMENT_FORMAT &&
-                 (rep->format ? parse_assignment_row(&r, &p, &ef) : parse_legacy_row(&r, &p, &ef, &ei));
+                 (rep->format ? parse_assignment_row(&r, rep->format, &p, &ef, &hamiltonian_id)
+                              : parse_legacy_row(&r, &p, &ef, &ei));
         if (!ok) { rep->ignored++; continue; }
         p.branch = branch_from_qn(p.Ju, p.Jl);
         p.mu = mu_from_qn(p.Kau, p.Kal, p.Kcu, p.Kcl);
@@ -768,6 +791,7 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         a->exp_int = ei;
         a->fit_enabled = 1;
         a->needs_reassign = p.n_qn == 0 || looks_truncated(&p);
+        a->hamiltonian_id = hamiltonian_id;
         rep->loaded++;
     }
     fclose(fp);

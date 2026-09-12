@@ -350,10 +350,7 @@ static int set_predictions(AppState *state, const char *path) {
     }
     state->cat_temp_k = 0.0;
     state->dipole_cat[0] = state->dipole_cat[1] = state->dipole_cat[2] = 0.0;
-    rescale_predicted_intensities(state->pred_lines, state->n_pred,
-                                  state->cat_temp_k, state->rot_temp_k,
-                                  state->dipole_cat, state->dipole_red,
-                                  &state->pred_global_max);
+    predfit_recompute_display_intensities(state);
     snprintf(state->pred_path, sizeof(state->pred_path), "%s", path);
 
     int first = !state->data_loaded;
@@ -443,7 +440,11 @@ static void save_screenshot(SDL_Renderer *ren, AppState *state) {
 
 int main(int argc, char *argv[])
 {
-    AppState state = {0};
+    /* AppState contains the fixed-capacity assignment/project buffers.  It is
+       intentionally static: multi-Hamiltonian snapshots make it several MB,
+       which can overflow macOS's process stack before SDL has even opened a
+       window. Static storage is zero-initialized just like the old `{0}`. */
+    static AppState state;
     init_app_defaults(&state);
 
     int argi = 1;
@@ -471,13 +472,12 @@ int main(int argc, char *argv[])
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 
-    /* An explicit .cat always wins.  Otherwise a previous Pred&Fit archive is
-       a resumable session rather than a transient cache. */
+    /* Startup is deliberately a blank workspace. A prior session is restored
+       only through the explicit Open/Drop session action, never merely because
+       a .fit directory happens to be beside the executable. */
     settings_init(&state, argv[0]);
     settings_apply_defaults(&state);
     predfit_refresh_work_dir(&state);
-    predfit_load_session(&state);
-    if (!pred_arg) predfit_restore_latest(&state);
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
@@ -507,25 +507,8 @@ int main(int argc, char *argv[])
 
     if (pred_arg) set_predictions(&state, pred_arg);
     for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
-    /* No file on the command line: reopen the spectra of the previous session,
-       so the assignments come back with the trace they were measured on. */
-    if (n_spec_args == 0) {
-        if (state.session_has_view && state.session_rolling_avg_window > 0)
-            state.rolling_avg_window = state.session_rolling_avg_window;
-        for (int k = 0; k < state.n_session_spec; k++) {
-            int before = state.n_spectra;
-            if (add_spectrum(&state, state.session_spectrum[k].path))
-                restore_session_spectrum(&state, before, &state.session_spectrum[k]);
-        }
-        if (state.session_active_spec >= 0 && state.session_active_spec < state.n_spectra)
-            select_spectrum(&state, state.session_active_spec);
-    } else {
-        /* A spectrum explicitly passed on the command line is a fresh task,
-           not a request to impose the previous session's zoom and offsets. */
-        state.session_has_view = 0;
-    }
-    /* Command-line files are a fresh task.  Do not overwrite an existing
-       Pred&Fit session with defaults merely because the app was launched. */
+    /* Command-line files are a fresh task. They never cause a hidden session
+       restore or overwrite an existing Pred&Fit session with defaults. */
     
     int running = 1;
     Layout layout;

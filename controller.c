@@ -30,7 +30,7 @@ static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
 static const PredLine *current_assignment_prediction(const AppState *s, const Assignment *a);
-static int save_assignments(AppState *s);
+int save_assignments(AppState *s);
 
 /* Assignments deliberately keep a copy of the CAT row selected at the time.
    When exporting, however, use the corresponding current CAT row when it is
@@ -41,6 +41,7 @@ static const PredLine *current_assignment_prediction(const AppState *s, const As
     const PredLine *q = &a->pred;
     for (int i = 0; i < s->n_pred; i++) {
         const PredLine *p = &s->pred_lines[i];
+        if (p->hamiltonian_id != a->hamiltonian_id) continue;
         if (p->n_qn != q->n_qn) continue;
         if (p->Ju == q->Ju && p->Kau == q->Kau && p->Kcu == q->Kcu &&
             p->M1u == q->M1u && p->M2u == q->M2u && p->M3u == q->M3u &&
@@ -91,7 +92,7 @@ static int copy_file(const char *src, const char *dst) {
    are instead the calculated frequency and predicted intensity.  NQN is
    retained at the end solely so this text file can restore the exact CAT QN
    layout. */
-static int save_assignments(AppState *s) {
+int save_assignments(AppState *s) {
     char path[600], tmp[640], bak[640];
     settings_data_file(s, "assignments.txt", path, sizeof(path));
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
@@ -101,7 +102,7 @@ static int save_assignments(AppState *s) {
     /* The header names the layout and its version, so the reader never has
        to guess it from a row (a .lin has the same field count). */
     fprintf(fp, "# SpectraVisual assignments, format %d: upper QNs, lower QNs (SPFIT .lin order), "
-                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN\n", ASSIGNMENT_FORMAT);
+                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN HamiltonianID\n", ASSIGNMENT_FORMAT);
     int written = 0, skipped = 0;
     for (int k = 0; k < s->n_assignments; k++) {
         PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
@@ -116,9 +117,9 @@ static int save_assignments(AppState *s) {
         for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
         /* Match the .lin's fixed 12I3 quantum-number field. */
         for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
-        fprintf(fp, "%15.6f %15.6f %15.6E %d\n",
+        fprintf(fp, "%15.6f %15.6f %15.6E %d %d\n",
                 s->assignments[k].exp_freq, p2.freq_mhz,
-                p2.linear_int, nq);
+                p2.linear_int, nq, s->assignments[k].hamiltonian_id);
         written++;
     }
     int failed = ferror(fp);
@@ -515,11 +516,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 }
                 if (point_in_rect(mx, my, ui_fit_run(w))) {
                     intensity_fit_run(s);
-                    if (s->pred_lines && s->n_pred > 0)
-                        rescale_predicted_intensities(s->pred_lines, s->n_pred,
-                                                      s->cat_temp_k, s->rot_temp_k,
-                                                      s->dipole_cat, s->dipole_red,
-                                                      &s->pred_global_max);
+                    predfit_recompute_display_intensities(s);
                     return;
                 }
                 if (point_in_rect(mx, my, ui_fit_export(w))) {
@@ -929,8 +926,10 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     for(int k = 0; k < requested; k++) {
         int idx = s->selected_indices[k];
         if (idx < 0 || idx >= s->n_pred) continue;
+        int hamiltonian_id = s->predfit.generated_catalog_active
+                           ? predfit_active_hamiltonian_id(s) : 0;
         add_or_update_assignment(s->assignments, &s->n_assignments,
-                                 s->pred_lines[idx], exp_freq, exp_int);
+                                 s->pred_lines[idx], exp_freq, exp_int, hamiltonian_id);
         assigned++;
     }
 
@@ -1024,22 +1023,13 @@ static void commit_text_input(AppState *s) {
     else if (s->input_state == INPUT_CAT_TEMP) {
         double temp_k = atof(s->text_input_buf);
         if (isfinite(temp_k) && temp_k > 0.0) s->cat_temp_k = temp_k;
-        if (s->pred_lines && s->n_pred > 0)
-            rescale_predicted_intensities(s->pred_lines, s->n_pred,
-                                          s->cat_temp_k, s->rot_temp_k,
-                                          s->dipole_cat, s->dipole_red,
-                                          &s->pred_global_max);
+        predfit_recompute_display_intensities(s);
     }
     else if (s->input_state == INPUT_ROT_TEMP) {
         double temp_k = atof(s->text_input_buf);
         if (isfinite(temp_k) && temp_k > 0.0) {
             s->rot_temp_k = temp_k;
-            predfit_adopt_shared_state(s);
-            if (s->pred_lines && s->n_pred > 0)
-                rescale_predicted_intensities(s->pred_lines, s->n_pred,
-                                              s->cat_temp_k, s->rot_temp_k,
-                                              s->dipole_cat, s->dipole_red,
-                                              &s->pred_global_max);
+            predfit_recompute_display_intensities(s);
         }
     }
     else if (s->input_state >= INPUT_MUCAT_A && s->input_state <= INPUT_MURED_C) {
@@ -1048,13 +1038,9 @@ static void commit_text_input(AppState *s) {
         int component = which % 3;
         if (isfinite(mu)) {
             if (which < 3) s->dipole_cat[component] = mu;
-            else { s->dipole_red[component] = mu; predfit_adopt_shared_state(s); }
+            else s->dipole_red[component] = mu;
         }
-        if (s->pred_lines && s->n_pred > 0)
-            rescale_predicted_intensities(s->pred_lines, s->n_pred,
-                                          s->cat_temp_k, s->rot_temp_k,
-                                          s->dipole_cat, s->dipole_red,
-                                          &s->pred_global_max);
+        predfit_recompute_display_intensities(s);
     }
     else if (s->input_state == INPUT_FIT_WINDOW) {
         double width = atof(s->text_input_buf);

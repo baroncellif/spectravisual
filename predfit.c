@@ -29,14 +29,21 @@ static void fit_root(const AppState *s, char *out, size_t n) {
 }
 
 void predfit_refresh_work_dir(AppState *s) {
-    fit_root(s, s->predfit.work_dir, sizeof(s->predfit.work_dir));
+    char root[600];
+    fit_root(s, root, sizeof(root));
+    PredFitState *p = &s->predfit;
+    if (p->n_hamiltonians > 1 && p->active_hamiltonian >= 0 &&
+        p->active_hamiltonian < p->n_hamiltonians)
+        snprintf(p->work_dir, sizeof(p->work_dir), "%s/H%03d", root,
+                 p->hamiltonian[p->active_hamiltonian].id);
+    else
+        snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
 }
 
 int predfit_is_generated_catalog(const AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0;
-    char root[600], expected[700];
-    fit_root(s, root, sizeof(root));
-    snprintf(expected, sizeof(expected), "%s/model.cat", root);
+    char expected[700];
+    snprintf(expected, sizeof(expected), "%s/model.cat", s->predfit.work_dir);
     if (strcmp(path, expected) == 0) return 1;
 
     /* Command-line paths and restored sessions can differ only in their
@@ -55,6 +62,10 @@ static int have_program(const char *path) {
 static int state_count(const PredFitState *p);
 static void parameter_label(PickettParameter *x);
 static void sync_basic_from_parameters(PredFitState *p);
+static void store_active_hamiltonian(PredFitState *p);
+static void restore_active_model(PredFitState *p, const PredFitSnapshot *snap);
+static void snapshot_active_model(const PredFitState *p, PredFitSnapshot *snap);
+static int assignment_belongs_to_active_hamiltonian(const AppState *s, const Assignment *a);
 
 static void exclusion_key_from_pred(FitExclusionKey *key, const PredLine *line) {
     const int qn[12] = {line->Ju, line->Kau, line->Kcu, line->M1u, line->M2u, line->M3u,
@@ -71,26 +82,24 @@ static int exclusion_key_matches(const FitExclusionKey *key, const PredLine *lin
 }
 
 static void exclusions_path(const AppState *s, char *out, size_t size) {
-    char root[600];
-    fit_root(s, root, sizeof(root));
-    snprintf(out, size, "%s/exclusions.txt", root);
+    snprintf(out, size, "%s/exclusions.txt", s->predfit.work_dir);
 }
 
 /* One small, versioned sidecar holds the transient fitting choice.  The
    write is atomic: a failed save leaves the previous good set untouched. */
 int predfit_save_exclusions(AppState *s) {
     PredFitState *p = &s->predfit;
-    char root[600], path[700], tmp[740];
+    char path[700], tmp[740];
     int excluded = 0;
     for (int i = 0; i < s->n_assignments; i++)
-        if (!s->assignments[i].fit_enabled) excluded++;
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i]) &&
+            !s->assignments[i].fit_enabled) excluded++;
     exclusions_path(s, path, sizeof(path));
     /* No stale file to clear and no workspace yet: avoid creating .fit only
        because every assignment happens to be included. */
     if (!excluded && access(path, F_OK) != 0) return 1;
-    fit_root(s, root, sizeof(root));
-    if (mkdir(root, 0700) != 0 && errno != EEXIST) {
-        snprintf(p->status, sizeof(p->status), "Cannot create %s for fit exclusions.", root);
+    if (mkdir(p->work_dir, 0700) != 0 && errno != EEXIST) {
+        snprintf(p->status, sizeof(p->status), "Cannot create %s for fit exclusions.", p->work_dir);
         return 0;
     }
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
@@ -101,7 +110,8 @@ int predfit_save_exclusions(AppState *s) {
     }
     fprintf(fp, "# SpectraVisual fit exclusions, format 1: NQN then upper/lower QNs\n");
     for (int i = 0; i < s->n_assignments; i++) {
-        if (s->assignments[i].fit_enabled) continue;
+        if (s->assignments[i].fit_enabled ||
+            !assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) continue;
         FitExclusionKey key;
         exclusion_key_from_pred(&key, &s->assignments[i].pred);
         fprintf(fp, "%d", key.n_qn);
@@ -142,7 +152,8 @@ static int load_fit_exclusions(AppState *s) {
     exclusions_path(s, path, sizeof(path));
     FILE *fp = fopen(path, "r");
     if (!fp) return 0;
-    for (int i = 0; i < s->n_assignments; i++) s->assignments[i].fit_enabled = 1;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) s->assignments[i].fit_enabled = 1;
     int ignored = 0;
     char line[512];
     while (fgets(line, sizeof(line), fp)) {
@@ -152,7 +163,8 @@ static int load_fit_exclusions(AppState *s) {
         FitExclusionKey key;
         if (!parse_exclusion_key(at, &key)) { ignored++; continue; }
         for (int i = 0; i < s->n_assignments; i++)
-            if (exclusion_key_matches(&key, &s->assignments[i].pred)) s->assignments[i].fit_enabled = 0;
+            if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i]) &&
+                exclusion_key_matches(&key, &s->assignments[i].pred)) s->assignments[i].fit_enabled = 0;
     }
     fclose(fp);
     return ignored;
@@ -174,8 +186,11 @@ static double qrot_at(const PredFitState *p, double temp_k) {
     return 5.3311e6 * sqrt((temp_k * temp_k * temp_k) / (p->a * p->b * p->c)) / sigma;
 }
 
+/* TEMP is a single field in one SPCAT .int.  It is therefore the rotational
+   temperature of the Hamiltonian, never a per-state setting. */
 static double int_temp_at(const PredFitState *p, double fallback) {
-    return p->int_settings.temp_k > 0.0 ? p->int_settings.temp_k : fallback;
+    (void)fallback;
+    return p->temp_k;
 }
 
 static double int_fqlim_at(const PredFitState *p) {
@@ -202,7 +217,11 @@ static int prepare_fit_dir(AppState *s) {
         snprintf(p->status, sizeof(p->status), "Cannot create %s.", root);
         return 0;
     }
-    snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
+    predfit_refresh_work_dir(s);
+    if (mkdir(p->work_dir, 0700) != 0 && errno != EEXIST) {
+        snprintf(p->status, sizeof(p->status), "Cannot create %s.", p->work_dir);
+        return 0;
+    }
     return 1;
 }
 
@@ -265,10 +284,9 @@ static int included_state_count(const PredFitState *p) {
    predates an edit and Calculate has to make a new one first. */
 static int current_model_nqn(const AppState *s, int *out) {
     const PredFitState *p = &s->predfit;
-    char root[600], par_path[700], cat_path[700], line[512];
-    fit_root(s, root, sizeof(root));
-    snprintf(par_path, sizeof(par_path), "%s/model.par", root);
-    snprintf(cat_path, sizeof(cat_path), "%s/model.cat", root);
+    char par_path[700], cat_path[700], line[512];
+    snprintf(par_path, sizeof(par_path), "%s/model.par", p->work_dir);
+    snprintf(cat_path, sizeof(cat_path), "%s/model.cat", p->work_dir);
     FILE *fp = fopen(par_path, "r");
     if (!fp) return 0;
     for (int i = 0; i < 3; i++)
@@ -295,14 +313,12 @@ static void store_active_species(PredFitState *p) {
     PickettSpecies *sp = active_species(p);
     if (!sp) return;
     memcpy(sp->mu, p->mu, sizeof(sp->mu));
-    sp->temp_k = p->temp_k;
 }
 
 static void load_active_species(PredFitState *p) {
     PickettSpecies *sp = active_species(p);
     if (!sp) return;
     memcpy(p->mu, sp->mu, sizeof(p->mu));
-    p->temp_k = sp->temp_k;
 }
 
 /* SPFIT overwrites the parameter uncertainties in .var/.par with estimated
@@ -330,6 +346,7 @@ int predfit_is_session_file(const AppState *s, const char *path) {
 
 void predfit_save_session(AppState *s) {
     PredFitState *p = &s->predfit;
+    store_active_hamiltonian(p);
     char root[600];
     fit_root(s, root, sizeof(root));
     if (mkdir(root, 0700) != 0 && errno != EEXIST) return;
@@ -338,7 +355,7 @@ void predfit_save_session(AppState *s) {
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
     FILE *fp = fopen(tmp_path, "w");
     if (!fp) return;
-    fputs("# SpectraVisual session v3\n", fp);
+    fputs("# SpectraVisual session v5\n", fp);
     fputs("# Pickett parameter ID, value and user-selected fit uncertainty\n", fp);
     for (int i = 0; i < p->n_param; i++)
         fprintf(fp, "param %d %.17g %.17g\n", p->param[i].id, p->param[i].value, p->param[i].error);
@@ -348,17 +365,44 @@ void predfit_save_session(AppState *s) {
         const PickettIntSettings *x = &p->int_settings;
         fprintf(fp, "int2 %d %d %d %d %.17g %.17g %.17g %d %.17g\n",
                 x->flags, x->tag, x->fbegin, x->fend, x->intensity_cutoff,
-                x->fqlim_ghz, x->temp_k, x->maxv, x->sigma);
+                x->fqlim_ghz, p->temp_k, x->maxv, x->sigma);
     }
+    fprintf(fp, "trot %.17g\n", p->temp_k);
     for (int i = 0; i < p->n_species; i++) {
         const PickettSpecies *sp = &p->species[i];
-        double temp = i == p->active_species ? p->temp_k : sp->temp_k;
         const double *mu = i == p->active_species ? p->mu : sp->mu;
-        fprintf(fp, "molecule2 %d %d %.17g %.17g %.17g %.17g %.17g %s\n",
-                sp->state_index, sp->predict_enabled != 0, temp, mu[0], mu[1], mu[2],
+        fprintf(fp, "state3 %d %d %.17g %.17g %.17g %.17g %s\n",
+                sp->state_index, sp->predict_enabled != 0, mu[0], mu[1], mu[2],
                 sp->concentration, sp->name);
     }
     fprintf(fp, "active_molecule %d\n", p->active_species);
+    /* The unprefixed records above are a readable compatibility projection of
+       the active model.  h4 records are the authoritative project list. */
+    fprintf(fp, "h4project %d %d %d\n", p->n_hamiltonians,
+            p->active_hamiltonian, p->next_hamiltonian_id);
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        const HamiltonianModel *model = &p->hamiltonian[h];
+        const PredFitSnapshot *m = &model->model;
+        fprintf(fp, "h4begin %d %s\n", model->id, model->name);
+        for (int i = 0; i < m->n_param; i++)
+            fprintf(fp, "h4param %d %.17g %.17g\n", m->param[i].id,
+                    m->param[i].value, m->param[i].error);
+        fprintf(fp, "h4line_error %.17g\n", m->line_error_mhz);
+        fprintf(fp, "h4line %s\n", m->hamiltonian_line);
+        fprintf(fp, "h4int %d %d %d %d %.17g %.17g %d %.17g\n",
+                m->int_settings.flags, m->int_settings.tag, m->int_settings.fbegin,
+                m->int_settings.fend, m->int_settings.intensity_cutoff,
+                m->int_settings.fqlim_ghz, m->int_settings.maxv, m->int_settings.sigma);
+        fprintf(fp, "h4trot %.17g\n", m->temp_k);
+        for (int i = 0; i < m->n_species; i++) {
+            const PickettSpecies *sp = &m->species[i];
+            fprintf(fp, "h4state %d %d %.17g %.17g %.17g %.17g %s\n",
+                    sp->state_index, sp->predict_enabled != 0, sp->mu[0], sp->mu[1],
+                    sp->mu[2], sp->concentration, sp->name);
+        }
+        fprintf(fp, "h4active_state %d\n", m->active_species);
+        fputs("h4end\n", fp);
+    }
     fprintf(fp, "view %.17g %.17g %.17g %.17g %.17g %.17g %d %d\n",
             s->vxmin, s->vxmax, s->vymin, s->vymax, s->pvxmin, s->pvxmax,
             s->sync_active != 0, s->rolling_avg_window);
@@ -399,6 +443,20 @@ static void session_set_parameter(PredFitState *p, int id, double value, double 
     parameter_label(x);
 }
 
+static void snapshot_set_parameter(PredFitSnapshot *m, int id, double value, double error) {
+    for (int i = 0; i < m->n_param; i++) {
+        if (m->param[i].id != id) continue;
+        m->param[i].value = value;
+        m->param[i].error = error;
+        parameter_label(&m->param[i]);
+        return;
+    }
+    if (m->n_param >= MAX_PICKETT_PARAMS) return;
+    PickettParameter *x = &m->param[m->n_param++];
+    *x = (PickettParameter){id, value, error, ""};
+    parameter_label(x);
+}
+
 typedef struct {
     int has_int_settings;
 } SessionRestoreInfo;
@@ -417,11 +475,92 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
     s->session_has_view = 0;
     p->n_species = 0;
     p->active_species = 0;
+    double legacy_state_temp[MAX_PICKETT_SPECIES] = {0.0};
+    int legacy_state_temp_count = 0;
+    double legacy_int_temp = 0.0;
+    int has_trot = 0;
+    HamiltonianModel loaded_h[MAX_PICKETT_HAMILTONIANS] = {0};
+    int n_loaded_h = 0, loaded_active_h = 0, loaded_next_h_id = 0;
+    HamiltonianModel *h4 = NULL;
+    PredFitSnapshot h4_defaults = p->hamiltonian[0].model;
     char line[700];
     while (fgets(line, sizeof(line), fp)) {
         if (line[0] == '#') continue;
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
+        if (strncmp(line, "h4project ", 10) == 0) {
+            int ignored_count = 0;
+            sscanf(line + 10, "%d %d %d", &ignored_count, &loaded_active_h, &loaded_next_h_id);
+            continue;
+        }
+        if (strncmp(line, "h4begin ", 8) == 0) {
+            int id = 0, consumed = 0;
+            if (sscanf(line + 8, "%d %n", &id, &consumed) == 1 && id > 0 &&
+                n_loaded_h < MAX_PICKETT_HAMILTONIANS) {
+                h4 = &loaded_h[n_loaded_h++];
+                h4->id = id;
+                h4->model = h4_defaults;
+                h4->model.n_species = 0;
+                h4->model.active_species = 0;
+                const char *name = line + 8 + consumed;
+                while (*name == ' ' || *name == '\t') name++;
+                snprintf(h4->name, sizeof(h4->name), "%s", *name ? name : "Hamiltonian");
+            }
+            continue;
+        }
+        if (strcmp(line, "h4end") == 0) { h4 = NULL; continue; }
+        if (h4 && strncmp(line, "h4param ", 8) == 0) {
+            int id = 0; double value = 0.0, error = 0.0;
+            if (sscanf(line + 8, "%d %lf %lf", &id, &value, &error) == 3 && id > 0)
+                snapshot_set_parameter(&h4->model, id, value, error);
+            continue;
+        }
+        if (h4 && strncmp(line, "h4line_error ", 13) == 0) {
+            double value = strtod(line + 13, NULL);
+            if (isfinite(value) && value > 0.0) h4->model.line_error_mhz = value;
+            continue;
+        }
+        if (h4 && strncmp(line, "h4line ", 7) == 0) {
+            if (line[7]) snprintf(h4->model.hamiltonian_line, sizeof(h4->model.hamiltonian_line), "%s", line + 7);
+            continue;
+        }
+        if (h4 && strncmp(line, "h4int ", 6) == 0) {
+            PickettIntSettings x = h4->model.int_settings;
+            if (sscanf(line + 6, "%d %d %d %d %lf %lf %d %lf",
+                       &x.flags, &x.tag, &x.fbegin, &x.fend, &x.intensity_cutoff,
+                       &x.fqlim_ghz, &x.maxv, &x.sigma) == 8) {
+                h4->model.int_settings = x;
+                if (restore_info) restore_info->has_int_settings = 1;
+            }
+            continue;
+        }
+        if (h4 && strncmp(line, "h4trot ", 7) == 0) {
+            double value = strtod(line + 7, NULL);
+            if (isfinite(value) && value > 0.0) {
+                h4->model.temp_k = value;
+                h4->model.int_settings.temp_k = value;
+            }
+            continue;
+        }
+        if (h4 && strncmp(line, "h4state ", 8) == 0) {
+            PickettSpecies sp = {0};
+            int consumed = 0;
+            int got = sscanf(line + 8, "%d %d %lf %lf %lf %lf %n",
+                             &sp.state_index, &sp.predict_enabled, &sp.mu[0], &sp.mu[1],
+                             &sp.mu[2], &sp.concentration, &consumed);
+            const char *name = line + 8 + consumed;
+            while (*name == ' ' || *name == '\t') name++;
+            if (got == 6 && h4->model.n_species < MAX_PICKETT_SPECIES) {
+                snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "State");
+                sp.predict_enabled = sp.predict_enabled != 0;
+                h4->model.species[h4->model.n_species++] = sp;
+            }
+            continue;
+        }
+        if (h4 && strncmp(line, "h4active_state ", 15) == 0) {
+            h4->model.active_species = atoi(line + 15);
+            continue;
+        }
         if (strncmp(line, "param ", 6) == 0) {
             int id = 0; double value = 0.0, error = 0.0;
             if (sscanf(line + 6, "%d %lf %lf", &id, &value, &error) == 3 && id > 0)
@@ -461,15 +600,41 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
                        &x.flags, &x.tag, &x.fbegin, &x.fend, &x.intensity_cutoff,
                        &x.fqlim_ghz, &x.temp_k, &x.maxv, &x.sigma) == 9) {
                 p->int_settings = x;
+                if (x.temp_k > 0.0) legacy_int_temp = x.temp_k;
                 if (restore_info) restore_info->has_int_settings = 1;
+            }
+            continue;
+        }
+        if (strncmp(line, "trot ", 5) == 0) {
+            char *end = NULL;
+            double value = strtod(line + 5, &end);
+            while (end && isspace((unsigned char)*end)) end++;
+            if (end != line + 5 && end && !*end && isfinite(value) && value > 0.0)
+                p->temp_k = value;
+                has_trot = 1;
+            continue;
+        }
+        if (strncmp(line, "state3 ", 7) == 0) {
+            PickettSpecies sp = {0};
+            int consumed = 0;
+            int got = sscanf(line + 7, "%d %d %lf %lf %lf %lf %n",
+                             &sp.state_index, &sp.predict_enabled, &sp.mu[0],
+                             &sp.mu[1], &sp.mu[2], &sp.concentration, &consumed);
+            const char *name = line + 7 + consumed;
+            while (*name == ' ' || *name == '\t') name++;
+            if (got == 6 && p->n_species < MAX_PICKETT_SPECIES) {
+                snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "State");
+                sp.predict_enabled = sp.predict_enabled != 0;
+                p->species[p->n_species++] = sp;
             }
             continue;
         }
         if (strncmp(line, "molecule2 ", 10) == 0) {
             PickettSpecies sp = {0};
+            double old_temp = 0.0;
             int consumed = 0;
             int got = sscanf(line + 10, "%d %d %lf %lf %lf %lf %lf %n",
-                             &sp.state_index, &sp.predict_enabled, &sp.temp_k, &sp.mu[0],
+                             &sp.state_index, &sp.predict_enabled, &old_temp, &sp.mu[0],
                              &sp.mu[1], &sp.mu[2], &sp.concentration, &consumed);
             const char *name = line + 10 + consumed;
             while (*name == ' ' || *name == '\t') name++;
@@ -477,6 +642,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
                 snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "Species");
                 sp.predict_enabled = sp.predict_enabled != 0;
                 p->species[p->n_species++] = sp;
+                legacy_state_temp[legacy_state_temp_count++] = old_temp;
             }
             continue;
         }
@@ -484,9 +650,10 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
            species remain included on restore. */
         if (strncmp(line, "molecule ", 9) == 0) {
             PickettSpecies sp = {0};
+            double old_temp = 0.0;
             int consumed = 0;
             int got = sscanf(line + 9, "%d %lf %lf %lf %lf %lf %n",
-                             &sp.state_index, &sp.temp_k, &sp.mu[0], &sp.mu[1],
+                             &sp.state_index, &old_temp, &sp.mu[0], &sp.mu[1],
                              &sp.mu[2], &sp.concentration, &consumed);
             const char *name = line + 9 + consumed;
             while (*name == ' ' || *name == '\t') name++;
@@ -494,6 +661,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
                 snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "Species");
                 sp.predict_enabled = 1;
                 p->species[p->n_species++] = sp;
+                legacy_state_temp[legacy_state_temp_count++] = old_temp;
             }
             continue;
         }
@@ -537,11 +705,38 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) { p->param[i].error = error; break; }
     }
     fclose(fp);
+    if (n_loaded_h > 0) {
+        for (int i = 0; i < n_loaded_h; i++) {
+            if (loaded_h[i].model.n_species == 0) {
+                loaded_h[i].model.species[0] = (PickettSpecies){"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0};
+                loaded_h[i].model.n_species = 1;
+            }
+            if (loaded_h[i].model.active_species < 0 ||
+                loaded_h[i].model.active_species >= loaded_h[i].model.n_species)
+                loaded_h[i].model.active_species = 0;
+        }
+        memcpy(p->hamiltonian, loaded_h, (size_t)n_loaded_h * sizeof(loaded_h[0]));
+        p->n_hamiltonians = n_loaded_h;
+        if (loaded_active_h < 0 || loaded_active_h >= n_loaded_h) loaded_active_h = 0;
+        p->active_hamiltonian = loaded_active_h;
+        int max_id = 0;
+        for (int i = 0; i < n_loaded_h; i++) if (p->hamiltonian[i].id > max_id) max_id = p->hamiltonian[i].id;
+        p->next_hamiltonian_id = loaded_next_h_id > max_id ? loaded_next_h_id : max_id + 1;
+        restore_active_model(p, &p->hamiltonian[p->active_hamiltonian].model);
+        sync_basic_from_parameters(p);
+        return;
+    }
     if (p->n_species == 0) {
-        p->species[0] = (PickettSpecies){"Species 1", 0, 1, {p->mu[0], p->mu[1], p->mu[2]}, p->temp_k, 1.0};
+        p->species[0] = (PickettSpecies){"Species 1", 0, 1, {p->mu[0], p->mu[1], p->mu[2]}, 1.0};
         p->n_species = 1;
     }
     if (p->active_species < 0 || p->active_species >= p->n_species) p->active_species = 0;
+    /* Old sessions had an independent Tred per species.  Migrate their
+       selected state's value to the one Hamiltonian-wide Trot. */
+    if (p->active_species < legacy_state_temp_count && legacy_state_temp[p->active_species] > 0.0)
+        p->temp_k = legacy_state_temp[p->active_species];
+    else if (!has_trot && legacy_int_temp > 0.0)
+        p->temp_k = legacy_int_temp;
     load_active_species(p);
     sync_basic_from_parameters(p);
 }
@@ -550,48 +745,42 @@ void predfit_load_session(AppState *s) {
     load_session(s, NULL);
 }
 
-/* Trot and the requested (red) dipoles describe the active molecular
-   prediction, so they are deliberately shared with Intensity analysis.  CAT
-   provenance (Tcat/mu_cat) is separate and only filled automatically for a
-   catalogue which SPCAT has just generated for us. */
-void predfit_publish_shared_state(AppState *s) {
-    PredFitState *p=&s->predfit;
-    store_active_species(p);
-    s->rot_temp_k=p->temp_k;
-    memcpy(s->dipole_red,p->mu,sizeof(p->mu));
+void predfit_recompute_display_intensities(AppState *s) {
+    if (!s || !s->pred_lines || s->n_pred <= 0) return;
+    PredFitState *p = &s->predfit;
     if (s->pred_lines && s->n_pred > 0 && p->generated_catalog_active) {
         double tcat = int_temp_at(p, p->temp_k);
-        s->cat_temp_k = tcat;
-        rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, tcat,
+        rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, tcat, p->temp_k,
                                                   p->species, p->n_species,
                                                   &s->pred_global_max);
-    } else if (s->pred_lines && s->n_pred > 0) {
+    } else {
         rescale_predicted_intensities(s->pred_lines,s->n_pred,s->cat_temp_k,s->rot_temp_k,
                                       s->dipole_cat,s->dipole_red,&s->pred_global_max);
     }
 }
 
-static int write_int(FILE *fp, const PredFitState *p, const PickettSpecies *sp) {
-    if (!fp || !sp) return 0;
-    write_int_header(fp, p, sp->name, sp->temp_k);
-    fprintf(fp, "001 %.10g /a dipole moment\n002 %.10g /b dipole moment\n003 %.10g /c dipole moment\n",
-            sp->mu[0], sp->mu[1], sp->mu[2]);
-    return 1;
+/* Pred&Fit deliberately publishes its active species only when a Pred&Fit
+   action changes it.  Intensity analysis must not call this reverse route. */
+void predfit_publish_shared_state(AppState *s) {
+    PredFitState *p=&s->predfit;
+    store_active_species(p);
+    s->rot_temp_k=p->temp_k;
+    memcpy(s->dipole_red,p->mu,sizeof(p->mu));
+    if (p->generated_catalog_active) s->cat_temp_k=int_temp_at(p, p->temp_k);
+    predfit_recompute_display_intensities(s);
 }
 
-/* SPCAT receives one .int beside the shared multi-state .var.  A permanent
-   species_XX.int is also written below for each row, but model.int encodes the
+/* SPCAT receives one .int beside the shared multi-state .var. model.int encodes the
    diagonal a/b/c dipoles with V2=V1=v so that SPCAT emits transitions carrying
    the vibrational/state quantum number.  For states 0..9 the Pickett IDs are
    001/002/003, 111/112/113, 221/222/223, ... respectively. */
 static int write_multi_state_int(FILE *fp, const PredFitState *p) {
-    const PickettSpecies *reference = active_species((PredFitState *)p);
-    if (!fp || !reference) return 0;
+    if (!fp) return 0;
     int included = 0;
     for (int i = 0; i < p->n_species; i++)
         if (p->species[i].predict_enabled) included++;
     if (!included) return 0;
-    write_int_header(fp, p, "SpectraVisual multi-state prediction", reference->temp_k);
+    write_int_header(fp, p, "SpectraVisual multi-state prediction", p->temp_k);
     for (int i = 0; i < p->n_species; i++) {
         const PickettSpecies *sp = &p->species[i];
         if (!sp->predict_enabled) continue;
@@ -620,9 +809,53 @@ void predfit_adopt_generated_catalog(AppState *s) {
     s->cat_temp_k=int_temp_at(p, p->temp_k);
     memcpy(s->dipole_cat,p->mu,sizeof(p->mu));
     s->rot_temp_k=p->temp_k;
-    rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, s->cat_temp_k,
-                                              p->species, p->n_species,
-                                              &s->pred_global_max);
+    int hamiltonian_id = predfit_active_hamiltonian_id(s);
+    for (int i = 0; i < s->n_pred; i++) s->pred_lines[i].hamiltonian_id = hamiltonian_id;
+    predfit_recompute_display_intensities(s);
+}
+
+static void snapshot_active_model(const PredFitState *p, PredFitSnapshot *snap) {
+    memset(snap, 0, sizeof(*snap));
+    snap->a=p->a; snap->b=p->b; snap->c=p->c;
+    memcpy(snap->mu, p->mu, sizeof(snap->mu));
+    snap->temp_k=p->temp_k; snap->fmin_ghz=p->fmin_ghz; snap->fmax_ghz=p->fmax_ghz;
+    snap->line_error_mhz=p->line_error_mhz;
+    snap->int_settings=p->int_settings;
+    snap->n_param=p->n_param;
+    memcpy(snap->param, p->param, sizeof(snap->param));
+    memcpy(snap->hamiltonian_line, p->hamiltonian_line, sizeof(snap->hamiltonian_line));
+    snap->n_species=p->n_species;
+    snap->active_species=p->active_species;
+    memcpy(snap->species,p->species,sizeof(snap->species));
+    if (snap->active_species >= 0 && snap->active_species < snap->n_species)
+        memcpy(snap->species[snap->active_species].mu, p->mu, sizeof(snap->species[0].mu));
+}
+
+static void restore_active_model(PredFitState *p, const PredFitSnapshot *snap) {
+    p->a=snap->a; p->b=snap->b; p->c=snap->c;
+    memcpy(p->mu, snap->mu, sizeof(p->mu));
+    p->temp_k=snap->temp_k; p->fmin_ghz=snap->fmin_ghz; p->fmax_ghz=snap->fmax_ghz;
+    p->line_error_mhz=snap->line_error_mhz;
+    p->int_settings=snap->int_settings;
+    p->n_param=snap->n_param;
+    memcpy(p->param, snap->param, sizeof(p->param));
+    memcpy(p->hamiltonian_line, snap->hamiltonian_line, sizeof(p->hamiltonian_line));
+    p->n_species=snap->n_species;
+    p->active_species=snap->active_species;
+    memcpy(p->species,snap->species,sizeof(p->species));
+    if (p->n_species <= 0) p->n_species = 1;
+    if (p->active_species < 0 || p->active_species >= p->n_species) p->active_species = 0;
+    load_active_species(p);
+}
+
+static HamiltonianModel *active_hamiltonian(PredFitState *p) {
+    if (p->active_hamiltonian < 0 || p->active_hamiltonian >= p->n_hamiltonians) return NULL;
+    return &p->hamiltonian[p->active_hamiltonian];
+}
+
+static void store_active_hamiltonian(PredFitState *p) {
+    HamiltonianModel *h = active_hamiltonian(p);
+    if (h) snapshot_active_model(p, &h->model);
 }
 
 static int push_fit_snapshot(AppState *s) {
@@ -638,20 +871,11 @@ static int push_fit_snapshot(AppState *s) {
         p->history_capacity = capacity;
     }
     PredFitSnapshot *snap = &p->history[p->history_count++];
-    snap->a=p->a; snap->b=p->b; snap->c=p->c;
-    memcpy(snap->mu, p->mu, sizeof(snap->mu));
-    snap->temp_k=p->temp_k; snap->fmin_ghz=p->fmin_ghz; snap->fmax_ghz=p->fmax_ghz;
-    snap->line_error_mhz=p->line_error_mhz;
-    snap->int_settings=p->int_settings;
-    snap->n_param=p->n_param;
-    memcpy(snap->param, p->param, sizeof(snap->param));
-    memcpy(snap->hamiltonian_line, p->hamiltonian_line, sizeof(snap->hamiltonian_line));
-    snap->n_species=p->n_species;
-    snap->active_species=p->active_species;
-    memcpy(snap->species,p->species,sizeof(snap->species));
+    snapshot_active_model(p, snap);
     snap->n_exclusions = 0;
     for (int i = 0; i < s->n_assignments && snap->n_exclusions < MAX_ASSIGNMENTS; i++) {
-        if (s->assignments[i].fit_enabled) continue;
+        if (s->assignments[i].fit_enabled ||
+            !assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) continue;
         exclusion_key_from_pred(&snap->exclusions[snap->n_exclusions++],
                                 &s->assignments[i].pred);
     }
@@ -660,29 +884,21 @@ static int push_fit_snapshot(AppState *s) {
 
 static void restore_fit_snapshot(AppState *s, const PredFitSnapshot *snap) {
     PredFitState *p = &s->predfit;
-    p->a=snap->a; p->b=snap->b; p->c=snap->c;
-    memcpy(p->mu, snap->mu, sizeof(p->mu));
-    p->temp_k=snap->temp_k; p->fmin_ghz=snap->fmin_ghz; p->fmax_ghz=snap->fmax_ghz;
-    p->line_error_mhz=snap->line_error_mhz;
-    p->int_settings=snap->int_settings;
-    p->n_param=snap->n_param;
-    memcpy(p->param, snap->param, sizeof(p->param));
-    memcpy(p->hamiltonian_line, snap->hamiltonian_line, sizeof(p->hamiltonian_line));
-    p->n_species=snap->n_species;
-    p->active_species=snap->active_species;
-    memcpy(p->species,snap->species,sizeof(p->species));
-    load_active_species(p);
+    restore_active_model(p, snap);
     /* Undo concerns the model and its temporary Fit choices, never the
        assignment list.  Match the saved exclusions by identity so deleting
        or reordering a row cannot move the exclusion to another transition. */
-    for (int i = 0; i < s->n_assignments; i++) s->assignments[i].fit_enabled = 1;
     for (int i = 0; i < s->n_assignments; i++)
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) s->assignments[i].fit_enabled = 1;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i]))
         for (int k = 0; k < snap->n_exclusions; k++)
             if (exclusion_key_matches(&snap->exclusions[k], &s->assignments[i].pred)) {
                 s->assignments[i].fit_enabled = 0;
                 break;
             }
     predfit_save_exclusions(s);
+    store_active_hamiltonian(p);
 }
 
 void predfit_init(AppState *s) {
@@ -699,15 +915,191 @@ void predfit_init(AppState *s) {
     p->param[1] = (PickettParameter){20000, p->b, 1.0, "B"};
     p->param[2] = (PickettParameter){30000, p->c, 1.0, "C"};
     snprintf(p->hamiltonian_line, sizeof(p->hamiltonian_line), "s 1 1 0");
-    p->species[0] = (PickettSpecies){"Species 1", 0, 1, {1.0, 1.0, 1.0}, 5.0, 1.0};
+    p->species[0] = (PickettSpecies){"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0};
     p->n_species = 1;
     p->active_species = 0;
+    p->n_hamiltonians = 1;
+    p->active_hamiltonian = 0;
+    p->next_hamiltonian_id = 2;
+    p->hamiltonian[0].id = 1;
+    snprintf(p->hamiltonian[0].name, sizeof(p->hamiltonian[0].name), "Hamiltonian 1");
+    snapshot_active_model(p, &p->hamiltonian[0].model);
     p->advanced_edit_param = -1;
     p->advanced_edit_species = -1;
+    p->advanced_delete_hamiltonian_id = 0;
     p->advanced_hover_line = -1;
     /* Point at the working directory straight away, so the Fitting tab shows
        the last run even before this session calculates or fits anything. */
     fit_root(s, p->work_dir, sizeof(p->work_dir));
+}
+
+int predfit_hamiltonian_count(const AppState *s) {
+    return s ? s->predfit.n_hamiltonians : 0;
+}
+
+int predfit_active_hamiltonian_id(const AppState *s) {
+    if (!s) return 0;
+    const PredFitState *p = &s->predfit;
+    if (p->active_hamiltonian < 0 || p->active_hamiltonian >= p->n_hamiltonians) return 0;
+    return p->hamiltonian[p->active_hamiltonian].id;
+}
+
+static void default_hamiltonian_model(PredFitSnapshot *m) {
+    memset(m, 0, sizeof(*m));
+    m->a = 10000.0; m->b = 1000.0; m->c = 900.0;
+    m->mu[0] = m->mu[1] = m->mu[2] = 1.0;
+    m->temp_k = 5.0; m->fmin_ghz = 0.0; m->fmax_ghz = 20.0;
+    m->line_error_mhz = 0.01;
+    m->int_settings = (PickettIntSettings){0, 1, 0, 40, -20.0, 0.0, 5.0, -1, 1.0};
+    m->n_param = 3;
+    m->param[0] = (PickettParameter){10000, m->a, 1.0, "A"};
+    m->param[1] = (PickettParameter){20000, m->b, 1.0, "B"};
+    m->param[2] = (PickettParameter){30000, m->c, 1.0, "C"};
+    snprintf(m->hamiltonian_line, sizeof(m->hamiltonian_line), "s 1 1 0");
+    m->species[0] = (PickettSpecies){"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0};
+    m->n_species = 1;
+    m->active_species = 0;
+}
+
+int predfit_add_hamiltonian(AppState *s, const char *name) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    if (p->n_hamiltonians >= MAX_PICKETT_HAMILTONIANS) {
+        snprintf(p->status, sizeof(p->status), "At most %d Hamiltonians are supported in one project.",
+                 MAX_PICKETT_HAMILTONIANS);
+        return 0;
+    }
+    store_active_hamiltonian(p);
+    HamiltonianModel *dst = &p->hamiltonian[p->n_hamiltonians++];
+    memset(dst, 0, sizeof(*dst));
+    dst->id = p->next_hamiltonian_id++;
+    if (name && name[0]) snprintf(dst->name, sizeof(dst->name), "%s", name);
+    else snprintf(dst->name, sizeof(dst->name), "Hamiltonian %d", dst->id);
+    default_hamiltonian_model(&dst->model);
+    p->active_hamiltonian = p->n_hamiltonians - 1;
+    restore_active_model(p, &dst->model);
+    predfit_refresh_work_dir(s);
+    p->history_count = 0;
+    p->generated_catalog_active = 0;
+    p->generated_catalog_pending = 0;
+    p->session_dirty = 1;
+    snprintf(p->status, sizeof(p->status), "%s created as a new empty Hamiltonian.", dst->name);
+    return 1;
+}
+
+int predfit_duplicate_hamiltonian(AppState *s, const char *name) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    if (p->n_hamiltonians >= MAX_PICKETT_HAMILTONIANS) {
+        snprintf(p->status, sizeof(p->status), "At most %d Hamiltonians are supported in one project.",
+                 MAX_PICKETT_HAMILTONIANS);
+        return 0;
+    }
+    store_active_hamiltonian(p);
+    HamiltonianModel *src = active_hamiltonian(p);
+    HamiltonianModel *dst = &p->hamiltonian[p->n_hamiltonians++];
+    *dst = *src;
+    dst->id = p->next_hamiltonian_id++;
+    if (name && name[0]) snprintf(dst->name, sizeof(dst->name), "%s", name);
+    else snprintf(dst->name, sizeof(dst->name), "Hamiltonian %d", dst->id);
+    p->active_hamiltonian = p->n_hamiltonians - 1;
+    restore_active_model(p, &dst->model);
+    predfit_refresh_work_dir(s);
+    p->history_count = 0; /* a fit history belongs to the source Hamiltonian */
+    p->generated_catalog_active = 0;
+    p->generated_catalog_pending = 0;
+    p->session_dirty = 1;
+    snprintf(p->status, sizeof(p->status), "%s created from the active Hamiltonian; calculate it before fitting.", dst->name);
+    return 1;
+}
+
+int predfit_delete_hamiltonian(AppState *s, int index) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    if (p->n_hamiltonians <= 1) {
+        snprintf(p->status, sizeof(p->status), "A project must retain at least one Hamiltonian.");
+        return 0;
+    }
+    if (index < 0 || index >= p->n_hamiltonians) return 0;
+
+    store_active_hamiltonian(p);
+    const int removed_id = p->hamiltonian[index].id;
+    char removed_name[sizeof(p->hamiltonian[index].name)];
+    snprintf(removed_name, sizeof(removed_name), "%s", p->hamiltonian[index].name);
+
+    /* The H is the ownership boundary for assignments.  Legacy owner 0 is
+       H1 by definition, so it disappears together with H1 rather than being
+       silently reassigned to another model. */
+    int removed_assignments = 0, write = 0;
+    for (int read = 0; read < s->n_assignments; read++) {
+        Assignment *a = &s->assignments[read];
+        if (a->hamiltonian_id == removed_id ||
+            (removed_id == 1 && a->hamiltonian_id == 0)) {
+            removed_assignments++;
+            continue;
+        }
+        if (write != read) s->assignments[write] = *a;
+        write++;
+    }
+    s->n_assignments = write;
+    if (s->selected_assignment >= s->n_assignments)
+        s->selected_assignment = s->n_assignments ? s->n_assignments - 1 : -1;
+    if (s->assignments_scroll < 0) s->assignments_scroll = 0;
+    if (s->assignments_scroll > s->n_assignments - 13)
+        s->assignments_scroll = s->n_assignments > 13 ? s->n_assignments - 13 : 0;
+
+    /* A generated catalogue belongs to the active H only.  Do not leave a
+       now-orphaned prediction selectable after deleting that H. */
+    if (p->generated_catalog_active && index == p->active_hamiltonian) {
+        free(s->pred_lines);
+        s->pred_lines = NULL;
+        s->n_pred = 0;
+        s->n_selected = 0;
+        p->generated_catalog_active = 0;
+        p->generated_catalog_pending = 0;
+    }
+
+    for (int i = index; i < p->n_hamiltonians - 1; i++)
+        p->hamiltonian[i] = p->hamiltonian[i + 1];
+    p->n_hamiltonians--;
+    memset(&p->hamiltonian[p->n_hamiltonians], 0, sizeof(p->hamiltonian[0]));
+    p->active_hamiltonian = index < p->n_hamiltonians ? index : p->n_hamiltonians - 1;
+    restore_active_model(p, &p->hamiltonian[p->active_hamiltonian].model);
+    predfit_refresh_work_dir(s);
+    p->history_count = 0;
+    p->advanced_delete_hamiltonian_id = 0;
+    p->session_dirty = 1;
+    save_assignments(s);
+    predfit_save_exclusions(s);
+    snprintf(p->status, sizeof(p->status), "%s deleted (%d assignment%s removed).",
+             removed_name, removed_assignments, removed_assignments == 1 ? "" : "s");
+    return 1;
+}
+
+int predfit_select_hamiltonian(AppState *s, int index) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    if (index < 0 || index >= p->n_hamiltonians) return 0;
+    if (index == p->active_hamiltonian) return 1;
+    store_active_hamiltonian(p);
+    p->active_hamiltonian = index;
+    restore_active_model(p, &p->hamiltonian[index].model);
+    predfit_refresh_work_dir(s);
+    p->history_count = 0;
+    p->generated_catalog_active = 0;
+    p->generated_catalog_pending = 0;
+    p->advanced_delete_hamiltonian_id = 0;
+    p->session_dirty = 1;
+    snprintf(p->status, sizeof(p->status), "Selected %s; calculate it before fitting.", p->hamiltonian[index].name);
+    return 1;
+}
+
+static int assignment_belongs_to_active_hamiltonian(const AppState *s, const Assignment *a) {
+    int active_id = predfit_active_hamiltonian_id(s);
+    /* Pre-v2 assignment files have no owner. Their one-model semantics maps
+       unambiguously to H1 and never to a later duplicated Hamiltonian. */
+    return a->hamiltonian_id == active_id ||
+           (a->hamiltonian_id == 0 && active_id == 1);
 }
 
 static void sync_basic_parameters(PredFitState *p) {
@@ -837,7 +1229,6 @@ static void add_species(AppState *s) {
     sp->state_index = state;
     sp->predict_enabled = 1;
     memcpy(sp->mu, p->mu, sizeof(sp->mu));
-    sp->temp_k = p->temp_k;
     sp->concentration = 1.0;
 
     /* Seed the independent A/B/C card for the new state.  All other terms
@@ -926,6 +1317,7 @@ static int write_inputs(AppState *s, int for_fit) {
     }
     if (for_fit) {
         for (int i = 0; i < s->n_assignments; i++) {
+            if (!assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) continue;
             int n = s->assignments[i].pred.n_qn;
             if (n < 1 || n > 6) {
                 snprintf(p->status, sizeof(p->status),
@@ -943,6 +1335,7 @@ static int write_inputs(AppState *s, int for_fit) {
         int mismatch_count = 0;
         for (int i = 0; i < s->n_assignments; i++) {
             const Assignment *a = &s->assignments[i];
+            if (!assignment_belongs_to_active_hamiltonian(s, a)) continue;
             if (!a->fit_enabled || a->pred.n_qn == model_nqn) continue;
             mismatch_count++;
             if (mismatch_count <= 6) {
@@ -980,7 +1373,7 @@ static int write_inputs(AppState *s, int for_fit) {
        Temporary exclusions live in .fit/exclusions.txt, keyed by transition. */
     int nline = 0;
     if (for_fit) for (int i = 0; i < s->n_assignments; i++)
-        if (s->assignments[i].fit_enabled) nline++;
+        if (s->assignments[i].fit_enabled && assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) nline++;
     if (var) fprintf(var, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
                      p->n_param, nline, 0, 0, 0.0, 1e6, 1.0, 1.0, p->hamiltonian_line);
     if (par) fprintf(par, "SpectraVisual Pred&Fit quick model\n%4d%5d%5d%5d %15.4E %15.4E %15.4E %.10f\n%s\n",
@@ -995,16 +1388,9 @@ static int write_inputs(AppState *s, int for_fit) {
         snprintf(p->status, sizeof(p->status), "Select a prediction species (states 0 through 9 are supported).");
         return 0;
     }
-    for (int i = 0; i < p->n_species; i++) {
-        char name[64], path[600];
-        snprintf(name, sizeof(name), "species_%02d.int", p->species[i].state_index);
-        work_file(p, name, path, sizeof(path));
-        FILE *each = fopen(path, "w");
-        if (each) { write_int(each, p, &p->species[i]); fclose(each); }
-    }
     if (lin) for (int i = 0; i < s->n_assignments; i++) {
         Assignment *a = &s->assignments[i]; PredLine *q = &a->pred;
-        if (!a->fit_enabled) continue;
+        if (!a->fit_enabled || !assignment_belongs_to_active_hamiltonian(s, a)) continue;
         /* SPFIT's basic, spin-free record is three upper followed immediately
            by three lower QNs.  Do not emit the zero-valued M placeholders:
            they turn a no-spin record into a malformed 12-QN one.  If an
@@ -1201,7 +1587,8 @@ static void set_branch_and_dipole(PredLine *q) {
 }
 
 /* The QN order and its length are not UI policy.  They are exactly the NQN
-   fields that SPCAT printed in QNFMT for the selected CAT transition. */
+   fields that SPCAT printed in QNFMT for the selected CAT transition.  Each
+   displayed number keeps the right-aligned three-character .lin field. */
 static void format_assignment_qn(char *out, size_t size, const PredLine *q) {
     int n = q->n_qn;
     if (n < 1 || n > 6) n = 3; /* display-only compatibility for old sessions */
@@ -1210,17 +1597,17 @@ static void format_assignment_qn(char *out, size_t size, const PredLine *q) {
     size_t used = 0;
     out[0] = '\0';
     for (int i = 0; i < n && used < size; i++) {
-        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", upper[i]);
+        int wrote = snprintf(out + used, size - used, "%3d", upper[i]);
         if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
         used += (size_t)wrote;
     }
     if (used < size) {
-        int wrote = snprintf(out + used, size - used, "  -  ");
+        int wrote = snprintf(out + used, size - used, " - ");
         if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
         used += (size_t)wrote;
     }
     for (int i = 0; i < n && used < size; i++) {
-        int wrote = snprintf(out + used, size - used, "%s%d", i ? " " : "", lower[i]);
+        int wrote = snprintf(out + used, size - used, "%3d", lower[i]);
         if (wrote < 0 || (size_t)wrote >= size - used) { out[size - 1] = '\0'; return; }
         used += (size_t)wrote;
     }
@@ -1269,6 +1656,7 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < s->n_assignments; i++) {
             Assignment *a = &s->assignments[i];
+            if (!assignment_belongs_to_active_hamiltonian(s, a)) continue;
             if (pass == 0) a->fit_enabled = 1;
             const int au[6] = {a->pred.Ju, a->pred.Kau, a->pred.Kcu, a->pred.M1u, a->pred.M2u, a->pred.M3u};
             const int al[6] = {a->pred.Jl, a->pred.Kal, a->pred.Kcl, a->pred.M1l, a->pred.M2l, a->pred.M3l};
@@ -1316,6 +1704,7 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
         set_branch_and_dipole(&a->pred);
         a->exp_freq = row->freq;
         a->fit_enabled = legacy_exclusions ? row->enabled : 1;
+        a->hamiltonian_id = predfit_active_hamiltonian_id(s);
         if (legacy_exclusions && !row->enabled) saw_legacy_exclusion = 1;
         /* Fewer than three QN per state is not a rotational record: the row
            was truncated by an older build (B-01).  Keep it rather than drop
@@ -1331,20 +1720,19 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
 
 int predfit_restore_latest(AppState *s) {
     PredFitState *p=&s->predfit;
-    char root[600]; fit_root(s, root, sizeof(root));
-    char flat_cat[700]; snprintf(flat_cat, sizeof(flat_cat), "%s/model.cat", root);
-    FILE *flat = fopen(flat_cat, "r");
-    if (!flat) return 0;
-    fclose(flat);
-    snprintf(p->work_dir, sizeof(p->work_dir), "%s", root);
-    import_fitted_parameters(p);
     SessionRestoreInfo restore_info;
+    /* data_dir can have changed since init even when no session exists. */
+    predfit_refresh_work_dir(s);
     load_session(s, &restore_info);
+    char cat_path[600]; work_file(p, "model.cat", cat_path, sizeof(cat_path));
+    FILE *cat = fopen(cat_path, "r");
+    if (!cat) return 0;
+    fclose(cat);
+    import_fitted_parameters(p);
     sync_basic_from_parameters(p);
     import_int_settings(p, restore_info.has_int_settings);
     int ignored_exclusions = 0;
     int marked = import_fit_lines(s, &ignored_exclusions);
-    char cat_path[600]; work_file(p,"model.cat",cat_path,sizeof(cat_path));
     app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
     p->generated_catalog_pending=1;
@@ -1386,7 +1774,10 @@ int predfit_calculate_all_species(AppState *s) {
 
 int predfit_fit(AppState *s) {
     PredFitState *p = &s->predfit;
-    if (s->n_assignments == 0) { snprintf(p->status, sizeof(p->status), "Assign lines before running SPFIT."); return 0; }
+    int owned_assignments = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) owned_assignments++;
+    if (owned_assignments == 0) { snprintf(p->status, sizeof(p->status), "Assign lines to this Hamiltonian before running SPFIT."); return 0; }
     predfit_publish_shared_state(s);
     if (!push_fit_snapshot(s)) return 0;
     if (!write_inputs(s, 1)) { p->history_count--; return 0; }
@@ -1429,6 +1820,7 @@ void predfit_open_advanced(AppState *s) {
     p->advanced_window = SDL_CreateWindow("Pred&Fit Advanced", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                           920, 640, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!p->advanced_window) { snprintf(p->status, sizeof(p->status), "Could not open Advanced window."); return; }
+    SDL_SetWindowMinimumSize(p->advanced_window, 900, 520);
     p->advanced_renderer = SDL_CreateRenderer(p->advanced_window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!p->advanced_renderer) { SDL_DestroyWindow(p->advanced_window); p->advanced_window=NULL; snprintf(p->status, sizeof(p->status), "Could not create Advanced renderer."); return; }
     {
@@ -1440,7 +1832,7 @@ void predfit_open_advanced(AppState *s) {
             SDL_RenderSetScale(p->advanced_renderer, dpi, dpi);
         }
     }
-    p->advanced_window_id = SDL_GetWindowID(p->advanced_window); p->advanced_open = 1; p->advanced_tab = 0; p->advanced_hover_line = -1;
+    p->advanced_window_id = SDL_GetWindowID(p->advanced_window); p->advanced_open = 1; p->advanced_tab = 4; p->advanced_hover_line = -1;
 }
 void predfit_close_advanced(AppState *s) {
     PredFitState *p=&s->predfit; if (p->advanced_renderer) SDL_DestroyRenderer(p->advanced_renderer);
@@ -1506,7 +1898,7 @@ static void advanced_begin_int_edit(PredFitState *p, int field) {
     else if (field == 3) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->fend);
     else if (field == 4) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->intensity_cutoff);
     else if (field == 5) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->fqlim_ghz);
-    else if (field == 6) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->temp_k);
+    else if (field == 6) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", p->temp_k);
     else if (field == 7) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%d", x->maxv);
     else snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", x->sigma);
     p->advanced_edit_anchor = 0;
@@ -1514,8 +1906,9 @@ static void advanced_begin_int_edit(PredFitState *p, int field) {
     SDL_StartTextInput();
 }
 
-/* Species fields use the same regular text editor as parameter cells.  Their
-   .par/.var remains shared; only .int and concentration belong to a species. */
+/* State fields use the same regular text editor as parameter cells.  The .int
+   belongs to the Hamiltonian; a state owns only its name, dipoles and external
+   concentration multiplier. */
 static void advanced_begin_species_edit(PredFitState *p, int row, int field) {
     if (row < 0 || row >= p->n_species) return;
     PickettSpecies *sp = &p->species[row];
@@ -1524,8 +1917,7 @@ static void advanced_begin_species_edit(PredFitState *p, int row, int field) {
     p->advanced_edit_col = field;
     p->advanced_edit_replace = 1;
     if (field == 0) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%s", sp->name);
-    else if (field == 1) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", sp->temp_k);
-    else if (field >= 2 && field <= 4) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", sp->mu[field - 2]);
+    else if (field >= 1 && field <= 3) snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", sp->mu[field - 1]);
     else snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.12g", sp->concentration);
     p->advanced_edit_anchor = 0;
     p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
@@ -1605,7 +1997,14 @@ static void advanced_commit_edit(PredFitState *p) {
                 case 3: if (v >= 0.0 && v <= INT_MAX) x->fend = (int)lround(v); break;
                 case 4: x->intensity_cutoff = v; break;
                 case 5: if (v >= 0.0) x->fqlim_ghz = v; break;
-                case 6: if (v >= 0.0) x->temp_k = v; break;
+                case 6:
+                    if (v > 0.0) {
+                        /* TEMP is Hamiltonian-wide. Keep the legacy cache
+                           synchronized for old-session compatibility. */
+                        p->temp_k = v;
+                        x->temp_k = v;
+                    }
+                    break;
                 case 7: if (v >= -1.0 && v <= INT_MAX) x->maxv = (int)lround(v); break;
                 case 8: if (v > 0.0) x->sigma = v; break;
             }
@@ -1636,9 +2035,8 @@ static void advanced_commit_edit(PredFitState *p) {
             } else {
                 char *end = NULL; double v = strtod(p->advanced_edit_buf, &end);
                 if (end != p->advanced_edit_buf && isfinite(v) &&
-                    ((p->advanced_edit_col == 1 && v > 0.0) || (p->advanced_edit_col > 1 && v >= 0.0))) {
-                    if (p->advanced_edit_col == 1) sp->temp_k = v;
-                    else if (p->advanced_edit_col <= 4) sp->mu[p->advanced_edit_col - 2] = v;
+                    (p->advanced_edit_col >= 1 && v >= 0.0)) {
+                    if (p->advanced_edit_col <= 3) sp->mu[p->advanced_edit_col - 1] = v;
                     else sp->concentration = v;
                 }
             }
@@ -1938,14 +2336,14 @@ static SDL_Color residual_color(double z) {
 #define ADV_HEADER_H   42
 #define ADV_TAB_Y      48
 #define ADV_TAB_H      30
-#define ADV_TAB_W     132
-#define ADV_TAB_STEP  145
+#define ADV_TAB_W     118
+#define ADV_TAB_STEP  125
 #define ADV_CONTENT_Y  92
 #define ADV_FOOTER_H   46
 
 typedef struct {
     int w, h;
-    SDL_Rect tab[4];
+    SDL_Rect tab[5];
     SDL_Rect caption;
     SDL_Rect hamiltonian;   /* editable shared third .par/.var line       */
     SDL_Rect int_cell[10];  /* complete .int control record, two rows     */
@@ -1956,6 +2354,11 @@ typedef struct {
     int param_rows_visible;
     SDL_Rect footer;
     SDL_Rect btn_a, btn_b;
+    /* This navigator is deliberately present on every page.  A Hamiltonian
+       is the unit of a Pickett calculation, while a state is its child: the
+       hierarchy must therefore not be hidden behind a separate tab. */
+    SDL_Rect project_nav, project_rows, project_add, project_duplicate, project_delete;
+    int project_rows_visible;
 } AdvUI;
 
 static AdvUI adv_ui(AppState *s, int tab) {
@@ -1963,25 +2366,40 @@ static AdvUI adv_ui(AppState *s, int tab) {
     AdvUI u;
     memset(&u, 0, sizeof(u));
     SDL_GetWindowSize(p->advanced_window, &u.w, &u.h);
-    if (u.w < 620) u.w = 620;
+    if (u.w < 900) u.w = 900;
     if (u.h < 420) u.h = 420;
 
-    for (int i = 0; i < 4; i++) u.tab[i] = (SDL_Rect){16 + i * ADV_TAB_STEP, ADV_TAB_Y, ADV_TAB_W, ADV_TAB_H};
+    for (int i = 0; i < 5; i++) u.tab[i] = (SDL_Rect){16 + i * ADV_TAB_STEP, ADV_TAB_Y, ADV_TAB_W, ADV_TAB_H};
 
     int footer_y = u.h - ADV_FOOTER_H;
+    const int nav_w = 224;
+    const int content_x = ADV_PAD + nav_w + 12;
+    const int content_w = u.w - content_x - ADV_PAD;
     u.footer  = (SDL_Rect){0, footer_y, u.w, ADV_FOOTER_H};
-    u.caption = (SDL_Rect){ADV_PAD, ADV_CONTENT_Y, u.w - 2 * ADV_PAD, 18};
+    u.project_nav = (SDL_Rect){ADV_PAD, ADV_CONTENT_Y, nav_w, footer_y - ADV_CONTENT_Y - 10};
+    u.project_rows = (SDL_Rect){u.project_nav.x + 2, u.project_nav.y + 28,
+                                u.project_nav.w - 4, u.project_nav.h - 130};
+    if (u.project_rows.h < 24) u.project_rows.h = 24;
+    u.project_rows_visible = u.project_rows.h / 23;
+    if (u.project_rows_visible < 1) u.project_rows_visible = 1;
+    u.project_add = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 92,
+                               u.project_nav.w - 16, 26};
+    u.project_duplicate = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 58,
+                                     (u.project_nav.w - 22) / 2, 26};
+    u.project_delete = (SDL_Rect){u.project_duplicate.x + u.project_duplicate.w + 6,
+                                  u.project_duplicate.y, u.project_duplicate.w, 26};
+    u.caption = (SDL_Rect){content_x, ADV_CONTENT_Y, content_w, 18};
 
     int table_top = ADV_CONTENT_Y + 26;
     if (tab == 0) {
-        u.hamiltonian = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, 28};
+        u.hamiltonian = (SDL_Rect){content_x, table_top, content_w, 28};
         table_top += 38;
     } else if (tab == 3) {
         int gap = 6;
-        int cw = (u.w - 2 * ADV_PAD - 4 * gap) / 5;
+        int cw = (content_w - 4 * gap) / 5;
         for (int i = 0; i < 10; i++) {
             int col = i % 5, row = i / 5;
-            u.int_cell[i] = (SDL_Rect){ADV_PAD + col * (cw + gap), table_top + row * 31, cw, 27};
+            u.int_cell[i] = (SDL_Rect){content_x + col * (cw + gap), table_top + row * 31, cw, 27};
         }
         table_top += 70;
     }
@@ -1990,20 +2408,20 @@ static AdvUI adv_ui(AppState *s, int tab) {
         int lines = g_report.n_param_lines > 0 ? g_report.n_param_lines : 1;
         if (lines > 9) lines = 9;
         u.param_rows_visible = lines;
-        u.params = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, 26 + lines * 18 + 8};
+        u.params = (SDL_Rect){content_x, table_top, content_w, 26 + lines * 18 + 8};
         table_top = u.params.y + u.params.h + 12;
         u.row_h = 22;
     } else {
         u.row_h = tab == 0 ? 25 : tab == 3 ? 27 : 23;
     }
 
-    u.table = (SDL_Rect){ADV_PAD, table_top, u.w - 2 * ADV_PAD, footer_y - table_top - 10};
+    u.table = (SDL_Rect){content_x, table_top, content_w, footer_y - table_top - 10};
     if (u.table.h < 80) u.table.h = 80;
     u.rows  = (SDL_Rect){u.table.x + 2, u.table.y + 26, u.table.w - 4, u.table.h - 28};
     u.rows_visible = u.rows.h / u.row_h;
     if (u.rows_visible < 1) u.rows_visible = 1;
 
-    u.btn_a = (SDL_Rect){ADV_PAD, footer_y + 8, (tab == 0 || tab == 3) ? 142 : 110, 30};
+    u.btn_a = (SDL_Rect){content_x, footer_y + 8, tab == 4 ? 150 : (tab == 0 || tab == 3) ? 142 : 110, 30};
     u.btn_b = (SDL_Rect){u.btn_a.x + u.btn_a.w + 10, footer_y + 8, 132, 30};
     return u;
 }
@@ -2017,6 +2435,71 @@ static int adv_col(SDL_Rect table, double fraction) {
 static int adv_scroll_limit(int total, int visible) {
     int limit = total - visible;
     return limit > 0 ? limit : 0;
+}
+
+/* A project is read as a visible hierarchy: each Hamiltonian header is
+   followed by its states. A state click selects its parent and the state, so
+   no hidden next/previous navigation is required. */
+static int project_row_count(const PredFitState *p) {
+    int count = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        int n_states = h == p->active_hamiltonian ? p->n_species : p->hamiltonian[h].model.n_species;
+        count += 1 + n_states;
+    }
+    return count;
+}
+
+static int project_row_info(const PredFitState *p, int row, int *out_h, int *out_state) {
+    int at = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        int n_states = h == p->active_hamiltonian ? p->n_species : p->hamiltonian[h].model.n_species;
+        if (row == at) { *out_h = h; *out_state = -1; return 1; }
+        at++;
+        if (row >= at && row < at + n_states) { *out_h = h; *out_state = row - at; return 1; }
+        at += n_states;
+    }
+    return 0;
+}
+
+static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, const AdvUI *u) {
+    char b[128];
+    ui_fill(r, u->project_nav, UI_INPUT);
+    ui_frame(r, u->project_nav, UI_LINE);
+    ui_text(r, UI_FONT_MONO_SM, "HAMILTONIANS", u->project_nav.x + 9, u->project_nav.y + 8, UI_DIM);
+    ui_hline(r, u->project_nav.x + 2, u->project_nav.x + u->project_nav.w - 2,
+             u->project_rows.y - 3, UI_LINE);
+
+    int total = project_row_count(p);
+    for (int visible = 0; visible < u->project_rows_visible; visible++) {
+        int row_index = p->advanced_project_scroll + visible;
+        if (row_index >= total) break;
+        int h_index = -1, state_index = -1;
+        if (!project_row_info(p, row_index, &h_index, &state_index)) continue;
+        const HamiltonianModel *model = &p->hamiltonian[h_index];
+        const PredFitSnapshot *stored = &model->model;
+        int active_h = h_index == p->active_hamiltonian;
+        int y = u->project_rows.y + visible * 23;
+        SDL_Rect row = {u->project_rows.x, y, u->project_rows.w, 21};
+        if (active_h && state_index < 0) ui_fill(r, row, UI_ACCENT_SOFT);
+        else if (visible % 2) ui_fill(r, row, UI_PANEL);
+        if (state_index < 0) {
+            snprintf(b, sizeof(b), "H%d  %s", model->id, model->name);
+            ui_text(r, UI_FONT_SANS_SM, b, row.x + 7, y + 4, active_h ? UI_ACCENT_TEXT : UI_TEXT);
+        } else {
+            const PickettSpecies *sp = active_h ? &p->species[state_index] : &stored->species[state_index];
+            snprintf(b, sizeof(b), "  └ State %d  %s", sp->state_index, sp->name);
+            ui_text(r, UI_FONT_SANS_SM, b, row.x + 7, y + 4,
+                    active_h && state_index == p->active_species ? UI_OK : UI_DIM);
+        }
+    }
+    ui_button(r, u->project_add, "+ Hamiltonian", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+    ui_button(r, u->project_duplicate, "Duplicate", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+    int active_id = (p->active_hamiltonian >= 0 && p->active_hamiltonian < p->n_hamiltonians)
+                  ? p->hamiltonian[p->active_hamiltonian].id : 0;
+    int confirming = p->advanced_delete_hamiltonian_id == active_id;
+    int can_delete = p->n_hamiltonians > 1;
+    ui_button(r, u->project_delete, can_delete ? (confirming ? "Confirm" : "Delete") : "Protected", -1,
+              can_delete ? UI_BTN_DANGER : UI_BTN_QUIET, confirming, 0, 0, 0);
 }
 
 int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
@@ -2038,10 +2521,21 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     AdvUI u = adv_ui(s, p->advanced_tab);
 
     if (e->type == SDL_MOUSEWHEEL && e->wheel.windowID == p->advanced_window_id) {
+        int mx = 0, my = 0;
+        SDL_GetMouseState(&mx, &my);
+        if (point_in_rect(mx, my, u.project_nav)) {
+            p->advanced_project_scroll -= e->wheel.y;
+            if (p->advanced_project_scroll < 0) p->advanced_project_scroll = 0;
+            int limit = adv_scroll_limit(project_row_count(p), u.project_rows_visible);
+            if (p->advanced_project_scroll > limit) p->advanced_project_scroll = limit;
+            return 1;
+        }
         int *scroll = p->advanced_tab == 0 ? &p->advanced_param_scroll :
-                      p->advanced_tab == 3 ? &p->advanced_species_scroll : &p->advanced_line_scroll;
+                      p->advanced_tab == 3 ? &p->advanced_species_scroll :
+                      p->advanced_tab == 4 ? &p->advanced_project_scroll : &p->advanced_line_scroll;
         int total   = p->advanced_tab == 0 ? p->n_param :
-                      p->advanced_tab == 3 ? p->n_species : s->n_assignments;
+                      p->advanced_tab == 3 ? p->n_species :
+                      p->advanced_tab == 4 ? project_row_count(p) : s->n_assignments;
         *scroll -= e->wheel.y;
         if (*scroll < 0) *scroll = 0;
         int limit = adv_scroll_limit(total, u.rows_visible);
@@ -2061,8 +2555,61 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != p->advanced_window_id) return 0;
     int x = e->button.x, y = e->button.y;
 
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
         if (point_in_rect(x, y, u.tab[i])) { p->advanced_tab = i; return 1; }
+
+    /* The sidebar is global navigation, before the tab-specific editor. */
+    if (point_in_rect(x, y, u.project_rows)) {
+        int h = -1, state = -1;
+        int row = p->advanced_project_scroll + (y - u.project_rows.y) / 23;
+        if (project_row_info(p, row, &h, &state)) {
+            predfit_select_hamiltonian(s, h);
+            if (state >= 0) select_species(s, state);
+            p->advanced_delete_hamiltonian_id = 0;
+        }
+        return 1;
+    }
+    if (point_in_rect(x, y, u.project_add) || point_in_rect(x, y, u.project_duplicate)) {
+        int made = point_in_rect(x, y, u.project_add)
+                   ? predfit_add_hamiltonian(s, NULL)
+                   : predfit_duplicate_hamiltonian(s, NULL);
+        if (made) p->advanced_project_scroll =
+            adv_scroll_limit(project_row_count(p), u.project_rows_visible);
+        p->advanced_delete_hamiltonian_id = 0;
+        return 1;
+    }
+    if (point_in_rect(x, y, u.project_delete)) {
+        int active_id = predfit_active_hamiltonian_id(s);
+        if (p->advanced_delete_hamiltonian_id == active_id)
+            predfit_delete_hamiltonian(s, p->active_hamiltonian);
+        else if (p->n_hamiltonians <= 1)
+            snprintf(p->status, sizeof(p->status), "A project must retain at least one Hamiltonian.");
+        else {
+            p->advanced_delete_hamiltonian_id = active_id;
+            snprintf(p->status, sizeof(p->status), "Click Delete again to remove %s and its assignments.",
+                     p->hamiltonian[p->active_hamiltonian].name);
+        }
+        return 1;
+    }
+
+    if (p->advanced_tab == 4) {
+        if (point_in_rect(x, y, u.rows)) {
+            int h = -1, state = -1;
+            int row = p->advanced_project_scroll + (y - u.rows.y) / u.row_h;
+            if (project_row_info(p, row, &h, &state)) {
+                predfit_select_hamiltonian(s, h);
+                if (state >= 0) select_species(s, state);
+            }
+            return 1;
+        }
+        if (point_in_rect(x, y, u.btn_a)) {
+            char state_path[600];
+            snprintf(state_path, sizeof(state_path), "%s/spectravisual.state", p->work_dir);
+            app_enqueue_pending_load(s, PENDING_LOAD_SESSION, state_path, 0);
+            return 1;
+        }
+        return 1;
+    }
 
     if (p->advanced_tab == 0) {
         if (point_in_rect(x, y, u.hamiltonian)) { advanced_begin_hamiltonian_edit(p); return 1; }
@@ -2119,8 +2666,6 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                     advanced_begin_species_edit(p, row, 3);
                 } else if (x >= adv_col(u.table, 0.78) && x < adv_col(u.table, 0.88)) {
                     advanced_begin_species_edit(p, row, 4);
-                } else if (x >= adv_col(u.table, 0.88)) {
-                    advanced_begin_species_edit(p, row, 5);
                 }
             }
             return 1;
@@ -2179,11 +2724,57 @@ void predfit_render_advanced(AppState *s) {
     ui_text(r, UI_FONT_TITLE, "Pred&Fit Advanced", 18, 12, UI_TEXT);
     ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
 
-    const char *tabs[4] = {"Parameters", "Lines", "Fitting", "Species"};
-    for (int i = 0; i < 4; i++)
+    const char *tabs[5] = {"Parameters", "Lines", "Fitting", "States", "Hamiltonians"};
+    for (int i = 0; i < 5; i++)
         ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, p->advanced_tab == i, 0, 0, 0);
 
-    if (p->advanced_tab == 0) {
+    render_project_navigator(r, p, &u);
+
+    if (p->advanced_tab == 4) {
+        ui_text(r, UI_FONT_SANS, "Project — Hamiltonians and their states",
+                u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        ui_fill(r, u.table, UI_INPUT);
+        ui_frame(r, u.table, UI_LINE);
+        int hy = u.table.y + 8;
+        ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN / STATE", adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "TROT / K",             adv_col(u.table, 0.62), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "CONCENTRATION",        adv_col(u.table, 0.78), hy, UI_DIM);
+        ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
+        int total = project_row_count(p);
+        for (int visible = 0; visible < u.rows_visible; visible++) {
+            int row_index = p->advanced_project_scroll + visible;
+            if (row_index >= total) break;
+            int h_index = -1, state_index = -1;
+            if (!project_row_info(p, row_index, &h_index, &state_index)) continue;
+            const HamiltonianModel *model = &p->hamiltonian[h_index];
+            const PredFitSnapshot *stored = &model->model;
+            const int is_active_h = h_index == p->active_hamiltonian;
+            int y = u.rows.y + visible * u.row_h;
+            SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
+            if (is_active_h && state_index < 0) ui_fill(r, row, UI_ACCENT_SOFT);
+            else if (visible % 2) ui_fill(r, row, UI_PANEL);
+            int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
+            if (state_index < 0) {
+                snprintf(b, sizeof(b), "H%d  %s", model->id, model->name);
+                ui_text(r, UI_FONT_SANS_SM, b, adv_col(u.table, 0.00), ty,
+                        is_active_h ? UI_ACCENT_TEXT : UI_TEXT);
+                double temp = is_active_h ? p->temp_k : stored->temp_k;
+                snprintf(b, sizeof(b), "%.6g", temp);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.62), ty, UI_DIM);
+            } else {
+                const PickettSpecies *sp = is_active_h ? &p->species[state_index] : &stored->species[state_index];
+                snprintf(b, sizeof(b), "   └─ State %d  %s", sp->state_index, sp->name);
+                ui_text(r, UI_FONT_SANS_SM, b, adv_col(u.table, 0.00), ty,
+                        is_active_h && state_index == p->active_species ? UI_OK : UI_TEXT);
+                snprintf(b, sizeof(b), "%.6g", sp->concentration);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.78), ty, UI_DIM);
+            }
+        }
+        ui_button(r, u.btn_a, "Restore session", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+        ui_text(r, UI_FONT_SANS_SM, "Click an H or State to select it. Restore is explicit; states stay grouped under their Hamiltonian.",
+                u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_FAINT);
+
+    } else if (p->advanced_tab == 0) {
         ui_text(r, UI_FONT_SANS, "Shared Hamiltonian and Pickett parameters",
                 u.caption.x, u.caption.y, UI_ACCENT_TEXT);
         ui_fill(r, u.hamiltonian, UI_INPUT);
@@ -2256,13 +2847,13 @@ void predfit_render_advanced(AppState *s) {
                 p->advanced_edit_param >= 0 ? UI_ACCENT_TEXT : UI_FAINT);
 
     } else if (p->advanced_tab == 3) {
-        ui_text(r, UI_FONT_SANS, "Species/states — shared .par/.var and .int controls; each row owns Tred and concentration",
+        ui_text(r, UI_FONT_SANS, "States — one shared .par/.var/.int; each row owns dipoles and concentration",
                 u.caption.x, u.caption.y, UI_ACCENT_TEXT);
         /* The actual .int second record, placed with the species because
            Tcat is the common catalogue reference and the rows below are Tred. */
         static const char *int_label[10] = {
             "FLAGS", "TAG", "QROT (auto)", "FBGN", "FEND",
-            "STR0 = STR1", "FQLIM / GHz", "TCAT / K", "MAXV", "sigma"
+            "STR0 = STR1", "FQLIM / GHz", "TROT / K", "MAXV", "sigma"
         };
         static const int int_field[10] = {0, 1, -1, 2, 3, 4, 5, 6, 7, 8};
         PickettIntSettings *ix = &p->int_settings;
@@ -2292,11 +2883,10 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "PRED",          adv_col(u.table, 0.10), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "NAME",          adv_col(u.table, 0.18), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "v",             adv_col(u.table, 0.40), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "TRED / K",      adv_col(u.table, 0.47), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "mu a",          adv_col(u.table, 0.58), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "mu b",          adv_col(u.table, 0.68), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "mu c",          adv_col(u.table, 0.78), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "CONC.",         adv_col(u.table, 0.88), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu a",          adv_col(u.table, 0.47), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu b",          adv_col(u.table, 0.58), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu c",          adv_col(u.table, 0.68), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "CONC.",         adv_col(u.table, 0.78), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
         for (int i = 0; i < u.rows_visible && p->advanced_species_scroll + i < p->n_species; i++) {
             int actual = p->advanced_species_scroll + i;
@@ -2315,24 +2905,21 @@ void predfit_render_advanced(AppState *s) {
                     adv_col(u.table, 0.18), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : sp->predict_enabled ? UI_TEXT : UI_FAINT);
             snprintf(b, sizeof(b), "%d", sp->state_index);
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.40), ty, UI_DIM);
-            snprintf(b, sizeof(b), "%.5g", sp->temp_k);
-            ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == 1 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.47), ty, editing && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
             for (int k = 0; k < 3; k++) {
                 snprintf(b, sizeof(b), "%.5g", sp->mu[k]);
-                double at[] = {0.58, 0.68, 0.78};
-                ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == k + 2 ? p->advanced_edit_buf : b,
-                        adv_col(u.table, at[k]), ty, editing && p->advanced_edit_col == k + 2 ? UI_ACCENT_TEXT : UI_TEXT);
+                double at[] = {0.47, 0.58, 0.68};
+                ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == k + 1 ? p->advanced_edit_buf : b,
+                        adv_col(u.table, at[k]), ty, editing && p->advanced_edit_col == k + 1 ? UI_ACCENT_TEXT : UI_TEXT);
             }
             snprintf(b, sizeof(b), "%.5g", sp->concentration);
-            ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == 5 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.88), ty, editing && p->advanced_edit_col == 5 ? UI_ACCENT_TEXT : UI_TEXT);
+            ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == 4 ? p->advanced_edit_buf : b,
+                    adv_col(u.table, 0.78), ty, editing && p->advanced_edit_col == 4 ? UI_ACCENT_TEXT : UI_TEXT);
             SDL_Rect del = {u.table.x + u.table.w - 28, y + (u.row_h - 2 - 18) / 2, 18, 18};
             if (p->n_species > 1) ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
         ui_button(r, u.btn_a, "+ species", -1, UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_b, "Calculate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
-        ui_text(r, UI_FONT_SANS_SM, "Tcat is above · Tred and concentration rescale each species immediately",
+        ui_text(r, UI_FONT_SANS_SM, "Trot and cut are Hamiltonian-wide · concentration rescales each state after SPCAT",
                 u.btn_b.x + u.btn_b.w + 16, u.footer.y + 17, UI_FAINT);
 
     } else if (p->advanced_tab == 1) {
@@ -2343,9 +2930,9 @@ void predfit_render_advanced(AppState *s) {
 
         int hy = u.table.y + 8;
         ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.07), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.28), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.52), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.26), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.50), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.92), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
@@ -2361,16 +2948,16 @@ void predfit_render_advanced(AppState *s) {
             snprintf(b, sizeof(b), "[%c]", a->fit_enabled ? 'x' : ' ');
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.00), ty, a->fit_enabled ? UI_OK : UI_FAINT);
             snprintf(b, sizeof(b), "%.6f", a->exp_freq);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.07), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.26), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
             snprintf(b, sizeof(b), "%.6f", a->pred.freq_mhz);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.28), ty, UI_DIM);
+            ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.50), ty, UI_DIM);
             format_assignment_qn(b, sizeof(b), &a->pred);
-            ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.52), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.92), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
             SDL_Rect del = {u.table.x + u.table.w - 30, y + (u.row_h - 2 - 18) / 2, 18, 18};
             ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
         ui_text(r, UI_FONT_SANS_SM, "Excluded rows stay in assignments and .fit/exclusions.txt; SPFIT never receives them.",
-                ADV_PAD, u.footer.y + 17, UI_FAINT);
+                u.caption.x, u.footer.y + 17, UI_FAINT);
 
     } else {
         ui_text(r, UI_FONT_SANS, "SPFIT output", u.caption.x, u.caption.y, UI_ACCENT_TEXT);
@@ -2400,11 +2987,12 @@ void predfit_render_advanced(AppState *s) {
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
         int hy = u.table.y + 8;
-        ui_text(r, UI_FONT_MONO_SM, "FIT  QNS",        adv_col(u.table, 0.00), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "OBSERVED",        adv_col(u.table, 0.30), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "CALCULATED",      adv_col(u.table, 0.47), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "OBS-CALC",        adv_col(u.table, 0.64), hy, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, "/UNC",            adv_col(u.table, 0.80), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "QNS",        adv_col(u.table, 0.28), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED",   adv_col(u.table, 0.46), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", adv_col(u.table, 0.63), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC",   adv_col(u.table, 0.79), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "/UNC",       adv_col(u.table, 0.93), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
@@ -2437,21 +3025,22 @@ void predfit_render_advanced(AppState *s) {
             int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
             char qns[160];
             format_assignment_qn(qns, sizeof(qns), &a->pred);
-            snprintf(b, sizeof(b), "[%c] %s", a->fit_enabled ? 'x' : ' ', qns);
+            snprintf(b, sizeof(b), "[%c]", a->fit_enabled ? 'x' : ' ');
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00) + 6, ty, c);
+            ui_text_right(r, UI_FONT_MONO_SM, qns, adv_col(u.table, 0.28), ty, c);
             /* Always take the experimental frequency from the live assignment
                list.  This makes the Lines and Fitting pages two views of the
                exact same data, rather than a live list next to a .fit copy. */
             snprintf(b, sizeof(b), "%.5f", a->exp_freq);
-            ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.30), ty, c);
+            ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.46), ty, c);
             if (state == FIT_ROW_USED || state == FIT_ROW_NOT_USED) {
                 snprintf(b, sizeof(b), "%.5f", o.calc);
-                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.47), ty, c);
+                ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.63), ty, c);
                 if (state == FIT_ROW_USED) {
                     snprintf(b, sizeof(b), "%+.5f", o.diff);
-                    ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.64), ty, c);
+                    ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.79), ty, c);
                     snprintf(b, sizeof(b), "%+.2f", z);
-                    ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.80), ty, c);
+                    ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.93), ty, c);
                 } else {
                     ui_text(r, UI_FONT_MONO_SM, "not used in the fit", adv_col(u.table, 0.64), ty, UI_FAINT);
                 }

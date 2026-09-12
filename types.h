@@ -15,6 +15,7 @@
 #define MAX_PICKETT_PARAMS 128
 #define MAX_PICKETT_LABEL 128
 #define MAX_PICKETT_SPECIES 16
+#define MAX_PICKETT_HAMILTONIANS 16
 
 // --- DATA STRUCTURES ---
 
@@ -81,6 +82,7 @@ typedef struct {
     int Jl, Kal, Kcl, M1l, M2l, M3l;
     char branch;       
     char mu;           
+    int hamiltonian_id; /* 0 = external/legacy; >0 = generated model owner */
 } PredLine;
 
 typedef struct {
@@ -89,6 +91,7 @@ typedef struct {
     double exp_int;
     int fit_enabled;          // assignment remains visible when this is 0
     int needs_reassign;       // restored from a .lin row with fewer than 3 QN per state
+    int hamiltonian_id;       // stable owner; 0 denotes a pre-v2 legacy assignment
 } Assignment;
 
 /* A fit exclusion is deliberately keyed by the transition, not its place in
@@ -106,15 +109,16 @@ typedef struct {
     char label[MAX_PICKETT_LABEL];
 } PickettParameter;
 
-/* A state/species shares the model Hamiltonian (.par/.var) with the other
-   states, but owns its spectroscopy-intensity input (.int) and abundance. */
+/* A state belongs to one Hamiltonian.  Its dipoles are separate cards in that
+   Hamiltonian's single .int; temperature, cutoffs and range stay on the
+   Hamiltonian because SPCAT accepts them once per .int file.  Concentration
+   is a SpectraVisual-only multiplier applied after SPCAT. */
 typedef struct {
     char name[64];
     int state_index;          /* v=0,1,... in .lin; parameter suffix 00,11... */
     int predict_enabled;      /* include this species when Calculate is pressed */
     double mu[3];
-    double temp_k;
-    double concentration;     /* relative intensity scale; used by future int-fit */
+    double concentration;     /* external relative-intensity multiplier, default 1 */
 } PickettSpecies;
 
 /* The manually controllable .int fields.  QROT is deliberately absent: it is
@@ -148,6 +152,17 @@ typedef struct {
     FitExclusionKey exclusions[MAX_ASSIGNMENTS];
 } PredFitSnapshot;
 
+/* A project-level model.  PredFitState keeps one model projected into its
+   legacy editing fields while this list retains the independent models that
+   are not selected.  Keeping the serializable model separate from SDL/UI
+   state lets the multi-Hamiltonian migration happen without duplicating UI
+   resources or sharing Pickett control-card values by accident. */
+typedef struct {
+    int id;                         /* stable project identity, never an index */
+    char name[64];
+    PredFitSnapshot model;
+} HamiltonianModel;
+
 typedef struct {
     double a, b, c;
     double mu[3];
@@ -161,6 +176,10 @@ typedef struct {
     PickettSpecies species[MAX_PICKETT_SPECIES];
     int n_species;
     int active_species;
+    HamiltonianModel hamiltonian[MAX_PICKETT_HAMILTONIANS];
+    int n_hamiltonians;
+    int active_hamiltonian;
+    int next_hamiltonian_id;
     int advanced_open;
     int advanced_tab;
     SDL_Window *advanced_window;
@@ -175,6 +194,8 @@ typedef struct {
     int advanced_param_scroll;
     int advanced_line_scroll;
     int advanced_species_scroll;
+    int advanced_project_scroll;
+    int advanced_delete_hamiltonian_id; /* second click confirms this H only */
     int advanced_hover_line;
     char advanced_edit_buf[256];
     PredFitSnapshot *history;

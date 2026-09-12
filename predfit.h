@@ -5,6 +5,17 @@
 
 void predfit_init(AppState *state);
 void predfit_refresh_work_dir(AppState *state);
+/* Project-level Hamiltonian selection.  The current editor continues to use
+   PredFitState's active-model fields; these calls atomically store/load that
+   projection so independent H settings never leak into each other. */
+int predfit_hamiltonian_count(const AppState *state);
+int predfit_active_hamiltonian_id(const AppState *state);
+int predfit_add_hamiltonian(AppState *state, const char *name);
+int predfit_duplicate_hamiltonian(AppState *state, const char *name);
+/* Removes an H and every assignment that belongs to it. The final H of a
+   project is protected, so a project always remains editable. */
+int predfit_delete_hamiltonian(AppState *state, int index);
+int predfit_select_hamiltonian(AppState *state, int index);
 int predfit_calculate(AppState *state);
 /* Generate one catalogue for every configured species and present their
    concentration-weighted union as the prediction. */
@@ -13,6 +24,10 @@ int predfit_fit(AppState *state);
 int predfit_undo_last_fit(AppState *state);
 void predfit_publish_shared_state(AppState *state);
 void predfit_adopt_shared_state(AppState *state);
+/* Recalculate the displayed catalogue without transferring any values between
+   Intensity analysis and Pred&Fit.  Generated catalogues retain their
+   per-species temperatures, dipoles and concentrations. */
+void predfit_recompute_display_intensities(AppState *state);
 void predfit_adopt_generated_catalog(AppState *state);
 int predfit_restore_latest(AppState *state);
 /* Persist only the temporary Fit choices. assignments.txt remains the

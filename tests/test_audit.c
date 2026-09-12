@@ -1367,6 +1367,264 @@ static int test_nvib_typed_value_kept(void) {
     DONE();
 }
 
+/* PF-01: one Hamiltonian owns exactly one .int control card.  Its Trot is
+   common, while every included state contributes only its own Pickett dipole
+   cards. Concentration deliberately never reaches the .int. */
+static int test_multistate_writes_one_int_with_shared_trot(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    p->temp_k = 7.5;
+    p->int_settings.temp_k = 123.0; /* obsolete cache must not drive output */
+    add_species(s);
+    p->species[0].mu[0] = 1.1;
+    p->species[0].mu[1] = 2.2;
+    p->species[0].mu[2] = 3.3;
+    p->species[0].concentration = 0.25;
+    p->species[1].mu[0] = 4.4;
+    p->species[1].mu[1] = 5.5;
+    p->species[1].mu[2] = 6.6;
+    p->species[1].concentration = 9.0;
+    memcpy(p->mu, p->species[1].mu, sizeof(p->mu)); /* active quick-panel state */
+    type_option_line(p, "s 1 2 0");
+    CHECK_INT("write shared multistate inputs", write_inputs(s, 0), 1);
+
+    char int_path[900];
+    snprintf(int_path, sizeof(int_path), "%s/.fit/model.int", g_work);
+    FILE *fp = fopen(int_path, "r");
+    CHECK(fp != NULL, "model.int non scritto");
+    if (fp) {
+        char title[256] = "", card[512] = "", all[2048] = "", line[256];
+        fgets(title, sizeof(title), fp);
+        fgets(card, sizeof(card), fp);
+        while (fgets(line, sizeof(line), fp))
+            strncat(all, line, sizeof(all) - strlen(all) - 1);
+        fclose(fp);
+        int flags, tag, fbegin, fend, maxv;
+        double qrot, str0, str1, fqlim, temp;
+        CHECK(sscanf(card, "%d %d %lf %d %d %lf %lf %lf %lf %d",
+                     &flags, &tag, &qrot, &fbegin, &fend, &str0, &str1,
+                     &fqlim, &temp, &maxv) == 10,
+              "carta di controllo .int non leggibile: '%s'", card);
+        CHECK_DBL("Trot unico scritto nella carta .int", temp, 7.5, 1e-12);
+        CHECK(strstr(all, "1 1.1 /a dipole/") != NULL, "manca mu_a stato 0: %s", all);
+        CHECK(strstr(all, "2 2.2 /b dipole/") != NULL, "manca mu_b stato 0: %s", all);
+        CHECK(strstr(all, "3 3.3 /c dipole/") != NULL, "manca mu_c stato 0: %s", all);
+        CHECK(strstr(all, "111 4.4 /a dipole/") != NULL, "manca mu_a stato 1: %s", all);
+        CHECK(strstr(all, "112 5.5 /b dipole/") != NULL, "manca mu_b stato 1: %s", all);
+        CHECK(strstr(all, "113 6.6 /c dipole/") != NULL, "manca mu_c stato 1: %s", all);
+        CHECK(strstr(all, "0.25") == NULL && strstr(all, "9.0") == NULL,
+              "la concentrazione esterna non deve comparire in model.int: %s", all);
+    }
+    CHECK(access(work_path(".fit/species_00.int"), F_OK) != 0,
+          "non deve esistere uno .int per stato 0");
+    CHECK(access(work_path(".fit/species_01.int"), F_OK) != 0,
+          "non deve esistere uno .int per stato 1");
+    DONE();
+}
+
+/* H-01: the active editor is a projection of one Hamiltonian at a time.
+   Switching must preserve independent .int controls, states and constants;
+   it must not merely relabel one mutable PredFitState. */
+static int test_hamiltonian_switch_keeps_independent_models(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    p->temp_k = 19.0;
+    p->int_settings.intensity_cutoff = -7.0;
+    p->species[0].mu[0] = 4.0;
+    p->mu[0] = 4.0; /* active state is projected into the quick panel */
+    p->species[0].concentration = 0.3;
+    CHECK_INT("duplica H1", predfit_duplicate_hamiltonian(s, "Tunneling pair"), 1);
+    CHECK_INT("due Hamiltoniani", predfit_hamiltonian_count(s), 2);
+    CHECK_INT("ID H2 stabile", predfit_active_hamiltonian_id(s), 2);
+    p->temp_k = 41.0;
+    p->int_settings.intensity_cutoff = -13.0;
+    p->species[0].mu[0] = 8.0;
+    p->mu[0] = 8.0;
+    p->species[0].concentration = 2.5;
+
+    CHECK_INT("seleziona H1", predfit_select_hamiltonian(s, 0), 1);
+    CHECK_INT("ID H1 stabile", predfit_active_hamiltonian_id(s), 1);
+    CHECK_DBL("Trot H1 indipendente", p->temp_k, 19.0, 1e-12);
+    CHECK_DBL("cut H1 indipendente", p->int_settings.intensity_cutoff, -7.0, 1e-12);
+    CHECK_DBL("dipolo stato H1 indipendente", p->species[0].mu[0], 4.0, 1e-12);
+    CHECK_DBL("concentrazione stato H1 indipendente", p->species[0].concentration, 0.3, 1e-12);
+
+    p->temp_k = 6.0;
+    p->int_settings.intensity_cutoff = -21.0;
+    p->species[0].concentration = 0.8;
+    CHECK_INT("riseleziona H2", predfit_select_hamiltonian(s, 1), 1);
+    CHECK_DBL("Trot H2 conservata", p->temp_k, 41.0, 1e-12);
+    CHECK_DBL("cut H2 conservato", p->int_settings.intensity_cutoff, -13.0, 1e-12);
+    CHECK_DBL("dipolo stato H2 conservato", p->species[0].mu[0], 8.0, 1e-12);
+    CHECK_DBL("concentrazione stato H2 conservata", p->species[0].concentration, 2.5, 1e-12);
+
+    CHECK_INT("torna H1", predfit_select_hamiltonian(s, 0), 1);
+    CHECK_DBL("ultima Trot H1 conservata", p->temp_k, 6.0, 1e-12);
+    CHECK_DBL("ultima concentrazione H1 conservata", p->species[0].concentration, 0.8, 1e-12);
+    DONE();
+}
+
+/* H-02: h4 session records retain the whole project, not merely the active
+   compatibility projection written at the start of the session file. */
+static int test_multihamiltonian_session_roundtrip(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    p->temp_k = 12.0;
+    p->int_settings.intensity_cutoff = -4.0;
+    p->species[0].concentration = 0.4;
+    CHECK_INT("crea H2", predfit_duplicate_hamiltonian(s, "Independent H"), 1);
+    p->temp_k = 33.0;
+    p->int_settings.intensity_cutoff = -16.0;
+    p->species[0].mu[2] = 7.0;
+    p->mu[2] = 7.0;
+    p->species[0].concentration = 3.0;
+    predfit_save_session(s);
+
+    AppState *r = new_state();
+    predfit_load_session(r);
+    CHECK_INT("due H dopo restore", predfit_hamiltonian_count(r), 2);
+    CHECK_INT("H2 attivo dopo restore", predfit_active_hamiltonian_id(r), 2);
+    CHECK_DBL("Trot H2 dopo restore", r->predfit.temp_k, 33.0, 1e-12);
+    CHECK_DBL("cut H2 dopo restore", r->predfit.int_settings.intensity_cutoff, -16.0, 1e-12);
+    CHECK_DBL("mu_c H2 dopo restore", r->predfit.species[0].mu[2], 7.0, 1e-12);
+    CHECK_DBL("conc H2 dopo restore", r->predfit.species[0].concentration, 3.0, 1e-12);
+    CHECK_INT("seleziona H1 dopo restore", predfit_select_hamiltonian(r, 0), 1);
+    CHECK_DBL("Trot H1 dopo restore", r->predfit.temp_k, 12.0, 1e-12);
+    CHECK_DBL("cut H1 dopo restore", r->predfit.int_settings.intensity_cutoff, -4.0, 1e-12);
+    CHECK_DBL("conc H1 dopo restore", r->predfit.species[0].concentration, 0.4, 1e-12);
+    DONE();
+}
+
+static double int_temperature_of(const char *path) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return -1.0;
+    char title[256], card[512];
+    if (!fgets(title, sizeof(title), fp) || !fgets(card, sizeof(card), fp)) { fclose(fp); return -1.0; }
+    fclose(fp);
+    int flags, tag, fbegin, fend, maxv;
+    double qrot, str0, str1, fqlim, temp;
+    return sscanf(card, "%d %d %lf %d %d %lf %lf %lf %lf %d",
+                  &flags, &tag, &qrot, &fbegin, &fend, &str0, &str1,
+                  &fqlim, &temp, &maxv) == 10 ? temp : -1.0;
+}
+
+/* H-03: as soon as a project has more than one Hamiltonian, Pickett files
+   live in Hxxx directories. Each H owns its own control card and cannot
+   overwrite the other Hamiltonian's Trot/cut. */
+static int test_two_hamiltonians_keep_independent_int_controls(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    p->temp_k = 5.0;
+    p->int_settings.intensity_cutoff = -3.0;
+    CHECK_INT("duplica H1", predfit_duplicate_hamiltonian(s, "H2"), 1);
+    p->temp_k = 40.0;
+    p->int_settings.intensity_cutoff = -18.0;
+    CHECK_INT("scrive H2", write_inputs(s, 0), 1);
+    CHECK(access(work_path(".fit/H002/model.int"), F_OK) == 0, "manca H002/model.int");
+    CHECK_DBL("Trot H2 nel proprio .int", int_temperature_of(work_path(".fit/H002/model.int")), 40.0, 1e-12);
+
+    CHECK_INT("seleziona H1", predfit_select_hamiltonian(s, 0), 1);
+    CHECK_INT("scrive H1", write_inputs(s, 0), 1);
+    CHECK(access(work_path(".fit/H001/model.int"), F_OK) == 0, "manca H001/model.int");
+    CHECK_DBL("Trot H1 nel proprio .int", int_temperature_of(work_path(".fit/H001/model.int")), 5.0, 1e-12);
+    CHECK_DBL("H2 non viene sovrascritto", int_temperature_of(work_path(".fit/H002/model.int")), 40.0, 1e-12);
+    DONE();
+}
+
+/* H-04: the same QN transition may legitimately appear in two independent
+   Hamiltonians. Ownership is therefore part of assignment identity and
+   survives assignments.txt format 2. */
+static int test_assignment_owner_keeps_same_qn_in_two_hamiltonians(void) {
+    AppState *s = new_state();
+    PredLine line = {.freq_mhz = 3000.0, .linear_int = 1.0, .n_qn = 3,
+                     .Ju = 3, .Kau = 1, .Kcu = 2, .Jl = 2, .Kal = 0, .Kcl = 2};
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.01, 1.0, 1);
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.02, 2.0, 2);
+    CHECK_INT("stessa riga QN ammessa in H distinti", s->n_assignments, 2);
+    CHECK_INT("owner primo assignment", s->assignments[0].hamiltonian_id, 1);
+    CHECK_INT("owner secondo assignment", s->assignments[1].hamiltonian_id, 2);
+    CHECK_INT("salva assignment con owner", save_assignments(s), 1);
+    Assignment loaded[4] = {0}; int n_loaded = 0;
+    CHECK_INT("ricarica assignment con owner", load_assignments_file(work_path("assignments.txt"), loaded, &n_loaded, NULL), 2);
+    CHECK_INT("due righe dopo restore", n_loaded, 2);
+    CHECK_INT("owner H1 dopo restore", loaded[0].hamiltonian_id, 1);
+    CHECK_INT("owner H2 dopo restore", loaded[1].hamiltonian_id, 2);
+    DONE();
+}
+
+/* H-05: the Project tab's hierarchy is deterministic: each Hamiltonian row
+   is followed by exactly its states, rather than relying on a hidden current
+   index or previous/next navigation. */
+static int test_project_rows_are_hamiltonian_state_hierarchy(void) {
+    AppState *s = new_state();
+    add_species(s);                                      /* H1: header + states 0,1 */
+    CHECK_INT("duplica H1", predfit_duplicate_hamiltonian(s, "H2"), 1);
+    int h = -1, state = -2;
+    CHECK_INT("sei righe progetto", project_row_count(&s->predfit), 6);
+    CHECK_INT("riga 0 H1", project_row_info(&s->predfit, 0, &h, &state), 1);
+    CHECK_INT("header H1", h, 0); CHECK_INT("header non è stato", state, -1);
+    CHECK_INT("riga 1 stato H1", project_row_info(&s->predfit, 1, &h, &state), 1);
+    CHECK_INT("stato H1 appartiene a H1", h, 0); CHECK_INT("indice stato H1", state, 0);
+    CHECK_INT("riga 3 H2", project_row_info(&s->predfit, 3, &h, &state), 1);
+    CHECK_INT("header H2", h, 1); CHECK_INT("header H2 non è stato", state, -1);
+    CHECK_INT("riga 5 stato H2", project_row_info(&s->predfit, 5, &h, &state), 1);
+    CHECK_INT("stato H2 appartiene a H2", h, 1); CHECK_INT("indice stato H2", state, 1);
+    DONE();
+}
+
+/* H-06: Add Hamiltonian is intentionally different from Duplicate.  It is a
+   clean Pickett model, while the model the user was editing is retained. */
+static int test_add_hamiltonian_starts_fresh_and_keeps_source(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    p->a = 4321.0;
+    p->temp_k = 42.0;
+    p->mu[0] = 7.0; /* active-state editing is projected through p->mu */
+    p->species[0].concentration = 0.25;
+
+    CHECK_INT("aggiungi Hamiltoniano pulito", predfit_add_hamiltonian(s, "Fresh H"), 1);
+    CHECK_INT("due Hamiltoniani", p->n_hamiltonians, 2);
+    CHECK_INT("nuovo H è attivo", p->active_hamiltonian, 1);
+    CHECK(strcmp(p->hamiltonian[1].name, "Fresh H") == 0, "nome H nuovo: '%s'", p->hamiltonian[1].name);
+    CHECK_DBL("A del nuovo H è default", p->a, 10000.0, 1e-12);
+    CHECK_DBL("Trot del nuovo H è default", p->temp_k, 5.0, 1e-12);
+    CHECK_DBL("dipolo stato nuovo è default", p->species[0].mu[0], 1.0, 1e-12);
+    CHECK_DBL("concentrazione stato nuovo è default", p->species[0].concentration, 1.0, 1e-12);
+
+    CHECK_INT("ritorna a H1", predfit_select_hamiltonian(s, 0), 1);
+    CHECK_DBL("A H1 conservata", p->a, 4321.0, 1e-12);
+    CHECK_DBL("Trot H1 conservata", p->temp_k, 42.0, 1e-12);
+    CHECK_DBL("dipolo H1 conservato", p->species[0].mu[0], 7.0, 1e-12);
+    CHECK_DBL("concentrazione H1 conservata", p->species[0].concentration, 0.25, 1e-12);
+    DONE();
+}
+
+/* H-07: deletion removes the whole ownership unit, not a model while leaving
+   its assignments silently attached to an unrelated remaining Hamiltonian. */
+static int test_delete_hamiltonian_removes_its_assignments_and_keeps_one(void) {
+    AppState *s = new_state();
+    PredLine line = {.freq_mhz = 3000.0, .linear_int = 1.0, .n_qn = 3,
+                     .Ju = 3, .Kau = 1, .Kcu = 2, .Jl = 2, .Kal = 0, .Kcl = 2};
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.01, 1.0, 1);
+    CHECK_INT("crea H2", predfit_add_hamiltonian(s, "H2"), 1);
+    line.Ju = 4;
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 4000.01, 1.0, 2);
+    CHECK_INT("due assignment prima della rimozione", s->n_assignments, 2);
+
+    CHECK_INT("elimina H2", predfit_delete_hamiltonian(s, 1), 1);
+    CHECK_INT("rimane H1", s->predfit.n_hamiltonians, 1);
+    CHECK_INT("H1 torna attivo", predfit_active_hamiltonian_id(s), 1);
+    CHECK_INT("assignment H2 rimosso", s->n_assignments, 1);
+    CHECK_INT("assignment rimasto è H1", s->assignments[0].hamiltonian_id, 1);
+    CHECK_INT("ultimo H protetto", predfit_delete_hamiltonian(s, 0), 0);
+    CHECK_INT("H1 ancora presente", s->predfit.n_hamiltonians, 1);
+    DONE();
+}
+
 /* D1 answer: NVIB smaller than the states of the included species rejects
    Calculate and Fit, says the minimum and writes no Pickett file. */
 static int test_nvib_too_small_rejected(void) {
@@ -1872,7 +2130,7 @@ static int test_reassign_keeps_exclusion(void) {
     assign_index(s, 0, 3000.0, 1.0);
     s->assignments[0].fit_enabled = 0;
     PredLine line = s->assignments[0].pred;
-    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.25, 2.0);
+    add_or_update_assignment(s->assignments, &s->n_assignments, line, 3000.25, 2.0, 0);
     CHECK_INT("una sola transizione", s->n_assignments, 1);
     CHECK_INT("esclusione conservata", s->assignments[0].fit_enabled, 0);
     CHECK_DBL("nuova frequenza osservata", s->assignments[0].exp_freq, 3000.25, 1e-9);
@@ -1896,6 +2154,100 @@ static int test_malformed_exclusions_are_safe(void) {
     CHECK_INT("assignment conservati", r->n_assignments, 2);
     for (int i = 0; i < r->n_assignments; i++)
         CHECK_INT("file malformato non esclude", r->assignments[i].fit_enabled, 1);
+    DONE();
+}
+
+/* T-17, T-25: Intensity analysis may refine its own displayed result, but a
+   rejected fit must change nothing and a successful one must not write the
+   active Pred&Fit species or mark its session dirty. */
+static int test_intensity_fit_does_not_touch_predfit(void) {
+    AppState *s = new_state();
+    Point points[11];
+    for (int i = 0; i < 11; i++) points[i] = (Point){(double)i, -1.0};
+    PredLine lines[2] = {
+        {.freq_mhz = 3.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 3, .Ju = 3, .mu = 'a'},
+        {.freq_mhz = 7.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 3, .Ju = 7, .mu = 'a'},
+    };
+    s->current_pts = points; s->n_pts = 11;
+    s->pred_lines = lines; s->n_pred = 2;
+    s->assignments[0] = (Assignment){.pred = lines[0], .exp_freq = 3.0, .fit_enabled = 1};
+    s->assignments[1] = (Assignment){.pred = lines[1], .exp_freq = 7.0, .fit_enabled = 1};
+    s->n_assignments = 2;
+    s->cat_temp_k = 10.0; s->rot_temp_k = 12.0;
+    s->dipole_cat[0] = 2.0; s->dipole_red[0] = 0.0;
+    s->intfit_fit_temperature = 0;
+    s->intfit_fit_dipole[0] = 1;
+    s->intfit_fit_dipole[1] = s->intfit_fit_dipole[2] = 0;
+    s->predfit.temp_k = 77.0;
+    s->predfit.mu[0] = 7.0; s->predfit.mu[1] = 8.0; s->predfit.mu[2] = 9.0;
+    s->predfit.session_dirty = 0;
+
+    CHECK_INT("fit con aree non positive rifiutato", intensity_fit_run(s), 0);
+    CHECK_DBL("fit rifiutato non riempie mu red", s->dipole_red[0], 0.0, 1e-12);
+    CHECK_DBL("fit rifiutato non tocca T Pred&Fit", s->predfit.temp_k, 77.0, 1e-12);
+    CHECK_DBL("fit rifiutato non tocca mu Pred&Fit", s->predfit.mu[0], 7.0, 1e-12);
+    CHECK_INT("fit rifiutato non sporca sessione", s->predfit.session_dirty, 0);
+
+    for (int i = 0; i < 11; i++) points[i].y = 1.0;
+    CHECK_INT("fit con due aree positive", intensity_fit_run(s), 1);
+    CHECK_INT("risultato intensity disponibile", s->intfit_has_result, 1);
+    CHECK_DBL("fit riuscito non tocca T Pred&Fit", s->predfit.temp_k, 77.0, 1e-12);
+    CHECK_DBL("fit riuscito non tocca mu a Pred&Fit", s->predfit.mu[0], 7.0, 1e-12);
+    CHECK_DBL("fit riuscito non tocca mu b Pred&Fit", s->predfit.mu[1], 8.0, 1e-12);
+    CHECK_DBL("fit riuscito non tocca mu c Pred&Fit", s->predfit.mu[2], 9.0, 1e-12);
+    CHECK_INT("fit riuscito non sporca sessione", s->predfit.session_dirty, 0);
+    DONE();
+}
+
+/* T-18, R-12: the common display recalculation must keep every generated
+   species' concentration.  Intensity-analysis controls are not allowed to
+   collapse a generated multi-species catalogue into the active species. */
+static int test_intensity_recompute_keeps_concentration(void) {
+    AppState *s = new_state();
+    PredLine lines[2] = {
+        {.freq_mhz = 3000.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 4, .M1u = 0, .M1l = 0, .mu = 'a'},
+        {.freq_mhz = 3001.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 4, .M1u = 1, .M1l = 1, .mu = 'a'},
+    };
+    s->pred_lines = lines; s->n_pred = 2;
+    s->predfit.generated_catalog_active = 1;
+    s->predfit.int_settings.temp_k = 10.0;
+    s->predfit.n_species = 2;
+    s->predfit.species[0] = (PickettSpecies){"A", 0, 1, {1.0, 1.0, 1.0}, 1.0};
+    s->predfit.species[1] = (PickettSpecies){"B", 1, 1, {1.0, 1.0, 1.0}, 0.1};
+
+    predfit_recompute_display_intensities(s);
+    CHECK_DBL("rapporto iniziale delle concentrazioni", lines[1].linear_int / lines[0].linear_int, 0.1, 1e-9);
+
+    /* These are the values edited by Intensity analysis for an external
+       catalogue.  They must not route a generated multi-species catalogue
+       through the old single-species rescaler. */
+    s->rot_temp_k = 50.0;
+    s->dipole_red[0] = 7.0;
+    predfit_recompute_display_intensities(s);
+    CHECK_DBL("rapporto conservato dopo T/mu intensity", lines[1].linear_int / lines[0].linear_int, 0.1, 1e-9);
+    DONE();
+}
+
+/* PF-02: concentration is an external lower-state population multiplier.
+   This matters only for a non-diagonal transition; diagonal rotational rows
+   retain the expected state concentration. */
+static int test_interstate_line_uses_lower_state_concentration(void) {
+    AppState *s = new_state();
+    PredLine lines[2] = {
+        {.freq_mhz = 3000.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 4,
+         .M1u = 1, .M1l = 0, .mu = 'a'},
+        {.freq_mhz = 3000.0, .cat_lgint = 0.0, .rot_dof = 3, .n_qn = 4,
+         .M1u = 1, .M1l = 1, .mu = 'a'},
+    };
+    s->pred_lines = lines; s->n_pred = 2;
+    s->predfit.generated_catalog_active = 1;
+    s->predfit.temp_k = 10.0;
+    s->predfit.n_species = 2;
+    s->predfit.species[0] = (PickettSpecies){"state 0", 0, 1, {1, 1, 1}, 0.25};
+    s->predfit.species[1] = (PickettSpecies){"state 1", 1, 1, {1, 1, 1}, 9.0};
+    predfit_recompute_display_intensities(s);
+    CHECK_DBL("transizione inter-stato pesa lo stato inferiore",
+              lines[0].linear_int / lines[1].linear_int, 0.25 / 9.0, 1e-12);
     DONE();
 }
 
@@ -1939,6 +2291,14 @@ static const Test TESTS[] = {
     {"test_reader_rejects_lin_file",           test_reader_rejects_lin_file},
     {"test_reader_legacy_14_and_16",           test_reader_legacy_14_and_16},
     {"test_nvib_typed_value_kept",             test_nvib_typed_value_kept},
+    {"test_multistate_writes_one_int_with_shared_trot", test_multistate_writes_one_int_with_shared_trot},
+    {"test_hamiltonian_switch_keeps_independent_models", test_hamiltonian_switch_keeps_independent_models},
+    {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
+    {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
+    {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
+    {"test_project_rows_are_hamiltonian_state_hierarchy", test_project_rows_are_hamiltonian_state_hierarchy},
+    {"test_add_hamiltonian_starts_fresh_and_keeps_source", test_add_hamiltonian_starts_fresh_and_keeps_source},
+    {"test_delete_hamiltonian_removes_its_assignments_and_keeps_one", test_delete_hamiltonian_removes_its_assignments_and_keeps_one},
     {"test_nvib_too_small_rejected",           test_nvib_too_small_rejected},
     {"test_option_line_other_tokens_kept",     test_option_line_other_tokens_kept},
     {"test_param_id_zero_or_duplicate_rejected", test_param_id_zero_or_duplicate_rejected},
@@ -1964,6 +2324,9 @@ static const Test TESTS[] = {
     {"test_undo_exclusions_by_identity",       test_undo_exclusions_by_identity},
     {"test_reassign_keeps_exclusion",          test_reassign_keeps_exclusion},
     {"test_malformed_exclusions_are_safe",     test_malformed_exclusions_are_safe},
+    {"test_intensity_fit_does_not_touch_predfit", test_intensity_fit_does_not_touch_predfit},
+    {"test_intensity_recompute_keeps_concentration", test_intensity_recompute_keeps_concentration},
+    {"test_interstate_line_uses_lower_state_concentration", test_interstate_line_uses_lower_state_concentration},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 
