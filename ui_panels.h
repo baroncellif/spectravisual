@@ -49,7 +49,9 @@ static inline SDL_Rect ui_br_f1(SDL_Rect w)    { return ui_p_right(w, 1, UI_P_FI
 static inline SDL_Rect ui_br_f2(SDL_Rect w)    { return ui_p_right(w, 2, UI_P_FIELD); }
 static inline SDL_Rect ui_br_f3(SDL_Rect w)    { return ui_p_right(w, 3, UI_P_FIELD); }
 static inline SDL_Rect ui_br_toggle(SDL_Rect w, int kaiser) { return ui_p_row(w, kaiser ? 6 : 4); }
-static inline int      ui_br_rows(int kaiser)  { return kaiser ? 7 : 5; }
+/* Which traces the profile draws: the total, the states, or both. */
+static inline SDL_Rect ui_br_traces(SDL_Rect w, int kaiser) { return ui_p_row(w, kaiser ? 7 : 5); }
+static inline int      ui_br_rows(int kaiser)  { return kaiser ? 8 : 6; }
 
 /* --- Intensity analysis ----------------------------------------------- */
 static inline SDL_Rect ui_int_cat_temp(SDL_Rect w) { return ui_p_right(w, 1, UI_P_FIELD + 24); }

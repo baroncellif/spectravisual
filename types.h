@@ -110,6 +110,14 @@ typedef struct {
     char label[MAX_PICKETT_LABEL];
 } PickettParameter;
 
+/* Which broadened traces reach the plot.  The total is what is compared with
+   the experiment; the per-state traces say who contributes what. */
+typedef enum {
+    TRACE_SUM = 0,          /* the total only - the default */
+    TRACE_SUM_AND_STATES,   /* the total and one trace per state */
+    TRACE_STATES            /* the states only */
+} SpeciesTraceMode;
+
 /* A state belongs to one Hamiltonian.  Its dipoles are separate cards in that
    Hamiltonian's single .int; temperature, cutoffs and range stay on the
    Hamiltonian because SPCAT accepts them once per .int file.  Concentration
@@ -229,9 +237,10 @@ typedef struct {
        Hamiltonian.  Empty while the prediction is a single external .cat. */
     SimulatedCatalog simulated[MAX_PICKETT_HAMILTONIANS];
     int n_simulated;
-    /* Draw one broadened trace per state beside the total one.  Off until the
-       user asks for it: with many states the plot becomes a thicket. */
-    int show_species_traces;
+    /* Which broadened traces are drawn: see SpeciesTraceMode.  The total
+       alone until the user asks for more - with many states the plot becomes
+       a thicket. */
+    int species_trace_mode;
     /* Rotates through the default palette so that two states of the project -
        in the same Hamiltonian or in two of them - never start the same
        colour. */

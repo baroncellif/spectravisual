@@ -1192,7 +1192,17 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   nulla; senza broadening non c'è profilo),
   `test_species_trace_colour_default_and_session`,
   `test_default_species_colours_are_distinct`.
+  - **selettore delle tracce nel pannello Broadening** (richiesta successiva
+    dello stesso giorno): `Sum | Sum+single | Single`, tre segmenti come il
+    selettore di modo sopra, così si sceglie se vedere tutto insieme, solo la
+    somma o solo le singole. È lo stesso stato (`species_trace_mode`) che il
+    pulsante *Traces* di Simulation fa ciclare, e vale in entrambi i modi di
+    broadening (analitico e Kaiser). In `Single` le sottotracce prendono lo
+    spessore pieno del profilo.
 - **Nota**: per ora vale per il broadening, non per gli stick, come richiesto.
+- **Test aggiuntivo**: `test_broadening_panel_selects_the_traces` (i tre
+  segmenti mappano sui tre modi; la riga non si sovrappone al toggle in
+  nessuno dei due modi di broadening).
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

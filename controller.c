@@ -484,6 +484,18 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                     input_focus(s, INPUT_KINTR, mx);
                 } else if (point_in_rect(mx, my, ui_br_toggle(w, s->broaden_mode == 1))) {
                     s->broadening_active = !s->broadening_active;
+                } else {
+                    SDL_Rect traces = ui_br_traces(w, s->broaden_mode == 1);
+                    if (point_in_rect(mx, my, traces)) {
+                        /* Sum | Sum+single | Single: the three segments split
+                           the row evenly, like the mode selector above. */
+                        int seg = (mx - traces.x) * 3 / (traces.w > 0 ? traces.w : 1);
+                        if (seg < 0) seg = 0;
+                        if (seg > 2) seg = 2;
+                        s->predfit.species_trace_mode = seg;
+                        s->predfit.session_dirty = 1;
+                        s->input_state = INPUT_NONE;
+                    }
                 }
                 return;
             }

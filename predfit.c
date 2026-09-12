@@ -454,7 +454,7 @@ void predfit_save_session(AppState *s) {
     fprintf(fp, "active_molecule %d\n", p->active_species);
     /* The unprefixed records above are a readable compatibility projection of
        the active model.  h4 records are the authoritative project list. */
-    fprintf(fp, "species_traces %d\n", p->show_species_traces != 0);
+    fprintf(fp, "species_traces %d\n", p->species_trace_mode);
     fprintf(fp, "h4project %d %d %d\n", p->n_hamiltonians,
             p->active_hamiltonian, p->next_hamiltonian_id);
     for (int h = 0; h < p->n_hamiltonians; h++) {
@@ -575,7 +575,8 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
         if (strncmp(line, "species_traces ", 15) == 0) {
-            p->show_species_traces = atoi(line + 15) != 0;
+            int mode = atoi(line + 15);
+            p->species_trace_mode = (mode >= 0 && mode <= 2) ? mode : TRACE_SUM;
             continue;
         }
         if (strncmp(line, "h4project ", 10) == 0) {
@@ -3580,12 +3581,15 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         }
         if (point_in_rect(x, y, u.btn_a)) { predfit_simulate(s); return 1; }
         if (point_in_rect(x, y, u.btn_d)) {
-            p->show_species_traces = !p->show_species_traces;
+            /* The same three choices as the Broadening panel, cycled here. */
+            p->species_trace_mode = (p->species_trace_mode + 1) % 3;
             p->session_dirty = 1;
             snprintf(p->status, sizeof(p->status),
-                     p->show_species_traces
-                         ? "Broadening draws one trace per state, in its colour, beside the total."
-                         : "Broadening draws the total trace only.");
+                     p->species_trace_mode == TRACE_SUM
+                         ? "Broadening draws the total trace only."
+                         : p->species_trace_mode == TRACE_SUM_AND_STATES
+                           ? "Broadening draws the total trace and one per state, in its colour."
+                           : "Broadening draws one trace per state only, each in its colour.");
             return 1;
         }
         if (point_in_rect(x, y, u.btn_b) || point_in_rect(x, y, u.btn_c)) {
@@ -3819,7 +3823,7 @@ void predfit_render_advanced(AppState *s) {
                    the swatch to change it. */
                 SDL_Rect swatch = {adv_col(u.table, 0.43), y + 3, 26, u.row_h - 8};
                 SDL_Color sc = predfit_species_color(sp, state_index);
-                if (!p->show_species_traces) { sc.r /= 3; sc.g /= 3; sc.b /= 3; }
+                if (p->species_trace_mode == TRACE_SUM) { sc.r /= 3; sc.g /= 3; sc.b /= 3; }
                 ui_fill(r, swatch, sc);
                 ui_frame(r, swatch, UI_LINE);
                 static const double at[3] = {0.50, 0.64, 0.78};
@@ -3840,11 +3844,13 @@ void predfit_render_advanced(AppState *s) {
         ui_button(r, u.btn_b, "Check all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_c, "Uncheck all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_d,
-                  p->show_species_traces ? "Traces per state: on" : "Traces per state: off", -1,
-                  UI_BTN_QUIET, p->show_species_traces, 0, 0, 0);
+                  p->species_trace_mode == TRACE_SUM ? "Traces: sum" :
+                  p->species_trace_mode == TRACE_SUM_AND_STATES ? "Traces: sum + states"
+                                                                : "Traces: states", -1,
+                  UI_BTN_QUIET, p->species_trace_mode != TRACE_SUM, 0, 0, 0);
         ui_text(r, UI_FONT_SANS_SM,
-                p->show_species_traces
-                    ? "With broadening on, each state is drawn in its colour under the total trace."
+                p->species_trace_mode != TRACE_SUM
+                    ? "With broadening on, each state is drawn in its own colour (also in the Broadening panel)."
                     : "One SPCAT run per checked Hamiltonian; the catalogues are shown in one plot.",
                 u.btn_d.x + u.btn_d.w + 16, u.footer.y + 17, UI_FAINT);
 

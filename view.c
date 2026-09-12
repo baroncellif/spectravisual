@@ -777,11 +777,13 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
 
             /* Each state first, the total on top of them: the sum is the line
                being compared with the experiment and must stay readable. */
-            if (state->predfit.show_species_traces) {
+            int trace_mode = state->predfit.species_trace_mode;
+            if (trace_mode != TRACE_SUM) {
                 PredfitSpeciesTrace species[MAX_PICKETT_HAMILTONIANS * MAX_PICKETT_SPECIES];
                 int n_species = predfit_plot_species(state, species,
                                                      (int)(sizeof(species) / sizeof(species[0])));
-                float sub_width = (float)state->settings.profile_width - 1.0f;
+                float sub_width = (float)state->settings.profile_width
+                                - (trace_mode == TRACE_SUM_AND_STATES ? 1.0f : 0.0f);
                 if (sub_width < 1.0f) sub_width = 1.0f;
                 for (int sp = 0; sp < n_species; sp++) {
                     BroadCfg one = cfg;
@@ -802,15 +804,17 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     if (pbuf) ui_plot_polyline(ren, pbuf, sn, sub_width, sc);
                 }
             }
-            for (int i = 0; i < steps; i++) {
-                double f0 = state->pvxmin + i * col_span;
-                double best = broad_max_between(state, &cfg, f0, f0 + col_span, sub);
-                double h_ratio = (best / state->pred_global_max) * state->pred_scale;
-                double py = l->pred_y + l->pred_h - h_ratio * (l->pred_h - 10);
-                if (py < l->pred_y) py = l->pred_y;          /* clip at the top */
-                if (pbuf && pn <= steps) pbuf[pn++] = (SDL_FPoint){(float)(l->pred_x + i), (float)py};
+            if (trace_mode != TRACE_STATES) {
+                for (int i = 0; i < steps; i++) {
+                    double f0 = state->pvxmin + i * col_span;
+                    double best = broad_max_between(state, &cfg, f0, f0 + col_span, sub);
+                    double h_ratio = (best / state->pred_global_max) * state->pred_scale;
+                    double py = l->pred_y + l->pred_h - h_ratio * (l->pred_h - 10);
+                    if (py < l->pred_y) py = l->pred_y;      /* clip at the top */
+                    if (pbuf && pn <= steps) pbuf[pn++] = (SDL_FPoint){(float)(l->pred_x + i), (float)py};
+                }
+                if (pbuf) ui_plot_polyline(ren, pbuf, pn, (float)state->settings.profile_width, prc);
             }
-            if (pbuf) ui_plot_polyline(ren, pbuf, pn, (float)state->settings.profile_width, prc);
         }
 
         // Draw all predicted lines. Lines that collapse into the same pixel column
@@ -1406,6 +1410,14 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
             }
         }
         ui_toggle_row(ren, ui_br_toggle(w, kaiser), "Simulated profile", state->broadening_active, mx, my);
+        {
+            /* Which traces are drawn.  The colours of the per-state traces are
+               chosen in Pred&Fit Advanced > Simulation. */
+            const char *traces[3] = {"Sum", "Sum+single", "Single"};
+            int mode = state->predfit.species_trace_mode;
+            if (mode < 0 || mode > 2) mode = TRACE_SUM;
+            ui_segmented(ren, ui_br_traces(w, kaiser), traces, 3, mode);
+        }
     }
 
     // 5. INTENSITY ANALYSIS

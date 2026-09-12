@@ -1879,7 +1879,7 @@ static int test_species_trace_colour_default_and_session(void) {
     AppState *s = new_state();
     PredFitState *p = &s->predfit;
     mono_model(p);
-    CHECK_INT("sottotracce spente di default", p->show_species_traces, 0);
+    CHECK_INT("sottotracce spente di default", p->species_trace_mode, TRACE_SUM);
     add_species(s);
     CHECK_INT("due stati", p->n_species, 2);
     SDL_Color first = predfit_species_color(&p->species[0], 0);
@@ -1896,13 +1896,13 @@ static int test_species_trace_colour_default_and_session(void) {
     CHECK_INT("uno stato escluso non ha traccia", predfit_plot_species(s, list, 8), 1);
     p->species[1].predict_enabled = 1;
 
-    p->show_species_traces = 1;
+    p->species_trace_mode = TRACE_STATES;
     p->species[1].trace_color = (SDL_Color){10, 20, 30, 235};
     predfit_save_session(s);
 
     AppState *r = new_state();
     predfit_load_session(r);
-    CHECK_INT("interruttore salvato", r->predfit.show_species_traces, 1);
+    CHECK_INT("modo delle tracce salvato", r->predfit.species_trace_mode, TRACE_STATES);
     CHECK_INT("colore salvato: rosso", r->predfit.species[1].trace_color.r, 10);
     CHECK_INT("colore salvato: verde", r->predfit.species[1].trace_color.g, 20);
     CHECK_INT("colore salvato: blu", r->predfit.species[1].trace_color.b, 30);
@@ -1933,6 +1933,38 @@ static int test_default_species_colours_are_distinct(void) {
         }
     }
     CHECK_INT("colori raccolti", n, 5);
+    DONE();
+}
+
+/* H-16: the Broadening panel chooses which traces are drawn - the total, the
+   per-state ones, or both - and the three segments map to the three modes. */
+static int test_broadening_panel_selects_the_traces(void) {
+    AppState *s = new_state();
+    Layout L;
+    s->win_br.visible = 1;
+    compute_layout(s, &L);
+    update_sidebars(s, &L);
+    SDL_Rect w = s->win_br.rect;
+    CHECK(w.w > 0 && w.h > 0, "pannello Broadening senza geometria");
+    if (w.w <= 0) DONE();
+    SDL_Rect traces = ui_br_traces(w, s->broaden_mode == 1);
+    CHECK_INT("modo iniziale", s->predfit.species_trace_mode, TRACE_SUM);
+
+    int y = traces.y + traces.h / 2;
+    mouse_button(s, &L, SDL_MOUSEBUTTONDOWN, traces.x + traces.w / 2, y, SDL_BUTTON_LEFT);
+    CHECK_INT("segmento centrale = somma + stati", s->predfit.species_trace_mode, TRACE_SUM_AND_STATES);
+    mouse_button(s, &L, SDL_MOUSEBUTTONDOWN, traces.x + traces.w - 4, y, SDL_BUTTON_LEFT);
+    CHECK_INT("terzo segmento = solo stati", s->predfit.species_trace_mode, TRACE_STATES);
+    mouse_button(s, &L, SDL_MOUSEBUTTONDOWN, traces.x + 4, y, SDL_BUTTON_LEFT);
+    CHECK_INT("primo segmento = solo somma", s->predfit.species_trace_mode, TRACE_SUM);
+
+    /* The row exists in both broadening modes and never overlaps the toggle. */
+    for (int kaiser = 0; kaiser <= 1; kaiser++) {
+        SDL_Rect toggle = ui_br_toggle(w, kaiser);
+        SDL_Rect row = ui_br_traces(w, kaiser);
+        CHECK(row.y >= toggle.y + toggle.h,
+              "la riga delle tracce si sovrappone al toggle (kaiser=%d)", kaiser);
+    }
     DONE();
 }
 
@@ -2705,6 +2737,7 @@ static const Test TESTS[] = {
     {"test_species_traces_split_the_broadened_profile", test_species_traces_split_the_broadened_profile},
     {"test_species_trace_colour_default_and_session", test_species_trace_colour_default_and_session},
     {"test_default_species_colours_are_distinct", test_default_species_colours_are_distinct},
+    {"test_broadening_panel_selects_the_traces", test_broadening_panel_selects_the_traces},
     {"test_session_saved_only_on_request", test_session_saved_only_on_request},
     {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
