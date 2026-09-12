@@ -108,8 +108,9 @@ Le domande complete sono nel report ([§12](README.md#12-domande-bloccanti)).
 fit); #9–#15 risultati scientifici sbagliati (intensità, specie, parametri);
 #16–#20 comportamenti che inducono errori (tastiera, spettro attivo,
 impostazioni, percorsi, Find peaks); #21–#24 architettura, prestazioni e UI;
-#25 aggiunge l'importazione esplicita di un modello Pickett esterno, dopo che le
-funzioni di base di Pred&Fit saranno state stabilizzate.
+#25 aggiunge l'importazione esplicita di un modello Pickett esterno; #26 rende
+il workspace Pred&Fit leggibile (un file per Hamiltoniano, rinomina e riordino)
+e il salvataggio della sessione un'azione esplicita.
 
 | # | Titolo | Bug/issue | Impatto | Bloccato da |
 |---|---|---|---|---|
@@ -139,7 +140,8 @@ funzioni di base di Pred&Fit saranno state stabilizzate.
 | #22 | Prestazioni del caricamento della lista | B-48 | basso | parziale `7169e8b` |
 | #23 | Vista iniziale, estensioni, input numerici | B-31, B-50, U-14, B-37, M-02, U-18 | basso | — |
 | #24 | UI e pulizia | U-01, U-05, U-07, U-09, U-10, U-11, U-12, M-04, M-05 | basso | — |
-| #25 | Importazione esplicita di input SPFIT/SPCAT | richiesta utente 2026-09-12 | medio: adozione di modelli esterni senza ricostruzione manuale | dopo #21 e funzioni base Pred&Fit stabili |
+| #25 | Importazione esplicita di input SPFIT/SPCAT | richiesta utente 2026-09-12 | medio: adozione di modelli esterni senza ricostruzione manuale | fatto `HEAD` |
+| #26 | Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita | richiesta utente 2026-09-12 | medio: workspace leggibile e nessun salvataggio implicito | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 **P0.3** → #1; **P1** → #2, #6, #7, #8, #11, #14, #15, #18, #19, #21;
@@ -1033,8 +1035,55 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
     solo in `.fit/`, mai in `.fit/load/`.
 - **Documentazione**: README (workflow Pred&Fit), A3 (controllo UI e messaggi),
   A4 (persistenza e rami di errore); aggiungere fixture Pickett minime nei test.
-- **Stato**: ☐ pianificato su richiesta utente il 2026-09-12 — da iniziare solo
-  dopo la stabilizzazione delle funzioni base di Pred&Fit e dopo #21.
+- **Stato**: ☑ fatto il 2026-09-12 su richiesta dell'utente (anticipato rispetto
+  a #21) — `predfit_import_load_dir` legge `data_dir/.fit/load/`: ogni basename
+  distinto (estensioni confrontate senza distinzione di maiuscole) diventa un
+  Hamiltoniano con quel nome. Il `.par` (o il `.var`, se il `.par` manca) dà
+  l'option line e i parametri con le loro incertezze; il `.int` dà la carta di
+  controllo e uno stato per ogni dipolo diagonale, con i dipoli interstato
+  contati e riportati; il `.lin` diventa assignment di quell'Hamiltoniano.
+  L'import è additivo e quindi transazionale per costruzione: un modello già
+  nel progetto non viene mai sostituito — un nome già usato diventa `nome-2` —
+  e un file illeggibile fa saltare solo il proprio modello, con il motivo nello
+  stato. Nessun SPCAT/SPFIT viene eseguito e `load/` non è mai scritta né
+  consumata: i file di lavoro restano generati in `.fit/`. Comando esplicito:
+  **Import .fit/load** in Pred&Fit Advanced › Hamiltonians.
+  Test: `test_import_load_dir_builds_hamiltonians`.
+  Resta fuori: la scelta di una cartella arbitraria da un dialog di sistema e
+  il controllo di NQN del `.lin` contro un catalogo (le righe importate seguono
+  la stessa regola del restore: meno di 3 QN per stato → da riassegnare).
+
+### #26 — Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita
+
+- **Richiesta**: utente, 2026-09-12. Quattro punti: rinominare e riordinare
+  Hamiltoniani e stati dalla barra laterale; vedere il cursore di testo nella
+  terza riga del `.par/.var` (`s 1 1 0`); salvare i file di lavoro in `.fit/`
+  senza sottocartelle, usando come nome del file quello dell'Hamiltoniano;
+  non salvare più la sessione da sola ma con un tasto **Save**.
+- **Cosa è stato fatto**:
+  - `.fit/` torna piatta: `hamiltonian_file_stem` converte il nome visibile nel
+    basename Pickett (`model.par`, `H2.par`, ...) usato anche da SPCAT/SPFIT e
+    da `<stem>.exclusions.txt`. Una rinomina che produrrebbe il basename di un
+    altro Hamiltoniano viene rifiutata con il motivo nello stato;
+  - la barra laterale ha un fuoco unico (riga Hamiltoniano o riga stato) su cui
+    agiscono **Rename** (anche con doppio clic sulla riga, modificata in linea)
+    e **H up/H down** / **State up/State down**. Il riordino è solo
+    presentazione: `predfit_move_hamiltonian` e `predfit_move_species` non
+    toccano id, indice Pickett dello stato, assignment o file di lavoro;
+  - ogni campo in modifica disegna selezione e cursore (`adv_edit_text`), e un
+    clic dentro il campo in modifica posiziona il cursore invece di ricominciare
+    l'edit; nella PAR option line lo fa già il primo clic;
+  - `predfit_save_session` non viene più chiamata da `write_inputs`, dai
+    caricamenti di spettro o dall'uscita: la sessione si salva solo con **Save
+    session** (barra comandi, accanto a Export, e Advanced › Hamiltonians) o
+    con Cmd/Ctrl+S. `session_dirty` resta il segnale di "da salvare" ed è
+    mostrato sul pulsante.
+- **Test che passano**: `test_two_hamiltonians_keep_independent_int_controls`
+  (aggiornato allo schema piatto), `test_sidebar_reorder_keeps_identity`,
+  `test_session_saved_only_on_request`.
+- **Nota**: senza salvataggio all'uscita, un lavoro non salvato si perde alla
+  chiusura. È la scelta richiesta; l'avviso è il `*` sul pulsante Save session.
+- **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)
 
@@ -1048,5 +1097,5 @@ vincoli 1–6 verificati da test dedicati.
 | # | Descrizione | Prova | Trovato al passo | Passo in cui correggerlo |
 |---|---|---|---|---|
 | N-01 | Il numero di righe scartate dal passo #1 sta in `error_message`, che `add_spectrum` azzera a ogni caricamento riuscito ([main.c:282](../../main.c#L282)). All'avvio `spectravisual spettro.txt catalogo.cat` il catalogo è caricato prima dello spettro, quindi l'avviso sparisce subito. È lo stesso canale unico, sovrascritto da qualsiasi messaggio, di U-06; dal passo #4 vale anche per il resoconto della lettura di `assignments.txt`. | lettura di `add_spectrum` e dell'ordine di caricamento in `main` (prima il `.cat`, poi gli spettri) | #1 | #24 |
-| N-02 | La sessione Pred&Fit viene ancora salvata automaticamente da Calculate/Fit (`write_inputs`), quindi un esperimento o un modello sbagliato può sovrascrivere uno stato buono. Richiesta utente: eliminare gli autosalvataggi e aggiungere un pulsante **Save session** nella finestra principale, accanto a Export, che sia l'unico writer esplicito della sessione completa. | richiesta utente, 2026-09-11; writer `predfit_save_session` in `write_inputs` | #7 | nuovo passo, dopo una decisione su D7/sessione generale |
+| N-02 | ~~La sessione Pred&Fit viene salvata automaticamente da Calculate/Fit, dall'uscita e dai caricamenti di spettro.~~ Risolto in #26 il 2026-09-12: nessun salvataggio implicito, **Save session** nella barra comandi (e in Advanced › Hamiltonians) è l'unico writer. | richiesta utente, 2026-09-11; writer `predfit_save_session` in `write_inputs` | #7 | #26 |
 | N-03 | L'export deve produrre un PNG con una specifica visiva da definire; l'attuale screenshot esporta `spectravisual_export.bmp` nella CWD. | richiesta utente, 2026-09-11; `save_screenshot` in `main.c` | #7 | nuovo passo, dopo la specifica PNG |

@@ -393,7 +393,9 @@ static void process_pending_loads(AppState *state) {
                 reopen_predfit_session(state);
                 break;
             case PENDING_LOAD_SPECTRUM:
-                if (add_spectrum(state, request.path)) predfit_save_session(state);
+                /* The session is written only when the user asks for it in
+                    Pred&Fit Advanced; loading a spectrum just makes it stale. */
+                if (add_spectrum(state, request.path)) state->predfit.session_dirty = 1;
                 break;
         }
     }
@@ -576,8 +578,8 @@ int main(int argc, char *argv[])
         restore_session_view(&state);
         predfit_render_advanced(&state);
         settings_render(&state);
-        if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; predfit_save_session(&state); }
-        if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; predfit_save_session(&state); }
+        if(state.pending_select >= 0) { select_spectrum(&state, state.pending_select); state.pending_select = -1; state.predfit.session_dirty = 1; }
+        if(state.pending_remove >= 0) { remove_spectrum(&state, state.pending_remove); state.pending_remove = -1; state.predfit.session_dirty = 1; }
 
         // Keep the active spectrum in sync with the mirror fields the tools edit.
         commit_active(&state);
@@ -595,7 +597,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (state.predfit.session_dirty) predfit_save_session(&state);
+    /* Quitting no longer writes the session: Save session in Pred&Fit
+       Advanced is the only route that overwrites spectravisual.state. */
     free_dataset(&state);
     plotgpu_shutdown();
     settings_dispose(&state);

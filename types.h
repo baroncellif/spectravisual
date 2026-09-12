@@ -189,6 +189,7 @@ typedef struct {
     int advanced_edit_col;    // 0=id, 1=value, 2=parameter uncertainty
     int advanced_edit_species;
     int advanced_edit_hamiltonian;
+    int advanced_nav_state;   /* sidebar focus: -1 the Hamiltonian, else its state */
     int advanced_edit_replace;
     int advanced_edit_caret;
     int advanced_edit_anchor;

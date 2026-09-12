@@ -16,14 +16,29 @@
 #include "settings.h"
 #include <limits.h>
 #include <time.h>
+#include <dirent.h>
 
 #define FIT_DIR_NAME ".fit"
+/* Drop box inside .fit: Pickett files put here are read by Import, never
+   written to.  Every generated file keeps living one level up, in .fit. */
+#define LOAD_DIR_NAME "load"
 
 static void work_file(const PredFitState *p, const char *name, char *out, size_t size);
 
 /* Pickett takes a basename rather than an arbitrary path.  The visible H name
    is therefore converted to a portable filename stem; spaces are made `_`,
    while ordinary letters, digits, `_` and `-` stay readable. */
+static void name_file_stem(const char *name, int id, char *out, size_t size) {
+    size_t used = 0;
+    for (const unsigned char *c = (const unsigned char *)(name ? name : ""); *c && used + 1 < size; c++) {
+        if (isalnum(*c) || *c == '_' || *c == '-') out[used++] = (char)*c;
+        else if (used && out[used - 1] != '_') out[used++] = '_';
+    }
+    while (used && out[used - 1] == '_') used--;
+    if (!used) used = (size_t)snprintf(out, size, "Hamiltonian_%d", id);
+    out[used < size ? used : size - 1] = '\0';
+}
+
 static void hamiltonian_file_stem(const PredFitState *p, char *out, size_t size) {
     const char *name = "model";
     int id = 1;
@@ -32,14 +47,7 @@ static void hamiltonian_file_stem(const PredFitState *p, char *out, size_t size)
         if (h->name[0]) name = h->name;
         id = h->id;
     }
-    size_t used = 0;
-    for (const unsigned char *c = (const unsigned char *)name; *c && used + 1 < size; c++) {
-        if (isalnum(*c) || *c == '_' || *c == '-') out[used++] = (char)*c;
-        else if (used && out[used - 1] != '_') out[used++] = '_';
-    }
-    while (used && out[used - 1] == '_') used--;
-    if (!used) used = (size_t)snprintf(out, size, "Hamiltonian_%d", id);
-    out[used < size ? used : size - 1] = '\0';
+    name_file_stem(name, id, out, size);
 }
 
 /* Where the Pickett working files live, and which programs run them: both come
@@ -949,6 +957,7 @@ void predfit_init(AppState *s) {
     p->advanced_edit_param = -1;
     p->advanced_edit_species = -1;
     p->advanced_edit_hamiltonian = -1;
+    p->advanced_nav_state = -1;
     p->advanced_delete_hamiltonian_id = 0;
     p->advanced_hover_line = -1;
     /* Point at the working directory straight away, so the Fitting tab shows
@@ -1114,6 +1123,41 @@ int predfit_select_hamiltonian(AppState *s, int index) {
     p->advanced_delete_hamiltonian_id = 0;
     p->session_dirty = 1;
     snprintf(p->status, sizeof(p->status), "Selected %s; calculate it before fitting.", p->hamiltonian[index].name);
+    return 1;
+}
+
+/* The sidebar shows the project in a user-chosen order.  Moving an entry
+   changes that order and nothing else: a Hamiltonian is identified by its id
+   and a state by its Pickett state index, so no assignment, catalogue row or
+   working file follows the move. */
+int predfit_move_hamiltonian(AppState *s, int index, int delta) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    int to = index + delta;
+    if (index < 0 || index >= p->n_hamiltonians || to < 0 || to >= p->n_hamiltonians) return 0;
+    store_active_hamiltonian(p);
+    HamiltonianModel moved = p->hamiltonian[index];
+    p->hamiltonian[index] = p->hamiltonian[to];
+    p->hamiltonian[to] = moved;
+    if (p->active_hamiltonian == index)      p->active_hamiltonian = to;
+    else if (p->active_hamiltonian == to)    p->active_hamiltonian = index;
+    p->session_dirty = 1;
+    return 1;
+}
+
+int predfit_move_species(AppState *s, int index, int delta) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    int to = index + delta;
+    if (index < 0 || index >= p->n_species || to < 0 || to >= p->n_species) return 0;
+    store_active_species(p);
+    PickettSpecies moved = p->species[index];
+    p->species[index] = p->species[to];
+    p->species[to] = moved;
+    if (p->active_species == index)      p->active_species = to;
+    else if (p->active_species == to)    p->active_species = index;
+    load_active_species(p);
+    p->session_dirty = 1;
     return 1;
 }
 
@@ -1376,7 +1420,6 @@ static int write_inputs(AppState *s, int for_fit) {
     }
     if (!prepare_fit_dir(s)) return 0;
     sync_basic_parameters(p);
-    predfit_save_session(s);
     char var_path[600], int_path[600], par_path[600], lin_path[600];
     work_file(p,"model.var",var_path,sizeof(var_path)); work_file(p,"model.int",int_path,sizeof(int_path));
     work_file(p,"model.par",par_path,sizeof(par_path)); work_file(p,"model.lin",lin_path,sizeof(lin_path));
@@ -1570,8 +1613,7 @@ typedef struct {
 
 static LinRow g_lin_rows[MAX_ASSIGNMENTS];
 
-static int read_lin_rows(const PredFitState *p) {
-    char path[600]; work_file(p, "model.lin", path, sizeof(path));
+static int read_lin_rows_path(const char *path) {
     FILE *fp = fopen(path, "r");
     if (!fp) return 0;
     int n = 0;
@@ -1600,6 +1642,12 @@ static int read_lin_rows(const PredFitState *p) {
     }
     fclose(fp);
     return n;
+}
+
+static int read_lin_rows(const PredFitState *p) {
+    char path[600];
+    work_file(p, "model.lin", path, sizeof(path));
+    return read_lin_rows_path(path);
 }
 
 /* Derived rather than stored: .lin carries no branch or dipole type. */
@@ -1741,6 +1789,299 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
     if (!legacy_exclusions && ignored_exclusions)
         *ignored_exclusions = predfit_load_exclusions(s);
     return marked;
+}
+
+/* ---------------------------------------------------------------------- *
+ *  Importing Pickett files written elsewhere
+ *
+ *  .fit/load is a drop box.  Files named after the model they describe -
+ *  mon.par (or mon.var), mon.int, mon.lin - become the Hamiltonian "mon"
+ *  with every state its .int declares.  Several models can wait there at
+ *  once: each distinct basename is one Hamiltonian.  Nothing in load/ is
+ *  modified or deleted, and the workspace files keep being generated from
+ *  the imported model like any other Hamiltonian's.
+ * ---------------------------------------------------------------------- */
+
+#define MAX_LOAD_MODELS 32
+
+typedef struct {
+    char stem[64];
+    int has_par, has_var, has_int, has_lin;
+} LoadCandidate;
+
+static void load_dir(const AppState *s, char *out, size_t size) {
+    char root[600];
+    fit_root(s, root, sizeof(root));
+    snprintf(out, size, "%s/%s", root, LOAD_DIR_NAME);
+}
+
+/* Pickett extensions are matched without regard to case: a file saved as
+   MON.PAR on another machine is the same model as mon.par. */
+static int load_candidate_slot(LoadCandidate *list, int *n, const char *stem) {
+    for (int i = 0; i < *n; i++)
+        if (strcasecmp(list[i].stem, stem) == 0) return i;
+    if (*n >= MAX_LOAD_MODELS) return -1;
+    memset(&list[*n], 0, sizeof(list[0]));
+    snprintf(list[*n].stem, sizeof(list[0].stem), "%s", stem);
+    return (*n)++;
+}
+
+static int load_candidate_cmp(const void *a, const void *b) {
+    return strcasecmp(((const LoadCandidate *)a)->stem, ((const LoadCandidate *)b)->stem);
+}
+
+/* Two header records, the option line, then one record per parameter.  The
+   third column is the uncertainty exactly as the file states it: in a .par
+   that is the fit control its author wrote, in a .var whatever SPFIT last
+   estimated.  Neither is reinterpreted here. */
+static int read_pickett_model_file(const char *path, PredFitSnapshot *m) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return 0;
+    char line[512];
+    if (!fgets(line, sizeof(line), fp) || !fgets(line, sizeof(line), fp) ||
+        !fgets(line, sizeof(line), fp)) { fclose(fp); return 0; }
+    line[strcspn(line, "\r\n")] = '\0';
+    int nvib = 0;
+    if (!hamiltonian_nvib(line, &nvib)) { fclose(fp); return 0; }
+    snprintf(m->hamiltonian_line, sizeof(m->hamiltonian_line), "%s", line);
+    m->n_param = 0;
+    while (fgets(line, sizeof(line), fp) && m->n_param < MAX_PICKETT_PARAMS) {
+        int id = 0;
+        double value = 0.0, error = 1.0;
+        int fields = sscanf(line, "%d %lf %lf", &id, &value, &error);
+        if (fields < 2 || id <= 0 || !isfinite(value)) continue;
+        if (fields < 3 || !isfinite(error) || error < 0.0) error = 1.0;
+        PickettParameter *x = &m->param[m->n_param++];
+        *x = (PickettParameter){id, value, error, ""};
+        parameter_label(x);
+    }
+    fclose(fp);
+    return m->n_param > 0;
+}
+
+/* The .int gives the control card and one dipole record per state: its
+   identifier carries the two vibrational indices and the axis, so V1 == V2
+   is a state of this model and V1 != V2 an interstate dipole SpectraVisual
+   cannot represent yet.  Those are reported rather than silently dropped. */
+static int read_pickett_int_file(const char *path, PredFitSnapshot *m, int *interstate) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return 0;
+    char title[512], line[512];
+    if (!fgets(title, sizeof(title), fp) || !fgets(line, sizeof(line), fp)) { fclose(fp); return 0; }
+    int flags = 0, tag = 0, maxv = -1;
+    double qrot = 0.0, fbegin_raw = 0.0, fend_raw = 40.0, s0 = -20.0, s1 = -20.0, fqlim = 0.0, temp = 0.0;
+    if (sscanf(line, "%d %d %lf %lf %lf %lf %lf %lf %lf %d",
+               &flags, &tag, &qrot, &fbegin_raw, &fend_raw, &s0, &s1, &fqlim, &temp, &maxv) >= 9) {
+        m->int_settings.flags = flags;
+        m->int_settings.tag = tag;
+        m->int_settings.fbegin = (int)lround(fbegin_raw);
+        /* FEND is a quantum-number bound; a fractional value can only come
+           from the old build that wrote FQLIM there. */
+        m->int_settings.fend = fabs(fend_raw - round(fend_raw)) > 1e-9 ? 40 : (int)lround(fend_raw);
+        if (isfinite(s0)) m->int_settings.intensity_cutoff = s0;
+        if (fqlim > 0.0) m->int_settings.fqlim_ghz = fqlim;
+        if (temp > 0.0) { m->temp_k = temp; m->int_settings.temp_k = temp; }
+        m->int_settings.maxv = maxv;
+    }
+    double mu[MAX_PICKETT_SPECIES][3];
+    int seen[MAX_PICKETT_SPECIES];
+    memset(mu, 0, sizeof(mu));
+    memset(seen, 0, sizeof(seen));
+    while (fgets(line, sizeof(line), fp)) {
+        int id = 0;
+        double value = 0.0;
+        if (sscanf(line, "%d %lf", &id, &value) != 2 || id <= 0 || !isfinite(value)) continue;
+        int axis = id % 10, v1 = (id / 10) % 10, v2 = (id / 100) % 10;
+        if (axis < 1 || axis > 3) continue;
+        if (v1 != v2) { if (interstate) (*interstate)++; continue; }
+        if (v1 >= MAX_PICKETT_SPECIES) continue;
+        mu[v1][axis - 1] = value;
+        seen[v1] = 1;
+    }
+    fclose(fp);
+    int n = 0;
+    for (int v = 0; v < MAX_PICKETT_SPECIES; v++) {
+        if (!seen[v]) continue;
+        PickettSpecies *sp = &m->species[n++];
+        memset(sp, 0, sizeof(*sp));
+        snprintf(sp->name, sizeof(sp->name), "State %d", v);
+        sp->state_index = v;
+        sp->predict_enabled = 1;
+        memcpy(sp->mu, mu[v], sizeof(sp->mu));
+        sp->concentration = 1.0;
+    }
+    if (n > 0) {
+        m->n_species = n;
+        m->active_species = 0;
+        memcpy(m->mu, m->species[0].mu, sizeof(m->mu));
+    }
+    return 1;
+}
+
+/* Two Hamiltonians may not share a Pickett basename, so an imported model
+   whose name is taken is imported beside it as "mon-2" rather than writing
+   over the files of the model already in the project. */
+static void unique_hamiltonian_name(const PredFitState *p, const char *wanted,
+                                    char *out, size_t size) {
+    for (int attempt = 1; attempt <= MAX_PICKETT_HAMILTONIANS + 1; attempt++) {
+        char candidate[64], stem[128], existing[128];
+        if (attempt == 1) snprintf(candidate, sizeof(candidate), "%s", wanted);
+        else snprintf(candidate, sizeof(candidate), "%s-%d", wanted, attempt);
+        name_file_stem(candidate, 0, stem, sizeof(stem));
+        int taken = 0;
+        for (int h = 0; h < p->n_hamiltonians && !taken; h++) {
+            name_file_stem(p->hamiltonian[h].name, p->hamiltonian[h].id, existing, sizeof(existing));
+            taken = strcmp(stem, existing) == 0;
+        }
+        if (!taken) { snprintf(out, size, "%s", candidate); return; }
+    }
+    snprintf(out, size, "%s", wanted);
+}
+
+/* The .lin rows of an imported model become assignments owned by it.  They
+   carry only what a .lin can say - quantum numbers and a measured frequency
+   - so rows with fewer than three QN per state are kept and marked, exactly
+   as a restored workspace .lin is. */
+static int import_load_lines(AppState *s, const char *path, int *marked) {
+    int n_rows = read_lin_rows_path(path);
+    int owner = predfit_active_hamiltonian_id(s);
+    int added = 0;
+    for (int k = 0; k < n_rows && s->n_assignments < MAX_ASSIGNMENTS; k++) {
+        LinRow *row = &g_lin_rows[k];
+        Assignment *a = &s->assignments[s->n_assignments++];
+        memset(a, 0, sizeof(*a));
+        int u[6], l[6];
+        lin_row_states(row, u, l);
+        a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
+        a->pred.M1u = u[3]; a->pred.M2u = u[4]; a->pred.M3u = u[5];
+        a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
+        a->pred.M1l = l[3]; a->pred.M2l = l[4]; a->pred.M3l = l[5];
+        a->pred.n_qn = row->nq;
+        set_branch_and_dipole(&a->pred);
+        a->exp_freq = row->freq;
+        a->fit_enabled = row->enabled;
+        a->hamiltonian_id = owner;
+        if (row->nq < 3) { a->needs_reassign = 1; if (marked) (*marked)++; }
+        added++;
+    }
+    return added;
+}
+
+static int import_one_model(AppState *s, const char *dir, const LoadCandidate *c,
+                            char *note, size_t note_size) {
+    PredFitState *p = &s->predfit;
+    PredFitSnapshot m;
+    default_hamiltonian_model(&m);
+    char path[900];
+    /* .par is the fitting input and states the uncertainties its author
+       chose; .var is read only when no .par accompanies it. */
+    snprintf(path, sizeof(path), "%s/%s.%s", dir, c->stem, c->has_par ? "par" : "var");
+    if (!read_pickett_model_file(path, &m)) {
+        snprintf(note, note_size, "%s: the %s has no readable option line or parameters.",
+                 c->stem, c->has_par ? ".par" : ".var");
+        return 0;
+    }
+    int interstate = 0, states_from_int = 0;
+    if (c->has_int) {
+        snprintf(path, sizeof(path), "%s/%s.int", dir, c->stem);
+        states_from_int = read_pickett_int_file(path, &m, &interstate);
+    }
+    char name[64];
+    unique_hamiltonian_name(p, c->stem, name, sizeof(name));
+    if (!predfit_add_hamiltonian(s, name)) {
+        snprintf(note, note_size, "%s: no room for another Hamiltonian.", c->stem);
+        return 0;
+    }
+    restore_active_model(p, &m);
+    sync_basic_from_parameters(p);
+    store_active_hamiltonian(p);
+    predfit_refresh_work_dir(s);
+    int lines = 0, marked = 0;
+    if (c->has_lin) {
+        snprintf(path, sizeof(path), "%s/%s.lin", dir, c->stem);
+        lines = import_load_lines(s, path, &marked);
+    }
+    size_t used = (size_t)snprintf(note, note_size, "%s: %d parameters, %d state%s, %d line%s",
+                                   p->hamiltonian[p->active_hamiltonian].name,
+                                   p->n_param, p->n_species, p->n_species == 1 ? "" : "s",
+                                   lines, lines == 1 ? "" : "s");
+    if (!states_from_int && used < note_size)
+        snprintf(note + used, note_size - used, " (no .int: one default state)");
+    else if (interstate > 0 && used < note_size)
+        snprintf(note + used, note_size - used, " (%d interstate dipole%s ignored)",
+                 interstate, interstate == 1 ? "" : "s");
+    else if (marked > 0 && used < note_size)
+        snprintf(note + used, note_size - used, " (%d to assign again)", marked);
+    return 1;
+}
+
+int predfit_import_load_dir(AppState *s) {
+    if (!s) return 0;
+    PredFitState *p = &s->predfit;
+    char dir[700];
+    load_dir(s, dir, sizeof(dir));
+    DIR *d = opendir(dir);
+    if (!d) {
+        snprintf(p->status, sizeof(p->status),
+                 "Put Pickett files (name.par/.var/.int/.lin) in %s and press Import again.", dir);
+        return 0;
+    }
+    LoadCandidate found[MAX_LOAD_MODELS];
+    int n_found = 0;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        const char *dot = strrchr(entry->d_name, '.');
+        if (!dot || dot == entry->d_name) continue;
+        int is_par = strcasecmp(dot, ".par") == 0, is_var = strcasecmp(dot, ".var") == 0;
+        int is_int = strcasecmp(dot, ".int") == 0, is_lin = strcasecmp(dot, ".lin") == 0;
+        if (!is_par && !is_var && !is_int && !is_lin) continue;
+        char stem[64];
+        size_t n = (size_t)(dot - entry->d_name);
+        if (n == 0 || n >= sizeof(stem)) continue;
+        memcpy(stem, entry->d_name, n);
+        stem[n] = '\0';
+        int slot = load_candidate_slot(found, &n_found, stem);
+        if (slot < 0) continue;
+        found[slot].has_par |= is_par;
+        found[slot].has_var |= is_var;
+        found[slot].has_int |= is_int;
+        found[slot].has_lin |= is_lin;
+    }
+    closedir(d);
+    qsort(found, (size_t)n_found, sizeof(found[0]), load_candidate_cmp);
+
+    int imported = 0, skipped = 0;
+    char report[160] = "", last_error[160] = "";
+    for (int i = 0; i < n_found; i++) {
+        if (!found[i].has_par && !found[i].has_var) { skipped++; continue; }
+        char note[160] = "";
+        if (import_one_model(s, dir, &found[i], note, sizeof(note))) {
+            imported++;
+            if (!report[0]) snprintf(report, sizeof(report), "%s", note);
+        } else {
+            skipped++;
+            snprintf(last_error, sizeof(last_error), "%s", note);
+        }
+    }
+    if (imported > 0) {
+        save_assignments(s);
+        predfit_save_exclusions(s);
+        p->session_dirty = 1;
+        p->advanced_nav_state = -1;
+        if (imported == 1)
+            snprintf(p->status, sizeof(p->status), "Imported %s. Save session to keep it.", report);
+        else
+            snprintf(p->status, sizeof(p->status),
+                     "Imported %d Hamiltonians from %s/ (%s, ...). Save session to keep them.",
+                     imported, LOAD_DIR_NAME, report);
+    } else if (last_error[0]) {
+        snprintf(p->status, sizeof(p->status), "Nothing imported - %s", last_error);
+    } else {
+        snprintf(p->status, sizeof(p->status),
+                 "%s holds no model to import: a .par or a .var is required.", dir);
+    }
+    (void)skipped;
+    return imported;
 }
 
 int predfit_restore_latest(AppState *s) {
@@ -1941,6 +2282,20 @@ static void advanced_begin_hamiltonian_name_edit(PredFitState *p) {
     SDL_StartTextInput();
 }
 
+/* Renaming a state from the sidebar edits the very same name the States tab
+   shows; it is a separate edit mode only because it is drawn in place. */
+static void advanced_begin_state_name_edit(PredFitState *p, int row) {
+    if (row < 0 || row >= p->n_species) return;
+    p->advanced_edit_param = -7;
+    p->advanced_edit_species = row;
+    p->advanced_edit_col = 0;
+    p->advanced_edit_replace = 1;
+    snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%s", p->species[row].name);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
+    SDL_StartTextInput();
+}
+
 /* Fields of the .int control card.  QROT has no editor: it is always derived
    from the current A/B/C, temperature and sigma. */
 static void advanced_begin_int_edit(PredFitState *p, int field) {
@@ -1986,6 +2341,57 @@ static void advanced_edit_clamp(PredFitState *p) {
     if (p->advanced_edit_caret > n) p->advanced_edit_caret = n;
     if (p->advanced_edit_anchor < 0) p->advanced_edit_anchor = 0;
     if (p->advanced_edit_anchor > n) p->advanced_edit_anchor = n;
+}
+
+/* Width of the first `n` characters of `text`: the caret sits between two
+   characters, so every caret position is a prefix width. */
+static int adv_prefix_w(int font, const char *text, int n) {
+    char prefix[sizeof(((PredFitState *)0)->advanced_edit_buf)];
+    if (n < 0) n = 0;
+    if (n > (int)sizeof(prefix) - 1) n = (int)sizeof(prefix) - 1;
+    memcpy(prefix, text, (size_t)n);
+    prefix[n] = '\0';
+    return ui_text_w(font, prefix);
+}
+
+/* A text cursor that cannot be seen is a field the user cannot aim at: the
+   edited text is therefore always drawn with its selection and its caret. */
+static void adv_edit_text(SDL_Renderer *r, int font, const PredFitState *p,
+                          int x, int y, SDL_Color c) {
+    const char *text = p->advanced_edit_buf;
+    int h = ui_text_h(font);
+    int lo = p->advanced_edit_caret < p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    int hi = p->advanced_edit_caret > p->advanced_edit_anchor ? p->advanced_edit_caret : p->advanced_edit_anchor;
+    if (hi > lo) {
+        int x0 = x + adv_prefix_w(font, text, lo);
+        int x1 = x + adv_prefix_w(font, text, hi);
+        ui_fill(r, (SDL_Rect){x0, y - 1, x1 - x0, h + 2}, UI_ACCENT_SOFT);
+    }
+    ui_text(r, font, text, x, y, c);
+    ui_fill(r, (SDL_Rect){x + adv_prefix_w(font, text, p->advanced_edit_caret), y - 1, 2, h + 2},
+            UI_ACCENT);
+}
+
+/* One cell of a table: the same call site draws the stored value and, while
+   that cell is being edited, the live buffer with its caret. */
+static void adv_cell_text(SDL_Renderer *r, int font, const PredFitState *p, int editing,
+                          const char *text, int x, int y, SDL_Color c) {
+    if (editing) adv_edit_text(r, font, p, x, y, c);
+    else ui_text(r, font, text, x, y, c);
+}
+
+/* Where a click lands inside an edited field: the caret goes between the two
+   characters the pointer is closest to. */
+static void adv_place_caret(PredFitState *p, int font, int text_x, int click_x) {
+    const char *text = p->advanced_edit_buf;
+    int n = (int)strlen(text), best = 0;
+    double best_d = 1e18;
+    for (int i = 0; i <= n; i++) {
+        double d = fabs((double)(text_x + adv_prefix_w(font, text, i)) - (double)click_x);
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    p->advanced_edit_caret = p->advanced_edit_anchor = best;
+    p->advanced_edit_replace = 0;
 }
 
 static int advanced_edit_delete_selection(PredFitState *p) {
@@ -2101,6 +2507,21 @@ static void advanced_commit_edit(PredFitState *p) {
         SDL_StopTextInput();
         return;
     }
+    if (p->advanced_edit_param == -7) {
+        int row = p->advanced_edit_species;
+        if (row >= 0 && row < p->n_species && p->advanced_edit_buf[0]) {
+            snprintf(p->species[row].name, sizeof(p->species[row].name), "%s", p->advanced_edit_buf);
+            snprintf(p->status, sizeof(p->status), "State renamed to %s.", p->species[row].name);
+        } else if (row >= 0) {
+            snprintf(p->status, sizeof(p->status), "A state name cannot be empty.");
+        }
+        p->advanced_edit_param = -1;
+        p->advanced_edit_species = -1;
+        p->advanced_edit_replace = 0;
+        p->advanced_edit_anchor = p->advanced_edit_caret = 0;
+        SDL_StopTextInput();
+        return;
+    }
     if (p->advanced_edit_param == -3) {
         if (p->advanced_edit_species >= 0 && p->advanced_edit_species < p->n_species) {
             PickettSpecies *sp = &p->species[p->advanced_edit_species];
@@ -2202,7 +2623,7 @@ static int advanced_edit_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { advanced_commit_edit(p); return 1; }
-        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_hamiltonian=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_hamiltonian=-1; p->advanced_edit_species=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
         return 1;
     }
     return 0;
@@ -2427,11 +2848,12 @@ typedef struct {
     SDL_Rect params;        /* fitting tab: the SPFIT parameter block     */
     int param_rows_visible;
     SDL_Rect footer;
-    SDL_Rect btn_a, btn_b;
+    SDL_Rect btn_a, btn_b, btn_c;
     /* This navigator is deliberately present on every page.  A Hamiltonian
        is the unit of a Pickett calculation, while a state is its child: the
        hierarchy must therefore not be hidden behind a separate tab. */
-    SDL_Rect project_nav, project_rows, project_add, project_rename, project_duplicate, project_delete;
+    SDL_Rect project_nav, project_rows, project_up, project_down, project_add,
+             project_rename, project_duplicate, project_delete;
     int project_rows_visible;
 } AdvUI;
 
@@ -2452,10 +2874,14 @@ static AdvUI adv_ui(AppState *s, int tab) {
     u.footer  = (SDL_Rect){0, footer_y, u.w, ADV_FOOTER_H};
     u.project_nav = (SDL_Rect){ADV_PAD, ADV_CONTENT_Y, nav_w, footer_y - ADV_CONTENT_Y - 10};
     u.project_rows = (SDL_Rect){u.project_nav.x + 2, u.project_nav.y + 28,
-                                u.project_nav.w - 4, u.project_nav.h - 164};
+                                u.project_nav.w - 4, u.project_nav.h - 198};
     if (u.project_rows.h < 24) u.project_rows.h = 24;
     u.project_rows_visible = u.project_rows.h / 23;
     if (u.project_rows_visible < 1) u.project_rows_visible = 1;
+    u.project_up = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 160,
+                              (u.project_nav.w - 22) / 2, 26};
+    u.project_down = (SDL_Rect){u.project_up.x + u.project_up.w + 6, u.project_up.y,
+                                u.project_up.w, 26};
     u.project_add = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 126,
                                u.project_nav.w - 16, 26};
     u.project_rename = (SDL_Rect){u.project_nav.x + 8, u.project_nav.y + u.project_nav.h - 92,
@@ -2499,6 +2925,7 @@ static AdvUI adv_ui(AppState *s, int tab) {
 
     u.btn_a = (SDL_Rect){content_x, footer_y + 8, tab == 4 ? 150 : (tab == 0 || tab == 3) ? 142 : 110, 30};
     u.btn_b = (SDL_Rect){u.btn_a.x + u.btn_a.w + 10, footer_y + 8, 132, 30};
+    u.btn_c = (SDL_Rect){u.btn_b.x + u.btn_b.w + 10, footer_y + 8, 150, 30};
     return u;
 }
 
@@ -2537,8 +2964,48 @@ static int project_row_info(const PredFitState *p, int row, int *out_h, int *out
     return 0;
 }
 
+/* A sidebar row is "prefix + name": the prefix says what the row is, the name
+   is the part that can be renamed in place.  Both the renderer and the click
+   handler measure it here so a caret lands where the glyphs are drawn. */
+static int nav_row_prefix(const PredFitState *p, int h_index, int state_index,
+                          char *out, size_t size) {
+    if (state_index < 0) {
+        snprintf(out, size, "H%d  ", p->hamiltonian[h_index].id);
+    } else {
+        const PickettSpecies *sp = h_index == p->active_hamiltonian
+                                 ? &p->species[state_index]
+                                 : &p->hamiltonian[h_index].model.species[state_index];
+        snprintf(out, size, "  \u2514 State %d  ", sp->state_index);
+    }
+    return ui_text_w(UI_FONT_SANS_SM, out);
+}
+
+/* Which sidebar row a rename is currently editing, or -1 while none is. */
+static int nav_editing_row(const PredFitState *p) {
+    if (p->advanced_edit_param == -6) {
+        int at = 0;
+        for (int h = 0; h < p->n_hamiltonians; h++) {
+            int n_states = h == p->active_hamiltonian ? p->n_species : p->hamiltonian[h].model.n_species;
+            if (h == p->advanced_edit_hamiltonian) return at;
+            at += 1 + n_states;
+        }
+        return -1;
+    }
+    if (p->advanced_edit_param == -7 && p->advanced_edit_species >= 0) {
+        int at = 0;
+        for (int h = 0; h < p->n_hamiltonians; h++) {
+            int n_states = h == p->active_hamiltonian ? p->n_species : p->hamiltonian[h].model.n_species;
+            if (h == p->active_hamiltonian) {
+                return p->advanced_edit_species < n_states ? at + 1 + p->advanced_edit_species : -1;
+            }
+            at += 1 + n_states;
+        }
+    }
+    return -1;
+}
+
 static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, const AdvUI *u) {
-    char b[128];
+    char b[128], prefix[64];
     ui_fill(r, u->project_nav, UI_INPUT);
     ui_frame(r, u->project_nav, UI_LINE);
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIANS", u->project_nav.x + 9, u->project_nav.y + 8, UI_DIM);
@@ -2546,6 +3013,7 @@ static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, con
              u->project_rows.y - 3, UI_LINE);
 
     int total = project_row_count(p);
+    int editing_row = nav_editing_row(p);
     for (int visible = 0; visible < u->project_rows_visible; visible++) {
         int row_index = p->advanced_project_scroll + visible;
         if (row_index >= total) break;
@@ -2554,23 +3022,36 @@ static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, con
         const HamiltonianModel *model = &p->hamiltonian[h_index];
         const PredFitSnapshot *stored = &model->model;
         int active_h = h_index == p->active_hamiltonian;
+        /* One focus drives Rename and the two Move buttons: the row the user
+           last clicked, Hamiltonian header or state. */
+        int focused = active_h && (state_index < 0 ? p->advanced_nav_state < 0
+                                                   : state_index == p->advanced_nav_state);
         int y = u->project_rows.y + visible * 23;
         SDL_Rect row = {u->project_rows.x, y, u->project_rows.w, 21};
-        if (active_h && state_index < 0) ui_fill(r, row, UI_ACCENT_SOFT);
-        else if (visible % 2) ui_fill(r, row, UI_PANEL);
-        if (state_index < 0) {
-            snprintf(b, sizeof(b), "H%d  %s", model->id, model->name);
-            ui_text(r, UI_FONT_SANS_SM, b, row.x + 7, y + 4, active_h ? UI_ACCENT_TEXT : UI_TEXT);
+        if (focused)             ui_fill(r, row, UI_ACCENT_SOFT);
+        else if (visible % 2)    ui_fill(r, row, UI_PANEL);
+        int prefix_w = nav_row_prefix(p, h_index, state_index, prefix, sizeof(prefix));
+        int name_x = row.x + 7 + prefix_w;
+        SDL_Color name_c = state_index < 0
+                         ? (active_h ? UI_ACCENT_TEXT : UI_TEXT)
+                         : (active_h && state_index == p->active_species ? UI_OK : UI_DIM);
+        ui_text(r, UI_FONT_SANS_SM, prefix, row.x + 7, y + 4, state_index < 0 ? name_c : UI_DIM);
+        if (row_index == editing_row) {
+            adv_edit_text(r, UI_FONT_SANS_SM, p, name_x, y + 4, UI_ACCENT_TEXT);
         } else {
-            const PickettSpecies *sp = active_h ? &p->species[state_index] : &stored->species[state_index];
-            snprintf(b, sizeof(b), "  └ State %d  %s", sp->state_index, sp->name);
-            ui_text(r, UI_FONT_SANS_SM, b, row.x + 7, y + 4,
-                    active_h && state_index == p->active_species ? UI_OK : UI_DIM);
+            const char *name = state_index < 0
+                             ? model->name
+                             : (active_h ? p->species[state_index].name : stored->species[state_index].name);
+            snprintf(b, sizeof(b), "%s", name);
+            ui_text(r, UI_FONT_SANS_SM, b, name_x, y + 4, name_c);
         }
     }
+    int on_state = p->advanced_nav_state >= 0;
+    ui_button(r, u->project_up,   on_state ? "State up"   : "H up",   -1, UI_BTN_QUIET, 0, 0, 0, 0);
+    ui_button(r, u->project_down, on_state ? "State down" : "H down", -1, UI_BTN_QUIET, 0, 0, 0, 0);
     ui_button(r, u->project_add, "+ Hamiltonian", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
-    ui_button(r, u->project_rename, "Rename", -1, UI_BTN_QUIET,
-              p->advanced_edit_param == -6, 0, 0, 0);
+    ui_button(r, u->project_rename, on_state ? "Rename state" : "Rename", -1, UI_BTN_QUIET,
+              p->advanced_edit_param == -6 || p->advanced_edit_param == -7, 0, 0, 0);
     ui_button(r, u->project_duplicate, "Duplicate", -1, UI_BTN_QUIET, 0, 0, 0, 0);
     int active_id = (p->active_hamiltonian >= 0 && p->active_hamiltonian < p->n_hamiltonians)
                   ? p->hamiltonian[p->active_hamiltonian].id : 0;
@@ -2591,6 +3072,27 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     }
     if (p->advanced_edit_param != -1 && e->type == SDL_MOUSEBUTTONDOWN &&
         e->button.windowID == p->advanced_window_id) {
+        /* Clicking inside the field that is being edited aims the caret.  It
+           must not commit and restart the edit, which would select the whole
+           text again and leave the click with nothing to show for it. */
+        AdvUI hit = adv_ui(s, p->advanced_tab);
+        if (p->advanced_edit_param == -4 && p->advanced_tab == 0 &&
+            point_in_rect(e->button.x, e->button.y, hit.hamiltonian)) {
+            adv_place_caret(p, UI_FONT_MONO_SM, hit.hamiltonian.x + 130, e->button.x);
+            return 1;
+        }
+        if ((p->advanced_edit_param == -6 || p->advanced_edit_param == -7) &&
+            point_in_rect(e->button.x, e->button.y, hit.project_rows)) {
+            int clicked = p->advanced_project_scroll + (e->button.y - hit.project_rows.y) / 23;
+            if (clicked == nav_editing_row(p)) {
+                int h = -1, state = -1;
+                char prefix[64];
+                project_row_info(p, clicked, &h, &state);
+                int prefix_w = nav_row_prefix(p, h, state, prefix, sizeof(prefix));
+                adv_place_caret(p, UI_FONT_SANS_SM, hit.project_rows.x + 7 + prefix_w, e->button.x);
+                return 1;
+            }
+        }
         advanced_commit_edit(p);
         if (p->intensity_dirty) { predfit_publish_shared_state(s); p->intensity_dirty = 0; }
     }
@@ -2643,7 +3145,28 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         if (project_row_info(p, row, &h, &state)) {
             predfit_select_hamiltonian(s, h);
             if (state >= 0) select_species(s, state);
+            p->advanced_nav_state = state;
             p->advanced_delete_hamiltonian_id = 0;
+            /* A second click on the focused row renames it, like a file name. */
+            if (e->button.clicks >= 2) {
+                if (state >= 0) advanced_begin_state_name_edit(p, state);
+                else advanced_begin_hamiltonian_name_edit(p);
+            }
+        }
+        return 1;
+    }
+    if (point_in_rect(x, y, u.project_up) || point_in_rect(x, y, u.project_down)) {
+        int delta = point_in_rect(x, y, u.project_up) ? -1 : 1;
+        if (p->advanced_nav_state >= 0) {
+            int from = p->advanced_nav_state;
+            if (predfit_move_species(s, from, delta)) {
+                p->advanced_nav_state = from + delta;
+                snprintf(p->status, sizeof(p->status), "%s moved %s.",
+                         p->species[p->advanced_nav_state].name, delta < 0 ? "up" : "down");
+            }
+        } else if (predfit_move_hamiltonian(s, p->active_hamiltonian, delta)) {
+            snprintf(p->status, sizeof(p->status), "%s moved %s.",
+                     p->hamiltonian[p->active_hamiltonian].name, delta < 0 ? "up" : "down");
         }
         return 1;
     }
@@ -2653,11 +3176,13 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                    : predfit_duplicate_hamiltonian(s, NULL);
         if (made) p->advanced_project_scroll =
             adv_scroll_limit(project_row_count(p), u.project_rows_visible);
+        p->advanced_nav_state = -1;
         p->advanced_delete_hamiltonian_id = 0;
         return 1;
     }
     if (point_in_rect(x, y, u.project_rename)) {
-        advanced_begin_hamiltonian_name_edit(p);
+        if (p->advanced_nav_state >= 0) advanced_begin_state_name_edit(p, p->advanced_nav_state);
+        else advanced_begin_hamiltonian_name_edit(p);
         return 1;
     }
     if (point_in_rect(x, y, u.project_delete)) {
@@ -2681,20 +3206,43 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
             if (project_row_info(p, row, &h, &state)) {
                 predfit_select_hamiltonian(s, h);
                 if (state >= 0) select_species(s, state);
+                p->advanced_nav_state = state;
             }
             return 1;
         }
         if (point_in_rect(x, y, u.btn_a)) {
+            int was_dirty = p->session_dirty;
+            predfit_save_session(s);
+            if (p->session_dirty)
+                snprintf(p->status, sizeof(p->status), "Cannot write spectravisual.state in .fit.");
+            else
+                snprintf(p->status, sizeof(p->status), "Session saved%s.",
+                         was_dirty ? "" : " (nothing had changed)");
+            return 1;
+        }
+        if (point_in_rect(x, y, u.btn_b)) {
             char state_path[600];
             snprintf(state_path, sizeof(state_path), "%s/spectravisual.state", p->work_dir);
             app_enqueue_pending_load(s, PENDING_LOAD_SESSION, state_path, 0);
+            return 1;
+        }
+        if (point_in_rect(x, y, u.btn_c)) {
+            if (predfit_import_load_dir(s) > 0)
+                p->advanced_project_scroll =
+                    adv_scroll_limit(project_row_count(p), u.project_rows_visible);
             return 1;
         }
         return 1;
     }
 
     if (p->advanced_tab == 0) {
-        if (point_in_rect(x, y, u.hamiltonian)) { advanced_begin_hamiltonian_edit(p); return 1; }
+        if (point_in_rect(x, y, u.hamiltonian)) {
+            /* A long option line is edited in place, not replaced: the first
+               click already puts the caret under the pointer. */
+            advanced_begin_hamiltonian_edit(p);
+            adv_place_caret(p, UI_FONT_MONO_SM, u.hamiltonian.x + 130, x);
+            return 1;
+        }
         if (point_in_rect(x, y, u.rows)) {
             int row = p->advanced_param_scroll + (y - u.rows.y) / u.row_h;
             if (row >= 0 && row < p->n_param) {
@@ -2852,9 +3400,15 @@ void predfit_render_advanced(AppState *s) {
                 ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.78), ty, UI_DIM);
             }
         }
-        ui_button(r, u.btn_a, "Restore session", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
-        ui_text(r, UI_FONT_SANS_SM, "Click an H or State to select it. Restore is explicit; states stay grouped under their Hamiltonian.",
-                u.btn_a.x + u.btn_a.w + 16, u.footer.y + 17, UI_FAINT);
+        ui_button(r, u.btn_a, p->session_dirty ? "Save session *" : "Save session", -1,
+                  p->session_dirty ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_button(r, u.btn_b, "Restore session", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_button(r, u.btn_c, "Import .fit/load", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_text(r, UI_FONT_SANS_SM,
+                p->session_dirty ? "Unsaved changes: nothing is written to .fit until Save session."
+                                 : "Saving and restoring the session are both explicit; states stay grouped under their Hamiltonian.",
+                u.btn_c.x + u.btn_c.w + 16, u.footer.y + 17,
+                p->session_dirty ? UI_ACCENT_TEXT : UI_FAINT);
 
     } else if (p->advanced_tab == 0) {
         ui_text(r, UI_FONT_SANS, "Shared Hamiltonian and Pickett parameters",
@@ -2862,10 +3416,9 @@ void predfit_render_advanced(AppState *s) {
         ui_fill(r, u.hamiltonian, UI_INPUT);
         ui_frame(r, u.hamiltonian, p->advanced_edit_param == -4 ? UI_ACCENT : UI_LINE);
         ui_text(r, UI_FONT_MONO_SM, "PAR option line", u.hamiltonian.x + 10, u.hamiltonian.y + 8, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM,
-                p->advanced_edit_param == -4 ? p->advanced_edit_buf : p->hamiltonian_line,
-                u.hamiltonian.x + 130, u.hamiltonian.y + 8,
-                p->advanced_edit_param == -4 ? UI_ACCENT_TEXT : UI_TEXT);
+        adv_cell_text(r, UI_FONT_MONO_SM, p, p->advanced_edit_param == -4,
+                      p->hamiltonian_line, u.hamiltonian.x + 130, u.hamiltonian.y + 8,
+                      p->advanced_edit_param == -4 ? UI_ACCENT_TEXT : UI_TEXT);
 
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
@@ -2901,17 +3454,17 @@ void predfit_render_advanced(AppState *s) {
             if (editing && p->advanced_edit_col == 2) { ui_fill(r, error_cell, UI_INPUT); ui_frame(r, error_cell, UI_ACCENT); }
 
             snprintf(b, sizeof(b), "%d", x->id);
-            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 0 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.00), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : UI_TEXT);
+            adv_cell_text(r, UI_FONT_MONO, p, editing && p->advanced_edit_col == 0, b,
+                          adv_col(u.table, 0.00), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : UI_TEXT);
             ui_text(r, UI_FONT_SANS_SM, name && name->watson_a ? name->watson_a : "—", adv_col(u.table, 0.11), ty, UI_DIM);
             ui_text(r, UI_FONT_SANS_SM, name && name->watson_s ? name->watson_s : "—", adv_col(u.table, 0.28), ty, UI_ACCENT_TEXT);
             ui_text(r, UI_FONT_SANS_SM, name && name->other ? name->other : (name ? "—" : x->label), adv_col(u.table, 0.41), ty, UI_DIM);
             snprintf(b, sizeof(b), "%.11E", x->value);
-            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 1 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.56), ty, editing && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
+            adv_cell_text(r, UI_FONT_MONO, p, editing && p->advanced_edit_col == 1, b,
+                          adv_col(u.table, 0.56), ty, editing && p->advanced_edit_col == 1 ? UI_ACCENT_TEXT : UI_TEXT);
             snprintf(b, sizeof(b), "%.5E", x->error);
-            ui_text(r, UI_FONT_MONO, editing && p->advanced_edit_col == 2 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.80), ty, editing && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
+            adv_cell_text(r, UI_FONT_MONO, p, editing && p->advanced_edit_col == 2, b,
+                          adv_col(u.table, 0.80), ty, editing && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
 
             SDL_Rect del = {u.table.x + u.table.w - 32, y + (u.row_h - 2 - 22) / 2, 22, 22};
             ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del.x + 5, del.y + 5, 12, 12}, UI_DANGER_TEXT);
@@ -2955,8 +3508,8 @@ void predfit_render_advanced(AppState *s) {
             else if (i == 7) snprintf(b, sizeof(b), "%.9g", int_temp_at(p, p->temp_k));
             else if (i == 8) snprintf(b, sizeof(b), "%d", int_maxv_at(p));
             else snprintf(b, sizeof(b), "%.9g", ix->sigma);
-            ui_text(r, UI_FONT_MONO_SM, editing ? p->advanced_edit_buf : b,
-                    cell.x + 6, cell.y + 14, editing ? UI_ACCENT_TEXT : UI_TEXT);
+            adv_cell_text(r, UI_FONT_MONO_SM, p, editing, b,
+                          cell.x + 6, cell.y + 14, editing ? UI_ACCENT_TEXT : UI_TEXT);
         }
         ui_fill(r, u.table, UI_INPUT);
         ui_frame(r, u.table, UI_LINE);
@@ -2983,19 +3536,19 @@ void predfit_render_advanced(AppState *s) {
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00), ty, actual == p->active_species ? UI_OK : UI_FAINT);
             snprintf(b, sizeof(b), "[%c]", sp->predict_enabled ? 'x' : ' ');
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.10), ty, sp->predict_enabled ? UI_OK : UI_FAINT);
-            ui_text(r, UI_FONT_SANS_SM, editing && p->advanced_edit_col == 0 ? p->advanced_edit_buf : sp->name,
-                    adv_col(u.table, 0.18), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : sp->predict_enabled ? UI_TEXT : UI_FAINT);
+            adv_cell_text(r, UI_FONT_SANS_SM, p, editing && p->advanced_edit_col == 0, sp->name,
+                          adv_col(u.table, 0.18), ty, editing && p->advanced_edit_col == 0 ? UI_ACCENT_TEXT : sp->predict_enabled ? UI_TEXT : UI_FAINT);
             snprintf(b, sizeof(b), "%d", sp->state_index);
             ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.40), ty, UI_DIM);
             for (int k = 0; k < 3; k++) {
                 snprintf(b, sizeof(b), "%.5g", sp->mu[k]);
                 double at[] = {0.47, 0.58, 0.68};
-                ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == k + 1 ? p->advanced_edit_buf : b,
-                        adv_col(u.table, at[k]), ty, editing && p->advanced_edit_col == k + 1 ? UI_ACCENT_TEXT : UI_TEXT);
+                adv_cell_text(r, UI_FONT_MONO_SM, p, editing && p->advanced_edit_col == k + 1, b,
+                              adv_col(u.table, at[k]), ty, editing && p->advanced_edit_col == k + 1 ? UI_ACCENT_TEXT : UI_TEXT);
             }
             snprintf(b, sizeof(b), "%.5g", sp->concentration);
-            ui_text(r, UI_FONT_MONO_SM, editing && p->advanced_edit_col == 4 ? p->advanced_edit_buf : b,
-                    adv_col(u.table, 0.78), ty, editing && p->advanced_edit_col == 4 ? UI_ACCENT_TEXT : UI_TEXT);
+            adv_cell_text(r, UI_FONT_MONO_SM, p, editing && p->advanced_edit_col == 4, b,
+                          adv_col(u.table, 0.78), ty, editing && p->advanced_edit_col == 4 ? UI_ACCENT_TEXT : UI_TEXT);
             SDL_Rect del = {u.table.x + u.table.w - 28, y + (u.row_h - 2 - 18) / 2, 18, 18};
             if (p->n_species > 1) ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }

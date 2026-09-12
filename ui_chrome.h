@@ -57,6 +57,7 @@ typedef enum {
     UI_TOP_OFFSET,
     UI_TOP_CAT_TEMP,
     UI_TOP_ROT_TEMP,
+    UI_TOP_SAVE,
     UI_TOP_EXPORT,
     UI_TOP_HELP,
     UI_TOP_SETTINGS,
@@ -72,11 +73,13 @@ typedef enum {
 static inline SDL_Rect ui_top_rect(int item, int win_w) {
     const int y = UI_TOP_BTN_Y, h = UI_TOP_BTN_H;
     int help_w = 92, export_w = 104, offset_w = 150, temp_w = 132, cat_temp_w = 132;
+    int save_w = 112;                     /* the only writer of the session */
     int set_w = 34;                       /* icon only: it is opened rarely */
     int set_x    = win_w - 10 - set_w;
     int help_x   = set_x - 6 - help_w;
     int export_x = help_x - 6 - export_w;
-    int offset_x = export_x - 14 - offset_w;
+    int save_x   = export_x - 6 - save_w;
+    int offset_x = save_x - 14 - offset_w;
     int temp_x   = offset_x - 6 - temp_w;
     int cat_temp_x = temp_x - 6 - cat_temp_w;
     switch (item) {
@@ -87,6 +90,7 @@ static inline SDL_Rect ui_top_rect(int item, int win_w) {
         case UI_TOP_OFFSET:  return (SDL_Rect){offset_x, y, offset_w, h};
         case UI_TOP_CAT_TEMP:return (SDL_Rect){cat_temp_x, y, cat_temp_w, h};
         case UI_TOP_ROT_TEMP:return (SDL_Rect){temp_x, y, temp_w, h};
+        case UI_TOP_SAVE:    return (SDL_Rect){save_x,   y, save_w,   h};
         case UI_TOP_EXPORT:  return (SDL_Rect){export_x, y, export_w, h};
         case UI_TOP_HELP:    return (SDL_Rect){help_x,   y, help_w,   h};
         case UI_TOP_SETTINGS:return (SDL_Rect){set_x,    y, set_w,    h};

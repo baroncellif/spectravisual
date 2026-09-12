@@ -944,6 +944,11 @@ static void draw_top_chrome(SDL_Renderer *ren, TTF_Font *font, AppState *state, 
         field_val(state, INPUT_OFFSET, val, sizeof(val), "%.4f", state->exp_offset);
         draw_field(ren, state, off, "Offset", val, NULL, INPUT_OFFSET);
 
+        /* The session is written here and nowhere else: no action of the app
+           saves .fit/spectravisual.state on its own any more. */
+        ui_button(ren, ui_top_rect(UI_TOP_SAVE, l->win_w),
+                  state->predfit.session_dirty ? "Save session *" : "Save session", -1,
+                  state->predfit.session_dirty ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, mdown);
         ui_button(ren, ui_top_rect(UI_TOP_EXPORT, l->win_w), "Export view", UI_ICON_EXPORT,
                   UI_BTN_QUIET, 0, mx, my, mdown);
         ui_button(ren, ui_top_rect(UI_TOP_HELP, l->win_w), "Shortcuts", UI_ICON_HELP,
@@ -1645,6 +1650,7 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "G",         "Distance between two points"},
         {NULL,        "Delete",    "Remove the latest peak"},
         {NULL,        "X",         "Export the view as BMP"},
+        {"Cmd",       "S",         "Save the Pred&Fit session"},
         {NULL,        "H  ?",      "This list"},
         {"Tools",     "N",         "Assignments"},
         {NULL,        "P",         "Peak finder"},

@@ -39,6 +39,9 @@ int predfit_load_exclusions(AppState *state);
    fit uncertainties the user chose. Save it whenever the working set changes. */
 void predfit_load_session(AppState *state);
 void predfit_save_session(AppState *state);
+int predfit_import_load_dir(AppState *state);
+int predfit_move_hamiltonian(AppState *state, int index, int delta);
+int predfit_move_species(AppState *state, int index, int delta);
 /* Guard against accidentally treating .fit/spectravisual.state as a two-column
    experimental spectrum: its numeric settings make it superficially valid. */
 int predfit_is_session_file(const AppState *state, const char *path);

@@ -342,6 +342,20 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
     }
 }
 
+/* The single explicit writer of the session.  Nothing else in the app saves
+   .fit/spectravisual.state: a wrong model or a mistaken load can therefore
+   never overwrite a good workspace on its way out. */
+static void save_predfit_session(AppState *s) {
+    int was_dirty = s->predfit.session_dirty;
+    predfit_save_session(s);
+    if (s->predfit.session_dirty)
+        snprintf(s->status_message, sizeof(s->status_message),
+                 "Cannot write the session in .fit.");
+    else
+        snprintf(s->status_message, sizeof(s->status_message),
+                 "Session saved%s.", was_dirty ? "" : " (nothing had changed)");
+}
+
 // --- MOUSE DOWN (Hit Testing) ---
 static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     int mx = b->x; 
@@ -681,6 +695,10 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
             return;
         }
         if (ui_top_right_visible(l->win_w)) {
+            if (point_in_rect(mx, my, ui_top_rect(UI_TOP_SAVE, l->win_w))) {
+                save_predfit_session(s);
+                return;
+            }
             if (point_in_rect(mx, my, ui_top_rect(UI_TOP_EXPORT, l->win_w))) {
                 if (s->data_loaded) s->export_requested = 1;
                 return;
@@ -1094,6 +1112,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
     if (mod & (KMOD_GUI | KMOD_CTRL)) {
         if (sym == SDLK_f) { predfit_fit(s); return; }            /* run SPFIT      */
         if (sym == SDLK_b) { predfit_undo_last_fit(s); return; }  /* undo that fit  */
+        if (sym == SDLK_s) { save_predfit_session(s); return; }   /* save session   */
     }
     if (sym == SDLK_COMMA) { settings_open(s); return; }
     if (sym == SDLK_h || sym == SDLK_SLASH) {

@@ -1535,6 +1535,125 @@ static int test_two_hamiltonians_keep_independent_int_controls(void) {
     DONE();
 }
 
+/* H-05: .fit/load is a drop box.  Every basename there is one Hamiltonian:
+   the .par gives the option line and the parameters, the .int the states and
+   the control card, the .lin the assignments that belong to it. */
+static int test_import_load_dir_builds_hamiltonians(void) {
+    AppState *s = new_state();
+    mkdir(work_path(".fit"), 0700);
+    mkdir(work_path(".fit/load"), 0700);
+
+    FILE *fp = fopen(work_path(".fit/load/mon.par"), "w");
+    CHECK(fp != NULL, "impossibile scrivere mon.par");
+    if (!fp) DONE();
+    fputs("imported monomer\n"
+          "   3    0   50    0  0.0000E+00  1.0000E+06  1.0000E+00 1.0000000000\n"
+          "s   1  2  0\n"
+          "       10000  1.15136041700E+03  1.00000000E+00 /A/\n"
+          "       20000  3.16151112700E+02  0.00000000E+00 /B/\n"
+          "       30000  3.13174236800E+02  1.00000000E+00 /C/\n", fp);
+    fclose(fp);
+
+    fp = fopen(work_path(".fit/load/mon.int"), "w");
+    CHECK(fp != NULL, "impossibile scrivere mon.int");
+    if (!fp) DONE();
+    fputs("imported monomer\n"
+          "0 1 1000 0 40 -20 -20 8 7.5 1\n"
+          "1 1.5 /a dipole/\n"
+          "2 0.25 /b dipole/\n"
+          "111 0.8 /a dipole/\n"
+          "101 0.1 /interstate/\n", fp);
+    fclose(fp);
+
+    fp = fopen(work_path(".fit/load/mon.lin"), "w");
+    CHECK(fp != NULL, "impossibile scrivere mon.lin");
+    if (!fp) DONE();
+    fprintf(fp, "%3d%3d%3d%3d%3d%3d%18s%15.6f %10.6f 1.0\n", 3, 1, 2, 2, 0, 2, "", 3000.125, 0.02);
+    fclose(fp);
+
+    /* A second model, with a .var alone: no states are declared, so it keeps
+       the single default state and stays importable. */
+    fp = fopen(work_path(".fit/load/dim.var"), "w");
+    CHECK(fp != NULL, "impossibile scrivere dim.var");
+    if (!fp) DONE();
+    fputs("imported dimer\n"
+          "   1    0    0    0  0.0000E+00  1.0000E+06  1.0000E+00 1.0000000000\n"
+          "s   1  1  0\n"
+          "       10000  2.00000000000E+03  1.00000000E+00 /A/\n", fp);
+    fclose(fp);
+
+    CHECK_INT("Hamiltoniani importati", predfit_import_load_dir(s), 2);
+    PredFitState *p = &s->predfit;
+    CHECK_INT("H nel progetto", predfit_hamiltonian_count(s), 3);
+    /* load/ is read in name order, so mon is the last one imported. */
+    CHECK(strcmp(p->hamiltonian[p->active_hamiltonian].name, "mon") == 0,
+          "H attivo: atteso mon, ottenuto %s", p->hamiltonian[p->active_hamiltonian].name);
+    CHECK(strcmp(p->hamiltonian[1].name, "dim") == 0,
+          "secondo H: atteso dim, ottenuto %s", p->hamiltonian[1].name);
+    CHECK(strcmp(p->hamiltonian_line, "s   1  2  0") == 0,
+          "option line importata: attesa 's   1  2  0', ottenuta '%s'", p->hamiltonian_line);
+    CHECK_INT("parametri importati", p->n_param, 3);
+    CHECK_DBL("valore di A importato", p->a, 1151.360417, 1e-6);
+    CHECK_DBL("B resta fissato come nel .par", p->param[1].error, 0.0, 1e-12);
+    CHECK_INT("stati dal .int", p->n_species, 2);
+    CHECK_INT("indice Pickett del secondo stato", p->species[1].state_index, 1);
+    CHECK_DBL("mu a dello stato 0", p->species[0].mu[0], 1.5, 1e-12);
+    CHECK_DBL("mu b dello stato 0", p->species[0].mu[1], 0.25, 1e-12);
+    CHECK_DBL("mu a dello stato 1", p->species[1].mu[0], 0.8, 1e-12);
+    CHECK_DBL("Trot dal .int", p->temp_k, 7.5, 1e-12);
+    CHECK_INT("assignment importati dal .lin", s->n_assignments, 1);
+    CHECK_INT("proprietario dell'assignment", s->assignments[0].hamiltonian_id,
+              predfit_active_hamiltonian_id(s));
+    CHECK_DBL("frequenza importata", s->assignments[0].exp_freq, 3000.125, 1e-6);
+    /* Nothing in load/ is consumed, and the session is not written on its own. */
+    CHECK(access(work_path(".fit/load/mon.par"), F_OK) == 0, "mon.par e' stato rimosso da load/");
+    CHECK_INT("sessione da salvare esplicitamente", p->session_dirty, 1);
+    CHECK(access(work_path(".fit/spectravisual.state"), F_OK) != 0,
+          "l'import non deve scrivere la sessione");
+    DONE();
+}
+
+/* H-06: the workspace is written only when the user asks for it. */
+static int test_session_saved_only_on_request(void) {
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    CHECK_INT("scrive gli input Pickett", write_inputs(s, 0), 1);
+    CHECK(access(work_path(".fit/spectravisual.state"), F_OK) != 0,
+          "Calculate non deve salvare la sessione");
+    predfit_save_session(s);
+    CHECK(access(work_path(".fit/spectravisual.state"), F_OK) == 0,
+          "Save session non ha scritto spectravisual.state");
+    CHECK_INT("sessione pulita dopo il salvataggio", s->predfit.session_dirty, 0);
+    DONE();
+}
+
+/* H-07: the sidebar order is presentation.  Moving a Hamiltonian or a state
+   keeps its identity, its selection and its Pickett state index. */
+static int test_sidebar_reorder_keeps_identity(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    CHECK_INT("crea un secondo H", predfit_add_hamiltonian(s, "second"), 1);
+    int active_id = predfit_active_hamiltonian_id(s);
+    CHECK_INT("sposta l'H attivo in cima", predfit_move_hamiltonian(s, p->active_hamiltonian, -1), 1);
+    CHECK_INT("resta attivo lo stesso H", predfit_active_hamiltonian_id(s), active_id);
+    CHECK_INT("l'H attivo e' il primo", p->active_hamiltonian, 0);
+    CHECK(strcmp(p->hamiltonian[0].name, "second") == 0,
+          "ordine: atteso second in cima, ottenuto %s", p->hamiltonian[0].name);
+    CHECK(strcmp(p->hamiltonian[1].name, "model") == 0,
+          "ordine: atteso model in seconda posizione, ottenuto %s", p->hamiltonian[1].name);
+    CHECK_INT("non si esce dalla lista", predfit_move_hamiltonian(s, 0, -1), 0);
+
+    add_species(s);
+    CHECK_INT("due stati", p->n_species, 2);
+    int moved_state = p->species[1].state_index;
+    CHECK_INT("sposta lo stato in cima", predfit_move_species(s, 1, -1), 1);
+    CHECK_INT("lo stato conserva il suo indice Pickett", p->species[0].state_index, moved_state);
+    CHECK_INT("lo stato resta selezionato", p->active_species, 0);
+    CHECK_INT("non si esce dalla lista degli stati", predfit_move_species(s, 1, 1), 0);
+    DONE();
+}
+
 /* H-04: the same QN transition may legitimately appear in two independent
    Hamiltonians. Ownership is therefore part of assignment identity and
    survives assignments.txt format 2. */
@@ -2295,6 +2414,9 @@ static const Test TESTS[] = {
     {"test_hamiltonian_switch_keeps_independent_models", test_hamiltonian_switch_keeps_independent_models},
     {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
+    {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
+    {"test_session_saved_only_on_request", test_session_saved_only_on_request},
+    {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
     {"test_project_rows_are_hamiltonian_state_hierarchy", test_project_rows_are_hamiltonian_state_hierarchy},
     {"test_add_hamiltonian_starts_fresh_and_keeps_source", test_add_hamiltonian_starts_fresh_and_keeps_source},
