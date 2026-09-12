@@ -412,6 +412,7 @@ void predfit_save_session(AppState *s) {
         const HamiltonianModel *model = &p->hamiltonian[h];
         const PredFitSnapshot *m = &model->model;
         fprintf(fp, "h4begin %d %s\n", model->id, model->name);
+        if (model->simulate_excluded) fputs("h4sim 0\n", fp);
         for (int i = 0; i < m->n_param; i++)
             fprintf(fp, "h4param %d %.17g %.17g\n", m->param[i].id,
                     m->param[i].value, m->param[i].error);
@@ -427,6 +428,11 @@ void predfit_save_session(AppState *s) {
             fprintf(fp, "h4state %d %d %.17g %.17g %.17g %.17g %s\n",
                     sp->state_index, sp->predict_enabled != 0, sp->mu[0], sp->mu[1],
                     sp->mu[2], sp->concentration, sp->name);
+            /* Written only when a dipole was switched off, so a session that
+               says nothing simulates with every component. */
+            if (sp->mu_excluded[0] || sp->mu_excluded[1] || sp->mu_excluded[2])
+                fprintf(fp, "h4statemu %d %d %d %d\n", i, sp->mu_excluded[0] != 0,
+                        sp->mu_excluded[1] != 0, sp->mu_excluded[2] != 0);
         }
         fprintf(fp, "h4active_state %d\n", m->active_species);
         fputs("h4end\n", fp);
@@ -582,6 +588,20 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
                 snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "State");
                 sp.predict_enabled = sp.predict_enabled != 0;
                 h4->model.species[h4->model.n_species++] = sp;
+            }
+            continue;
+        }
+        if (h4 && strncmp(line, "h4sim ", 6) == 0) {
+            h4->simulate_excluded = atoi(line + 6) == 0;
+            continue;
+        }
+        if (h4 && strncmp(line, "h4statemu ", 10) == 0) {
+            int index = -1, a = 0, b = 0, c = 0;
+            if (sscanf(line + 10, "%d %d %d %d", &index, &a, &b, &c) == 4 &&
+                index >= 0 && index < h4->model.n_species) {
+                h4->model.species[index].mu_excluded[0] = a != 0;
+                h4->model.species[index].mu_excluded[1] = b != 0;
+                h4->model.species[index].mu_excluded[2] = c != 0;
             }
             continue;
         }
@@ -773,9 +793,39 @@ void predfit_load_session(AppState *s) {
     load_session(s, NULL);
 }
 
+static int hamiltonian_index_by_id(const PredFitState *p, int id) {
+    for (int h = 0; h < p->n_hamiltonians; h++)
+        if (p->hamiltonian[h].id == id) return h;
+    return -1;
+}
+
 void predfit_recompute_display_intensities(AppState *s) {
     if (!s || !s->pred_lines || s->n_pred <= 0) return;
     PredFitState *p = &s->predfit;
+    if (p->generated_catalog_active && p->n_simulated > 0) {
+        /* A simulated plot holds the catalogues of several Hamiltonians: each
+           row is rescaled with the model that produced it.  Trot and the state
+           concentrations are read live, so editing them restyles the plot
+           without running SPCAT again; only Tcat is frozen at its run. */
+        static PredIntensityModel models[MAX_PICKETT_HAMILTONIANS];
+        int n = 0;
+        for (int i = 0; i < p->n_simulated; i++) {
+            int h = hamiltonian_index_by_id(p, p->simulated[i].hamiltonian_id);
+            if (h < 0) continue;
+            const PredFitSnapshot *m = h == p->active_hamiltonian ? NULL : &p->hamiltonian[h].model;
+            models[n].hamiltonian_id = p->simulated[i].hamiltonian_id;
+            models[n].cat_temp_k = p->simulated[i].cat_temp_k;
+            models[n].rot_temp_k = m ? m->temp_k : p->temp_k;
+            models[n].species = m ? m->species : p->species;
+            models[n].n_species = m ? m->n_species : p->n_species;
+            n++;
+        }
+        if (n > 0) {
+            rescale_predicted_intensities_multi(s->pred_lines, s->n_pred, models, n,
+                                                &s->pred_global_max);
+            return;
+        }
+    }
     if (s->pred_lines && s->n_pred > 0 && p->generated_catalog_active) {
         double tcat = int_temp_at(p, p->temp_k);
         rescale_predicted_intensities_by_species(s->pred_lines, s->n_pred, tcat, p->temp_k,
@@ -804,9 +854,15 @@ void predfit_publish_shared_state(AppState *s) {
    001/002/003, 111/112/113, 221/222/223, ... respectively. */
 static int write_multi_state_int(FILE *fp, const PredFitState *p) {
     if (!fp) return 0;
+    /* A dipole the user unchecked in Simulation is written as zero: SPCAT
+       then predicts no transition of that type, which is exactly what "show
+       only the a-type lines" means. */
     int included = 0;
-    for (int i = 0; i < p->n_species; i++)
-        if (p->species[i].predict_enabled) included++;
+    for (int i = 0; i < p->n_species; i++) {
+        const PickettSpecies *sp = &p->species[i];
+        if (!sp->predict_enabled) continue;
+        for (int k = 0; k < 3; k++) if (!sp->mu_excluded[k] && sp->mu[k] != 0.0) included++;
+    }
     if (!included) return 0;
     write_int_header(fp, p, "SpectraVisual multi-state prediction", p->temp_k);
     for (int i = 0; i < p->n_species; i++) {
@@ -814,9 +870,10 @@ static int write_multi_state_int(FILE *fp, const PredFitState *p) {
         if (!sp->predict_enabled) continue;
         if (sp->state_index < 0 || sp->state_index > 9) return 0;
         int id = 110 * sp->state_index;
-        fprintf(fp, "%d %.10g /a dipole/\n", id + 1, sp->mu[0]);
-        fprintf(fp, "%d %.10g /b dipole/\n", id + 2, sp->mu[1]);
-        fprintf(fp, "%d %.10g /c dipole/\n", id + 3, sp->mu[2]);
+        static const char *axis[3] = {"a", "b", "c"};
+        for (int k = 0; k < 3; k++)
+            fprintf(fp, "%d %.10g /%s dipole/\n", id + 1 + k,
+                    sp->mu_excluded[k] ? 0.0 : sp->mu[k], axis[k]);
     }
     return 1;
 }
@@ -839,6 +896,21 @@ void predfit_adopt_generated_catalog(AppState *s) {
     s->rot_temp_k=p->temp_k;
     int hamiltonian_id = predfit_active_hamiltonian_id(s);
     for (int i = 0; i < s->n_pred; i++) s->pred_lines[i].hamiltonian_id = hamiltonian_id;
+    predfit_recompute_display_intensities(s);
+}
+
+/* Counterpart of predfit_adopt_generated_catalog for a simulated plot: the
+   Hamiltonian id of every row is set while merging the catalogues, so here
+   only the shared display state is refreshed. */
+void predfit_adopt_simulation(AppState *s) {
+    PredFitState *p = &s->predfit;
+    p->generated_catalog_pending = 0;
+    p->generated_catalog_active = 1;
+    /* The single-model fields keep describing the active Hamiltonian: the top
+       bar and Intensity analysis still read them. */
+    s->cat_temp_k = int_temp_at(p, p->temp_k);
+    memcpy(s->dipole_cat, p->mu, sizeof(p->mu));
+    s->rot_temp_k = p->temp_k;
     predfit_recompute_display_intensities(s);
 }
 
@@ -2138,6 +2210,75 @@ int predfit_calculate_all_species(AppState *s) {
     return 1;
 }
 
+/* Simulate every checked Hamiltonian and show their catalogues together.
+   The project's active Hamiltonian is only borrowed for the runs and is put
+   back before returning: simulating must not move the user elsewhere. */
+int predfit_simulate(AppState *s) {
+    PredFitState *p = &s->predfit;
+    if (!have_program(s->settings.spcat_path)) {
+        snprintf(p->status, sizeof(p->status), "Set the SPCAT program in Settings > Paths.");
+        return 0;
+    }
+    int wanted = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++)
+        if (!p->hamiltonian[h].simulate_excluded) wanted++;
+    if (!wanted) {
+        snprintf(p->status, sizeof(p->status), "Check at least one Hamiltonian in Simulation.");
+        return 0;
+    }
+
+    const int started = p->active_hamiltonian;
+    char failure[200] = "";
+    int failed = 0;
+    p->n_simulated = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        if (p->hamiltonian[h].simulate_excluded) continue;
+        store_active_hamiltonian(p);
+        p->active_hamiltonian = h;
+        restore_active_model(p, &p->hamiltonian[h].model);
+        predfit_refresh_work_dir(s);
+        if (!write_inputs(s, 0) ||
+            !run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT")) {
+            failed++;
+            if (!failure[0])
+                snprintf(failure, sizeof(failure), "%s: %s", p->hamiltonian[h].name, p->status);
+            continue;
+        }
+        SimulatedCatalog *c = &p->simulated[p->n_simulated++];
+        c->hamiltonian_id = p->hamiltonian[h].id;
+        c->cat_temp_k = int_temp_at(p, p->temp_k);
+        work_file(p, "model.cat", c->cat_path, sizeof(c->cat_path));
+    }
+    store_active_hamiltonian(p);
+    p->active_hamiltonian = started;
+    restore_active_model(p, &p->hamiltonian[started].model);
+    predfit_refresh_work_dir(s);
+
+    int done = p->n_simulated;
+    if (done == 0) {
+        snprintf(p->status, sizeof(p->status), "Nothing simulated - %s",
+                 failure[0] ? failure : "no Hamiltonian produced a catalogue.");
+        return 0;
+    }
+    app_enqueue_pending_load(s, PENDING_LOAD_SIMULATION, p->simulated[0].cat_path, 1);
+    p->generated_catalog_pending = 1;
+    if (failed)
+        snprintf(p->status, sizeof(p->status),
+                 "SPCAT complete for %d Hamiltonian%s; %d failed - %s",
+                 done, done == 1 ? "" : "s", failed, failure);
+    else
+        snprintf(p->status, sizeof(p->status),
+                 "SPCAT complete: %d Hamiltonian%s in the plot.", done, done == 1 ? "" : "s");
+    return done;
+}
+
+/* After an action that changed a model, refresh the plot the way it was
+   built: the whole simulation when several models share it, the active
+   Hamiltonian alone otherwise. */
+static int refresh_prediction(AppState *s) {
+    return s->predfit.n_simulated > 0 ? predfit_simulate(s) : predfit_calculate_all_species(s);
+}
+
 int predfit_fit(AppState *s) {
     PredFitState *p = &s->predfit;
     int owned_assignments = 0;
@@ -2156,10 +2297,16 @@ int predfit_fit(AppState *s) {
     if (!run_program(s->settings.spfit_path, p->work_dir, p, "SPFIT")) { p->history_count--; return 0; }
     report_invalidate();
     import_fitted_parameters(p);
-    if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT after fit")) return 0;
-    work_file(p,"model.cat",cat_path,sizeof(cat_path));
-    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
-    p->generated_catalog_pending = 1;
+    if (p->n_simulated > 0) {
+        /* The plot holds several models: refresh them all instead of
+           replacing the simulation with this one Hamiltonian. */
+        if (!predfit_simulate(s)) return 0;
+    } else {
+        if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT after fit")) return 0;
+        work_file(p,"model.cat",cat_path,sizeof(cat_path));
+        app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
+        p->generated_catalog_pending = 1;
+    }
     snprintf(p->status, sizeof(p->status), "SPFIT complete; refreshed SPCAT prediction.");
     fit_summary(p, p->status, sizeof(p->status));
     return 1;
@@ -2173,7 +2320,7 @@ int predfit_undo_last_fit(AppState *s) {
     }
     restore_fit_snapshot(s, &p->history[p->history_count - 1]);
     p->history_count--;
-    if (!predfit_calculate(s)) return 0;
+    if (!refresh_prediction(s)) return 0;
     snprintf(p->status, sizeof(p->status), "Restored pre-fit state; SPCAT refreshed.");
     return 1;
 }
@@ -2838,7 +2985,7 @@ static SDL_Color residual_color(double z) {
 
 typedef struct {
     int w, h;
-    SDL_Rect tab[5];
+    SDL_Rect tab[6];
     SDL_Rect caption;
     SDL_Rect hamiltonian;   /* editable shared third .par/.var line       */
     SDL_Rect int_cell[10];  /* complete .int control record, two rows     */
@@ -2865,7 +3012,7 @@ static AdvUI adv_ui(AppState *s, int tab) {
     if (u.w < 900) u.w = 900;
     if (u.h < 420) u.h = 420;
 
-    for (int i = 0; i < 5; i++) u.tab[i] = (SDL_Rect){16 + i * ADV_TAB_STEP, ADV_TAB_Y, ADV_TAB_W, ADV_TAB_H};
+    for (int i = 0; i < 6; i++) u.tab[i] = (SDL_Rect){16 + i * ADV_TAB_STEP, ADV_TAB_Y, ADV_TAB_W, ADV_TAB_H};
 
     int footer_y = u.h - ADV_FOOTER_H;
     const int nav_w = 224;
@@ -3004,6 +3151,17 @@ static int nav_editing_row(const PredFitState *p) {
     return -1;
 }
 
+/* The state a project row refers to: the live one for the active Hamiltonian,
+   the stored snapshot for every other, so a checkbox ticked on a Hamiltonian
+   the user is not editing lands in that model and not in this one. */
+static PickettSpecies *project_species(PredFitState *p, int h_index, int state_index) {
+    if (h_index < 0 || h_index >= p->n_hamiltonians || state_index < 0) return NULL;
+    if (h_index == p->active_hamiltonian)
+        return state_index < p->n_species ? &p->species[state_index] : NULL;
+    PredFitSnapshot *m = &p->hamiltonian[h_index].model;
+    return state_index < m->n_species ? &m->species[state_index] : NULL;
+}
+
 static void render_project_navigator(SDL_Renderer *r, const PredFitState *p, const AdvUI *u) {
     char b[128], prefix[64];
     ui_fill(r, u->project_nav, UI_INPUT);
@@ -3112,10 +3270,12 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         }
         int *scroll = p->advanced_tab == 0 ? &p->advanced_param_scroll :
                       p->advanced_tab == 3 ? &p->advanced_species_scroll :
-                      p->advanced_tab == 4 ? &p->advanced_project_scroll : &p->advanced_line_scroll;
+                      (p->advanced_tab == 4 || p->advanced_tab == 5) ? &p->advanced_project_scroll
+                                                                     : &p->advanced_line_scroll;
         int total   = p->advanced_tab == 0 ? p->n_param :
                       p->advanced_tab == 3 ? p->n_species :
-                      p->advanced_tab == 4 ? project_row_count(p) : s->n_assignments;
+                      (p->advanced_tab == 4 || p->advanced_tab == 5) ? project_row_count(p)
+                                                                     : s->n_assignments;
         *scroll -= e->wheel.y;
         if (*scroll < 0) *scroll = 0;
         int limit = adv_scroll_limit(total, u.rows_visible);
@@ -3135,7 +3295,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != p->advanced_window_id) return 0;
     int x = e->button.x, y = e->button.y;
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 6; i++)
         if (point_in_rect(x, y, u.tab[i])) { p->advanced_tab = i; return 1; }
 
     /* The sidebar is global navigation, before the tab-specific editor. */
@@ -3199,6 +3359,58 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         return 1;
     }
 
+    if (p->advanced_tab == 5) {
+        if (point_in_rect(x, y, u.rows)) {
+            int h = -1, state = -1;
+            int row = p->advanced_project_scroll + (y - u.rows.y) / u.row_h;
+            if (project_row_info(p, row, &h, &state)) {
+                if (x < adv_col(u.table, 0.06)) {
+                    /* The only checkbox a Hamiltonian row owns is its own. */
+                    if (state < 0) {
+                        p->hamiltonian[h].simulate_excluded = !p->hamiltonian[h].simulate_excluded;
+                        p->session_dirty = 1;
+                    } else {
+                        PickettSpecies *sp = project_species(p, h, state);
+                        if (sp) { sp->predict_enabled = !sp->predict_enabled; p->session_dirty = 1; }
+                    }
+                } else if (state >= 0 && x >= adv_col(u.table, 0.50) &&
+                           x < adv_col(u.table, 0.88)) {
+                    PickettSpecies *sp = project_species(p, h, state);
+                    static const double at[3] = {0.50, 0.64, 0.78};
+                    if (sp) for (int k = 2; k >= 0; k--) {
+                        if (x < adv_col(u.table, at[k])) continue;
+                        sp->mu_excluded[k] = !sp->mu_excluded[k];
+                        p->session_dirty = 1;
+                        break;
+                    }
+                } else {
+                    predfit_select_hamiltonian(s, h);
+                    if (state >= 0) select_species(s, state);
+                    p->advanced_nav_state = state;
+                }
+            }
+            return 1;
+        }
+        if (point_in_rect(x, y, u.btn_a)) { predfit_simulate(s); return 1; }
+        if (point_in_rect(x, y, u.btn_b) || point_in_rect(x, y, u.btn_c)) {
+            int include = point_in_rect(x, y, u.btn_b);
+            for (int h = 0; h < p->n_hamiltonians; h++) {
+                p->hamiltonian[h].simulate_excluded = !include;
+                int n_states = h == p->active_hamiltonian ? p->n_species
+                                                          : p->hamiltonian[h].model.n_species;
+                for (int i = 0; i < n_states; i++) {
+                    PickettSpecies *sp = project_species(p, h, i);
+                    if (!sp) continue;
+                    sp->predict_enabled = include;
+                    for (int k = 0; k < 3; k++) sp->mu_excluded[k] = 0;
+                }
+            }
+            p->session_dirty = 1;
+            return 1;
+        }
+        return 1;
+    }
+
     if (p->advanced_tab == 4) {
         if (point_in_rect(x, y, u.rows)) {
             int h = -1, state = -1;
@@ -3256,7 +3468,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
         if (point_in_rect(x, y, u.btn_a)) { add_parameter(p); return 1; }
-        if (point_in_rect(x, y, u.btn_b)) { predfit_calculate_all_species(s); return 1; }
+        if (point_in_rect(x, y, u.btn_b)) { predfit_simulate(s); return 1; }
         SDL_Rect unc = {u.w - ADV_PAD - 300, u.footer.y + 8, 300, 30};
         if (point_in_rect(x, y, unc)) { advanced_begin_line_error(p); return 1; }
         return 1;
@@ -3301,7 +3513,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
         if (point_in_rect(x, y, u.btn_a)) { add_species(s); return 1; }
-        if (point_in_rect(x, y, u.btn_b)) { predfit_calculate_all_species(s); return 1; }
+        if (point_in_rect(x, y, u.btn_b)) { predfit_simulate(s); return 1; }
         return 1;
     }
 
@@ -3354,13 +3566,82 @@ void predfit_render_advanced(AppState *s) {
     ui_text(r, UI_FONT_TITLE, "Pred&Fit Advanced", 18, 12, UI_TEXT);
     ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
 
-    const char *tabs[5] = {"Parameters", "Lines", "Fitting", "States", "Hamiltonians"};
-    for (int i = 0; i < 5; i++)
+    const char *tabs[6] = {"Parameters", "Lines", "Fitting", "States", "Hamiltonians", "Simulation"};
+    for (int i = 0; i < 6; i++)
         ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, p->advanced_tab == i, 0, 0, 0);
 
     render_project_navigator(r, p, &u);
 
-    if (p->advanced_tab == 4) {
+    if (p->advanced_tab == 5) {
+        ui_text(r, UI_FONT_SANS,
+                "Simulation — everything checked is calculated together and plotted together",
+                u.caption.x, u.caption.y, UI_ACCENT_TEXT);
+        ui_fill(r, u.table, UI_INPUT);
+        ui_frame(r, u.table, UI_LINE);
+        int hy = u.table.y + 8;
+        ui_text(r, UI_FONT_MONO_SM, "SIM",                adv_col(u.table, 0.00), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN / STATE", adv_col(u.table, 0.06), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu a",               adv_col(u.table, 0.50), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu b",               adv_col(u.table, 0.64), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "mu c",               adv_col(u.table, 0.78), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "TROT / CONC.",       adv_col(u.table, 0.90), hy, UI_DIM);
+        ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
+        int total = project_row_count(p);
+        for (int visible = 0; visible < u.rows_visible; visible++) {
+            int row_index = p->advanced_project_scroll + visible;
+            if (row_index >= total) break;
+            int h_index = -1, state_index = -1;
+            if (!project_row_info(p, row_index, &h_index, &state_index)) continue;
+            const HamiltonianModel *model = &p->hamiltonian[h_index];
+            const PredFitSnapshot *stored = &model->model;
+            int active_h = h_index == p->active_hamiltonian;
+            int in_sim = !model->simulate_excluded;
+            int y = u.rows.y + visible * u.row_h;
+            SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
+            if (active_h && state_index < 0) ui_fill(r, row, UI_ACCENT_SOFT);
+            else if (visible % 2)            ui_fill(r, row, UI_PANEL);
+            int ty = y + (u.row_h - 2 - ui_text_h(UI_FONT_MONO_SM)) / 2;
+            if (state_index < 0) {
+                snprintf(b, sizeof(b), "[%c]", in_sim ? 'x' : ' ');
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00), ty, in_sim ? UI_OK : UI_FAINT);
+                snprintf(b, sizeof(b), "H%d  %s", model->id, model->name);
+                ui_text(r, UI_FONT_SANS_SM, b, adv_col(u.table, 0.06), ty,
+                        in_sim ? (active_h ? UI_ACCENT_TEXT : UI_TEXT) : UI_FAINT);
+                snprintf(b, sizeof(b), "%.6g K", active_h ? p->temp_k : stored->temp_k);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.90), ty, in_sim ? UI_DIM : UI_FAINT);
+            } else {
+                const PickettSpecies *sp = active_h ? &p->species[state_index]
+                                                    : &stored->species[state_index];
+                int on = in_sim && sp->predict_enabled;
+                snprintf(b, sizeof(b), "[%c]", sp->predict_enabled ? 'x' : ' ');
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.00), ty,
+                        on ? UI_OK : UI_FAINT);
+                snprintf(b, sizeof(b), "   \u2514 State %d  %s", sp->state_index, sp->name);
+                ui_text(r, UI_FONT_SANS_SM, b, adv_col(u.table, 0.06), ty, on ? UI_TEXT : UI_FAINT);
+                static const double at[3] = {0.50, 0.64, 0.78};
+                for (int k = 0; k < 3; k++) {
+                    int used = on && !sp->mu_excluded[k] && sp->mu[k] != 0.0;
+                    snprintf(b, sizeof(b), "[%c] %.4g", sp->mu_excluded[k] ? ' ' : 'x', sp->mu[k]);
+                    ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, at[k]), ty,
+                            used ? UI_TEXT : UI_FAINT);
+                }
+                snprintf(b, sizeof(b), "%.4g", sp->concentration);
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.90), ty, on ? UI_DIM : UI_FAINT);
+            }
+        }
+        int checked = 0;
+        for (int h = 0; h < p->n_hamiltonians; h++) if (!p->hamiltonian[h].simulate_excluded) checked++;
+        snprintf(b, sizeof(b), checked == 1 ? "Simulate (%d H)" : "Simulate (%d H)", checked);
+        ui_button(r, u.btn_a, b, -1, checked ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_button(r, u.btn_b, "Check all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_button(r, u.btn_c, "Uncheck all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_text(r, UI_FONT_SANS_SM,
+                p->n_simulated > 0
+                    ? "One SPCAT run per checked Hamiltonian; the catalogues are shown in one plot."
+                    : "Check Hamiltonians, states and dipoles, then Simulate: all of them are plotted together.",
+                u.btn_c.x + u.btn_c.w + 16, u.footer.y + 17, UI_FAINT);
+
+    } else if (p->advanced_tab == 4) {
         ui_text(r, UI_FONT_SANS, "Project — Hamiltonians and their states",
                 u.caption.x, u.caption.y, UI_ACCENT_TEXT);
         ui_fill(r, u.table, UI_INPUT);
@@ -3471,7 +3752,7 @@ void predfit_render_advanced(AppState *s) {
         }
 
         ui_button(r, u.btn_a, "+ parameter", -1, UI_BTN_QUIET, 0, 0, 0, 0);
-        ui_button(r, u.btn_b, "Calculate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+        ui_button(r, u.btn_b, "Simulate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
         snprintf(b, sizeof(b), ".lin uncertainty: %.8g MHz", p->line_error_mhz);
         ui_text(r, UI_FONT_SANS_SM, b, u.w - ADV_PAD - 290, u.footer.y + 17,
                 p->advanced_edit_param == -2 ? UI_ACCENT_TEXT : UI_DIM);
@@ -3553,7 +3834,7 @@ void predfit_render_advanced(AppState *s) {
             if (p->n_species > 1) ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
         ui_button(r, u.btn_a, "+ species", -1, UI_BTN_QUIET, 0, 0, 0, 0);
-        ui_button(r, u.btn_b, "Calculate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
+        ui_button(r, u.btn_b, "Simulate", -1, UI_BTN_PRIMARY, 0, 0, 0, 0);
         ui_text(r, UI_FONT_SANS_SM, "Trot and cut are Hamiltonian-wide · concentration rescales each state after SPCAT",
                 u.btn_b.x + u.btn_b.w + 16, u.footer.y + 17, UI_FAINT);
 

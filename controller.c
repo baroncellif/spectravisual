@@ -632,7 +632,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
                 int in[]={INPUT_PF_A,INPUT_PF_B,INPUT_PF_C,INPUT_PF_MUA,INPUT_PF_MUB,INPUT_PF_MUC,INPUT_PF_TEMP,INPUT_PF_FMIN,INPUT_PF_FMAX};
                 double *v[]={&p->a,&p->b,&p->c,&p->mu[0],&p->mu[1],&p->mu[2],&p->temp_k,&p->fmin_ghz,&p->fmax_ghz};
                 for(int i=0;i<9;i++) if(point_in_rect(mx,my,ui_pf_model(w,i+1))){snprintf(s->text_input_buf,32,"%.8g",*v[i]);input_focus(s,in[i],mx);return;}
-                if(point_in_rect(mx,my,ui_pf_calculate(w))){predfit_calculate(s);return;}
+                if(point_in_rect(mx,my,ui_pf_calculate(w))){predfit_simulate(s);return;}
                 if(point_in_rect(mx,my,ui_pf_fit(w))){predfit_fit(s);return;}
                 if(point_in_rect(mx,my,ui_pf_undo(w))){predfit_undo_last_fit(s);return;}
                 if(point_in_rect(mx,my,ui_pf_advanced(w))){predfit_open_advanced(s);return;}
@@ -944,8 +944,13 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     for(int k = 0; k < requested; k++) {
         int idx = s->selected_indices[k];
         if (idx < 0 || idx >= s->n_pred) continue;
-        int hamiltonian_id = s->predfit.generated_catalog_active
-                           ? predfit_active_hamiltonian_id(s) : 0;
+        /* In a simulation the plot holds several models at once, so the owner
+           is the Hamiltonian of the catalogue row itself; only a row without
+           one falls back to the active Hamiltonian. */
+        int hamiltonian_id = s->pred_lines[idx].hamiltonian_id > 0
+                           ? s->pred_lines[idx].hamiltonian_id
+                           : (s->predfit.generated_catalog_active
+                              ? predfit_active_hamiltonian_id(s) : 0);
         add_or_update_assignment(s->assignments, &s->n_assignments,
                                  s->pred_lines[idx], exp_freq, exp_int, hamiltonian_id);
         assigned++;

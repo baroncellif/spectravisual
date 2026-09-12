@@ -1568,7 +1568,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
         int inp[]={INPUT_PF_A,INPUT_PF_B,INPUT_PF_C,INPUT_PF_MUA,INPUT_PF_MUB,INPUT_PF_MUC,INPUT_PF_TEMP,INPUT_PF_FMIN,INPUT_PF_FMAX};
         const char *unit[]={"MHz","MHz","MHz","D","D","D","K","GHz","GHz"};
         for(int i=0;i<9;i++){field_val(state,inp[i],buf,sizeof(buf),"%.6g",val[i]);panel_field(ren,state,w,lab[i],ui_pf_model(w,i+1),inp[i],buf,unit[i]);}
-        ui_button(ren,ui_pf_calculate(w),"Calculate",-1,UI_BTN_PRIMARY,0,mx,my,m_down);
+        ui_button(ren,ui_pf_calculate(w),"Simulate",-1,UI_BTN_PRIMARY,0,mx,my,m_down);
         ui_button(ren,ui_pf_fit(w),"Fit",-1,UI_BTN_QUIET,0,mx,my,m_down);
         ui_button(ren,ui_pf_undo(w),"Undo",-1,UI_BTN_QUIET,0,mx,my,m_down);
         ui_button(ren,ui_pf_advanced(w),"Advanced...",UI_ICON_LIST,UI_BTN_QUIET,0,mx,my,m_down);
@@ -1578,7 +1578,7 @@ static void draw_ui_overlays(SDL_Renderer *ren, TTF_Font *font, AppState *state,
                     ? 5.3311e6 * sqrt((qtemp*qtemp*qtemp)/(p->a*p->b*p->c)) / sigma : 0.0;
         snprintf(buf,sizeof(buf),"Qrot(%.6g K) = %.6g   sigma = %.6g",qtemp,qrot,sigma);
         panel_hint(ren,ui_p_row(w,12),buf);
-        panel_hint(ren,ui_p_row(w,13),p->status[0]?p->status:"Calculate runs SPCAT; Fit runs SPFIT then SPCAT.");
+        panel_hint(ren,ui_p_row(w,13),p->status[0]?p->status:"Simulate runs SPCAT on every checked Hamiltonian; Fit runs SPFIT then SPCAT.");
     }
 
     SDL_RenderSetClipRect(ren, NULL);

@@ -142,6 +142,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #24 | UI e pulizia | U-01, U-05, U-07, U-09, U-10, U-11, U-12, M-04, M-05 | basso | — |
 | #25 | Importazione esplicita di input SPFIT/SPCAT | richiesta utente 2026-09-12 | medio: adozione di modelli esterni senza ricostruzione manuale | fatto `HEAD` |
 | #26 | Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita | richiesta utente 2026-09-12 | medio: workspace leggibile e nessun salvataggio implicito | fatto `HEAD` |
+| #27 | Simulazione: più Hamiltoniani e più dipoli in un solo plot | richiesta utente 2026-09-12 | alto: finora si poteva vedere un Hamiltoniano alla volta | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 **P0.3** → #1; **P1** → #2, #6, #7, #8, #11, #14, #15, #18, #19, #21;
@@ -1083,6 +1084,44 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   `test_session_saved_only_on_request`.
 - **Nota**: senza salvataggio all'uscita, un lavoro non salvato si perde alla
   chiusura. È la scelta richiesta; l'avviso è il `*` sul pulsante Save session.
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #27 — Simulazione: più Hamiltoniani e più dipoli in un solo plot
+
+- **Richiesta**: utente, 2026-09-12. Il tasto *Calculate* diventa una pagina
+  **Simulation** che elenca tutti gli Hamiltoniani con i loro stati e una
+  casella per ciascun dipolo; **Simulate** calcola e mette nel plot tutto ciò
+  che è spuntato. Prima si poteva vedere un solo Hamiltoniano alla volta.
+- **Cosa è stato fatto**:
+  - `predfit_simulate` esegue un SPCAT per ogni Hamiltoniano spuntato,
+    prendendo in prestito l'Hamiltoniano attivo e restituendolo alla fine
+    (l'utente non viene spostato); i cataloghi prodotti sono registrati in
+    `PredFitState.simulated`;
+  - `set_predictions_simulated` ([main.c](../../main.c)) unisce quei cataloghi
+    in un solo set di predizioni, ordinato in frequenza, dove **ogni riga
+    conserva l'id dell'Hamiltoniano che l'ha prodotta**;
+  - `rescale_predicted_intensities_multi` riscala ogni riga con il proprio
+    modello: Tcat è quella congelata al momento del run, mentre Trot e le
+    concentrazioni sono lette dal progetto, così modificarle ricolora il plot
+    senza rilanciare SPCAT;
+  - un dipolo tolto dalla spunta viene scritto come 0 nel `.int` (il valore in
+    memoria non cambia): è il modo di SPCAT per non predire quel tipo di
+    transizione;
+  - l'assegnazione prende il proprietario **dalla riga di catalogo**, non
+    dall'Hamiltoniano attivo: in un plot con più modelli una riga di H3 non può
+    più finire assegnata ad H2;
+  - Fit e Undo, quando il plot è una simulazione, la ricalcolano tutta invece
+    di sostituirla con il solo Hamiltoniano fittato;
+  - le scelte (Hamiltoniano escluso, dipoli esclusi) stanno nella sessione con
+    record `h4sim` e `h4statemu`, scritti solo quando qualcosa è escluso: una
+    sessione che non dice nulla simula tutto.
+- **Test che passano**: `test_simulation_plots_every_checked_hamiltonian`
+  (due H nello stesso plot, righe ordinate, proprietario dell'assignment preso
+  dalla riga, H escluso che sparisce), `test_dipole_checkbox_zeroes_the_int`,
+  `test_simulated_intensities_follow_their_own_model`.
+- **Nota**: anche l'Hamiltoniano vuoto di partenza è spuntato per default, e
+  quindi entra nel plot con il suo rotore di default finché non lo si
+  deseleziona o elimina.
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

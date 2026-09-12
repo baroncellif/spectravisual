@@ -45,6 +45,23 @@ void rescale_predicted_intensities_by_species(PredLine *lines, int n,
                                               const PickettSpecies *species, int n_species,
                                               double *global_max_int);
 
+/* One Hamiltonian of a simulation, as the intensity code needs to see it. */
+typedef struct {
+    int hamiltonian_id;
+    double cat_temp_k;                 /* TEMP the catalogue was produced at */
+    double rot_temp_k;                 /* temperature it is displayed at now */
+    const PickettSpecies *species;
+    int n_species;
+} PredIntensityModel;
+
+/* Same rescaling for a plot holding the catalogues of several Hamiltonians at
+   once: every row is rescaled with the model that produced it, found through
+   the Hamiltonian id the row carries.  Rows of an unknown Hamiltonian keep the
+   intensity their catalogue stated. */
+void rescale_predicted_intensities_multi(PredLine *lines, int n,
+                                         const PredIntensityModel *models, int n_models,
+                                         double *global_max_int);
+
 // Reads a standard X Y data file
 int read_data(const char *fname, Point *pts, int maxpts,
               double *xmin, double *xmax, double *ymin, double *ymax);

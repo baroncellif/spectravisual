@@ -415,45 +415,76 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
     if (global_max_int) *global_max_int = max_int;
 }
 
+/* One row against one model: shared by the single-Hamiltonian rescaling and
+   by the simulation of several Hamiltonians at once. */
+static void rescale_line_by_species(PredLine *p, double cat_temp_k, double rot_temp_k,
+                                    const PickettSpecies *species, int n_species)
+{
+    const double c2 = 1.438776877;
+    const double mhz_per_cm = 29979.2458;
+    /* In SPCAT's multistate rotational record the first three QNs are rotor
+       QNs and the next one is the state.  We use the number that SPCAT
+       printed, without altering the QN representation. */
+    /* A concentration represents the population prepared in the lower state.
+       For ordinary rotational (diagonal) lines this is identical to the upper
+       state; for an explicitly inter-state transition it is the physically
+       relevant choice. */
+    int state = p->n_qn >= 4 ? p->M1l : 0;
+    const PickettSpecies *sp = NULL;
+    for (int k = 0; k < n_species; k++)
+        if (species[k].state_index == state) { sp = &species[k]; break; }
+    if (!sp || !(rot_temp_k > 0.0) || !(cat_temp_k > 0.0)) {
+        p->line_strength = 0.0;
+        p->linear_int = pow(10.0, p->cat_lgint);
+    } else {
+        double nu_cm = p->freq_mhz / mhz_per_cm;
+        double stim_red = -expm1(-c2 * nu_cm / rot_temp_k);
+        double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
+        double pop_red = exp(-c2 * p->elo_cm / rot_temp_k) * stim_red
+                       / pow(rot_temp_k, 0.5 * p->rot_dof);
+        double pop_cat = exp(-c2 * p->elo_cm / cat_temp_k) * stim_cat
+                       / pow(cat_temp_k, 0.5 * p->rot_dof);
+        double base = pow(10.0, p->cat_lgint);
+        p->line_strength = pop_cat > 0.0 ? base / pop_cat : 0.0;
+        p->linear_int = pop_cat > 0.0 ? base * pop_red / pop_cat : base;
+        p->linear_int *= sp->concentration;
+    }
+    p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
+}
+
 void rescale_predicted_intensities_by_species(PredLine *lines, int n,
                                               double cat_temp_k,
                                               double rot_temp_k,
                                               const PickettSpecies *species, int n_species,
                                               double *global_max_int)
 {
-    const double c2 = 1.438776877;
-    const double mhz_per_cm = 29979.2458;
+    double max_int = -1.0;
+    for (int i = 0; i < n; i++) {
+        rescale_line_by_species(&lines[i], cat_temp_k, rot_temp_k, species, n_species);
+        if (lines[i].linear_int > max_int) max_int = lines[i].linear_int;
+    }
+    if (global_max_int) *global_max_int = max_int;
+}
+
+void rescale_predicted_intensities_multi(PredLine *lines, int n,
+                                         const PredIntensityModel *models, int n_models,
+                                         double *global_max_int)
+{
     double max_int = -1.0;
     for (int i = 0; i < n; i++) {
         PredLine *p = &lines[i];
-        /* In SPCAT's multistate rotational record the first three QNs are
-           rotor QNs and the next one is the state.  We use the number that
-           SPCAT printed, without altering the QN representation. */
-        /* A concentration represents the population prepared in the lower
-           state. For ordinary rotational (diagonal) lines this is identical
-           to the upper state; for an explicitly inter-state transition it is
-           the physically relevant choice. */
-        int state = p->n_qn >= 4 ? p->M1l : 0;
-        const PickettSpecies *sp = NULL;
-        for (int k = 0; k < n_species; k++)
-            if (species[k].state_index == state) { sp = &species[k]; break; }
-        if (!sp || !(rot_temp_k > 0.0) || !(cat_temp_k > 0.0)) {
+        const PredIntensityModel *m = NULL;
+        for (int k = 0; k < n_models; k++)
+            if (models[k].hamiltonian_id == p->hamiltonian_id) { m = &models[k]; break; }
+        if (!m) {
+            /* A row nobody claims keeps the intensity its catalogue stated,
+               rather than borrowing another Hamiltonian's temperature. */
             p->line_strength = 0.0;
             p->linear_int = pow(10.0, p->cat_lgint);
+            p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
         } else {
-            double nu_cm = p->freq_mhz / mhz_per_cm;
-            double stim_red = -expm1(-c2 * nu_cm / rot_temp_k);
-            double stim_cat = -expm1(-c2 * nu_cm / cat_temp_k);
-            double pop_red = exp(-c2 * p->elo_cm / rot_temp_k) * stim_red
-                           / pow(rot_temp_k, 0.5 * p->rot_dof);
-            double pop_cat = exp(-c2 * p->elo_cm / cat_temp_k) * stim_cat
-                           / pow(cat_temp_k, 0.5 * p->rot_dof);
-            double base = pow(10.0, p->cat_lgint);
-            p->line_strength = pop_cat > 0.0 ? base / pop_cat : 0.0;
-            p->linear_int = pop_cat > 0.0 ? base * pop_red / pop_cat : base;
-            p->linear_int *= sp->concentration;
+            rescale_line_by_species(p, m->cat_temp_k, m->rot_temp_k, m->species, m->n_species);
         }
-        p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
         if (p->linear_int > max_int) max_int = p->linear_int;
     }
     if (global_max_int) *global_max_int = max_int;

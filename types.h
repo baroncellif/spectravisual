@@ -59,7 +59,8 @@ typedef struct {
 typedef enum {
     PENDING_LOAD_SPECTRUM,
     PENDING_LOAD_CATALOG,
-    PENDING_LOAD_SESSION
+    PENDING_LOAD_SESSION,
+    PENDING_LOAD_SIMULATION   /* merge the catalogues listed in predfit.simulated */
 } PendingLoadKind;
 
 typedef struct {
@@ -116,9 +117,13 @@ typedef struct {
 typedef struct {
     char name[64];
     int state_index;          /* v=0,1,... in .lin; parameter suffix 00,11... */
-    int predict_enabled;      /* include this species when Calculate is pressed */
+    int predict_enabled;      /* include this species when Simulate is pressed */
     double mu[3];
     double concentration;     /* external relative-intensity multiplier, default 1 */
+    /* Which dipole components take part in the simulation.  Stored inverted so
+       that a zeroed structure - a new state, an old session - simulates with
+       every component, and only an explicit exclusion removes one. */
+    int mu_excluded[3];
 } PickettSpecies;
 
 /* The manually controllable .int fields.  QROT is deliberately absent: it is
@@ -160,8 +165,20 @@ typedef struct {
 typedef struct {
     int id;                         /* stable project identity, never an index */
     char name[64];
+    /* Inverted like mu_excluded above: every Hamiltonian takes part in a
+       simulation unless the user unchecks it. */
+    int simulate_excluded;
     PredFitSnapshot model;
 } HamiltonianModel;
+
+/* One catalogue of a simulation: which Hamiltonian produced it and at which
+   temperature, so its rows can be rescaled with that model's states while the
+   rows of another Hamiltonian in the same plot follow theirs. */
+typedef struct {
+    int hamiltonian_id;
+    double cat_temp_k;              /* TEMP of the .int that produced the rows */
+    char cat_path[512];
+} SimulatedCatalog;
 
 typedef struct {
     double a, b, c;
@@ -204,7 +221,11 @@ typedef struct {
     int history_count;
     int history_capacity;
     int generated_catalog_pending;
-    int generated_catalog_active; /* current prediction is .fit/model.cat */
+    int generated_catalog_active; /* current prediction is a generated catalogue */
+    /* The catalogues merged into the current prediction, one per simulated
+       Hamiltonian.  Empty while the prediction is a single external .cat. */
+    SimulatedCatalog simulated[MAX_PICKETT_HAMILTONIANS];
+    int n_simulated;
     int intensity_dirty;
     int session_dirty;             /* save on exit only after an actual edit */
     char work_dir[512];       // persistent .fit working state (latest run)

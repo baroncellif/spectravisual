@@ -348,6 +348,9 @@ static int set_predictions(AppState *state, const char *path) {
         state->predfit.generated_catalog_active = 0;
         state->predfit.generated_catalog_pending = 0;
     }
+    /* Whatever this catalogue is, it is now the whole plot: the merged rows
+       of a simulation are gone and their models must not rescale it. */
+    state->predfit.n_simulated = 0;
     state->cat_temp_k = 0.0;
     state->dipole_cat[0] = state->dipole_cat[1] = state->dipole_cat[2] = 0.0;
     predfit_recompute_display_intensities(state);
@@ -377,6 +380,93 @@ static int set_predictions(AppState *state, const char *path) {
     return 1;
 }
 
+static int pred_line_by_frequency(const void *a, const void *b) {
+    double fa = ((const PredLine *)a)->freq_mhz, fb = ((const PredLine *)b)->freq_mhz;
+    return fa < fb ? -1 : fa > fb ? 1 : 0;
+}
+
+/* Merge the catalogues of one simulation into a single prediction set.  Every
+   row keeps the Hamiltonian that produced it, so intensities, assignment
+   ownership and the Fitting tab stay attached to the right model even though
+   several models share one plot. */
+static int set_predictions_simulated(AppState *state) {
+    PredFitState *p = &state->predfit;
+    PredLine *merged = NULL;
+    int n_merged = 0, unsupported = 0, sources = 0;
+    double pxmin = 0.0, pxmax = 0.0;
+    char failed[200] = "";
+    for (int i = 0; i < p->n_simulated; i++) {
+        PredLine *rows = NULL;
+        double rmin = 0.0, rmax = 0.0, rmax_int = 0.0;
+        int skipped = 0;
+        int n = read_pred_cat_alloc_counted(p->simulated[i].cat_path, &rows,
+                                            &rmin, &rmax, &rmax_int, &skipped);
+        unsupported += skipped;
+        if (n <= 0 || !rows) {
+            free(rows);
+            if (!failed[0])
+                snprintf(failed, sizeof(failed), "%s produced no readable catalogue.",
+                         p->simulated[i].cat_path);
+            continue;
+        }
+        PredLine *grown = realloc(merged, (size_t)(n_merged + n) * sizeof(*merged));
+        if (!grown) { free(rows); break; }
+        merged = grown;
+        for (int k = 0; k < n; k++) {
+            rows[k].hamiltonian_id = p->simulated[i].hamiltonian_id;
+            merged[n_merged + k] = rows[k];
+        }
+        free(rows);
+        if (sources == 0 || rmin < pxmin) pxmin = rmin;
+        if (sources == 0 || rmax > pxmax) pxmax = rmax;
+        n_merged += n;
+        sources++;
+    }
+    if (n_merged <= 0 || !merged) {
+        free(merged);
+        snprintf(state->error_message, sizeof(state->error_message),
+                 "Simulation produced no predicted line. %s", failed);
+        return 0;
+    }
+    /* One plot, one frequency order: the merged rows come from several files. */
+    qsort(merged, (size_t)n_merged, sizeof(*merged), pred_line_by_frequency);
+    free(state->pred_lines);
+    state->pred_lines = merged;
+    state->n_pred = n_merged;
+    state->n_selected = 0;
+    state->pxmin = pxmin;
+    state->pxmax = pxmax;
+    /* The visible path is the active Hamiltonian's catalogue when it took
+       part, so "is this the generated catalogue?" keeps its usual answer. */
+    const char *shown = p->simulated[0].cat_path;
+    int active_id = predfit_active_hamiltonian_id(state);
+    for (int i = 0; i < p->n_simulated; i++)
+        if (p->simulated[i].hamiltonian_id == active_id) shown = p->simulated[i].cat_path;
+    snprintf(state->pred_path, sizeof(state->pred_path), "%s", shown);
+    predfit_adopt_simulation(state);
+
+    int first = !state->data_loaded;
+    state->data_loaded = 1;
+    if (first) {
+        state->xmin = pxmin; state->xmax = pxmax; state->ymin = 0.0; state->ymax = 1.0;
+        state->vxmin = pxmin; state->vxmax = pxmax; state->vymin = 0.0; state->vymax = 1.0;
+        state->pvxmin = pxmin; state->pvxmax = pxmax;
+        state->bar_x = (pxmin + pxmax) / 2.0; state->pbar_x = state->bar_x;
+    }
+    snprintf(state->status_message, sizeof(state->status_message),
+             "Simulated %d Hamiltonian%s: %d predicted lines%s.",
+             sources, sources == 1 ? "" : "s", n_merged,
+             unsupported > 0 ? " (some skipped: NQN 0 or above 6)" : "");
+    if (unsupported > 0 || failed[0])
+        snprintf(state->error_message, sizeof(state->error_message), "%s%s%s",
+                 state->status_message, failed[0] ? " " : "", failed);
+    else
+        state->error_message[0] = '\0';
+    ensure_aux_loaded(state);
+    if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
+    return 1;
+}
+
 /* Consume all requests collected in this frame.  In particular, a session
    request must not discard later drops in the same queue. */
 static void process_pending_loads(AppState *state) {
@@ -388,6 +478,9 @@ static void process_pending_loads(AppState *state) {
             case PENDING_LOAD_CATALOG:
                 set_predictions(state, request.path);
                 if (request.generated_catalog) predfit_adopt_generated_catalog(state);
+                break;
+            case PENDING_LOAD_SIMULATION:
+                set_predictions_simulated(state);
                 break;
             case PENDING_LOAD_SESSION:
                 reopen_predfit_session(state);

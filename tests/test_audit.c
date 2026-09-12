@@ -1654,6 +1654,124 @@ static int test_sidebar_reorder_keeps_identity(void) {
     DONE();
 }
 
+/* H-08: Simulate runs SPCAT on every checked Hamiltonian and shows the
+   catalogues in one plot; every row keeps the model that produced it. */
+static int test_simulation_plots_every_checked_hamiltonian(void) {
+    AppState *s = new_state();
+    if (!have_program(s->settings.spcat_path)) SKIP("SPCAT non trovato da autodetect_program");
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    CHECK_INT("crea il secondo H", predfit_duplicate_hamiltonian(s, "second"), 1);
+    /* Two different rotors, so the two catalogues cannot coincide. */
+    p->a = 2000.0; p->b = 800.0; p->c = 700.0;
+    sync_basic_parameters(p);
+    int id_second = predfit_active_hamiltonian_id(s);
+    CHECK_INT("torna sul primo H", predfit_select_hamiltonian(s, 0), 1);
+    int id_first = predfit_active_hamiltonian_id(s);
+
+    CHECK_INT("simula due H", predfit_simulate(s), 2);
+    CHECK_INT("l'H attivo non cambia", predfit_active_hamiltonian_id(s), id_first);
+    pump(s);
+    CHECK(s->n_pred > 0, "righe simulate: attese > 0, ottenute %d", s->n_pred);
+    int from_first = 0, from_second = 0, orphan = 0;
+    for (int i = 0; i < s->n_pred; i++) {
+        if (s->pred_lines[i].hamiltonian_id == id_first) from_first++;
+        else if (s->pred_lines[i].hamiltonian_id == id_second) from_second++;
+        else orphan++;
+    }
+    CHECK(from_first > 0, "righe del primo H: attese > 0, ottenute %d", from_first);
+    CHECK(from_second > 0, "righe del secondo H: attese > 0, ottenute %d", from_second);
+    CHECK_INT("righe senza proprietario", orphan, 0);
+    CHECK_INT("generated_catalog_active", s->predfit.generated_catalog_active, 1);
+    /* One plot, one frequency order. */
+    int sorted = 1;
+    for (int i = 1; i < s->n_pred; i++)
+        if (s->pred_lines[i].freq_mhz < s->pred_lines[i - 1].freq_mhz) sorted = 0;
+    CHECK(sorted, "le righe unite non sono ordinate in frequenza");
+
+    /* An assignment takes the owner from the row, not from the active H. */
+    int row = -1;
+    for (int i = 0; i < s->n_pred && row < 0; i++)
+        if (s->pred_lines[i].hamiltonian_id == id_second) row = i;
+    CHECK(row >= 0, "nessuna riga del secondo H da assegnare");
+    if (row >= 0) {
+        s->n_selected = 1;
+        s->selected_indices[0] = row;
+        assign_selected_predictions(s, s->pred_lines[row].freq_mhz + 0.01, 1.0);
+        CHECK_INT("assignment creato", s->n_assignments, 1);
+        if (s->n_assignments == 1)
+            CHECK_INT("proprietario dell'assignment", s->assignments[0].hamiltonian_id, id_second);
+    }
+
+    /* Unchecking a Hamiltonian removes it from the next plot. */
+    s->predfit.hamiltonian[1].simulate_excluded = 1;
+    CHECK_INT("simula un solo H", predfit_simulate(s), 1);
+    pump(s);
+    int still_second = 0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].hamiltonian_id == id_second) still_second++;
+    CHECK_INT("righe dell'H escluso", still_second, 0);
+    DONE();
+}
+
+/* H-09: a dipole unchecked in Simulation is written as zero in the .int, so
+   SPCAT predicts no transition of that type. */
+static int test_dipole_checkbox_zeroes_the_int(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    p->species[0].mu[0] = 1.5;
+    p->species[0].mu[1] = 2.5;
+    p->species[0].mu[2] = 3.5;
+    memcpy(p->mu, p->species[0].mu, sizeof(p->mu));
+    p->species[0].mu_excluded[1] = 1;
+    CHECK_INT("scrive gli input", write_inputs(s, 0), 1);
+    FILE *fp = fopen(work_path(".fit/model.int"), "r");
+    CHECK(fp != NULL, "model.int non scritto");
+    if (!fp) DONE();
+    char line[256];
+    double mu[3] = {-1.0, -1.0, -1.0};
+    while (fgets(line, sizeof(line), fp)) {
+        int id = 0; double value = 0.0;
+        if (sscanf(line, "%d %lf", &id, &value) == 2 && id >= 1 && id <= 3) mu[id - 1] = value;
+    }
+    fclose(fp);
+    CHECK_DBL("mu a resta nel .int", mu[0], 1.5, 1e-12);
+    CHECK_DBL("mu b escluso e' zero", mu[1], 0.0, 1e-12);
+    CHECK_DBL("mu c resta nel .int", mu[2], 3.5, 1e-12);
+    CHECK_DBL("il valore in memoria non viene toccato", p->species[0].mu[1], 2.5, 1e-12);
+    DONE();
+}
+
+/* H-10: in a simulated plot each row is rescaled with its own model, so the
+   concentration of one Hamiltonian cannot restyle another's lines. */
+static int test_simulated_intensities_follow_their_own_model(void) {
+    PickettSpecies first = {"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0, {0, 0, 0}};
+    PickettSpecies second = {"State 0", 0, 1, {1.0, 1.0, 1.0}, 0.25, {0, 0, 0}};
+    PredIntensityModel models[2] = {
+        {7, 5.0, 5.0, &first, 1},
+        {9, 5.0, 5.0, &second, 1},
+    };
+    PredLine lines[2] = {
+        {.freq_mhz = 10000.0, .cat_lgint = -4.0, .elo_cm = 1.0, .rot_dof = 3, .n_qn = 3,
+         .hamiltonian_id = 7},
+        {.freq_mhz = 10000.0, .cat_lgint = -4.0, .elo_cm = 1.0, .rot_dof = 3, .n_qn = 3,
+         .hamiltonian_id = 9},
+    };
+    double max_int = 0.0;
+    rescale_predicted_intensities_multi(lines, 2, models, 2, &max_int);
+    CHECK(lines[0].linear_int > 0.0, "riga del primo modello non riscalata");
+    CHECK_DBL("rapporto delle concentrazioni", lines[1].linear_int / lines[0].linear_int, 0.25, 1e-12);
+    CHECK_DBL("il massimo e' quello del modello piu' intenso", max_int, lines[0].linear_int, 1e-12);
+
+    /* A row nobody claims keeps the intensity its catalogue stated. */
+    PredLine orphan = {.freq_mhz = 10000.0, .cat_lgint = -4.0, .elo_cm = 1.0, .rot_dof = 3,
+                       .n_qn = 3, .hamiltonian_id = 42};
+    rescale_predicted_intensities_multi(&orphan, 1, models, 2, NULL);
+    CHECK_DBL("riga senza modello", orphan.linear_int, pow(10.0, -4.0), 1e-18);
+    DONE();
+}
+
 /* H-04: the same QN transition may legitimately appear in two independent
    Hamiltonians. Ownership is therefore part of assignment identity and
    survives assignments.txt format 2. */
@@ -2415,6 +2533,9 @@ static const Test TESTS[] = {
     {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
     {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
+    {"test_simulation_plots_every_checked_hamiltonian", test_simulation_plots_every_checked_hamiltonian},
+    {"test_dipole_checkbox_zeroes_the_int", test_dipole_checkbox_zeroes_the_int},
+    {"test_simulated_intensities_follow_their_own_model", test_simulated_intensities_follow_their_own_model},
     {"test_session_saved_only_on_request", test_session_saved_only_on_request},
     {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},
