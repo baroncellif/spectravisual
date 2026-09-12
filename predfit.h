@@ -41,6 +41,17 @@ void predfit_load_session(AppState *state);
 void predfit_save_session(AppState *state);
 int predfit_import_load_dir(AppState *state);
 int predfit_simulate(AppState *state);
+
+/* One state of the plot and the colour of its own broadened trace. */
+typedef struct {
+    int hamiltonian_id;
+    int state_index;      /* the state QN SPCAT prints, not a row number */
+    SDL_Color color;
+    char label[96];
+} PredfitSpeciesTrace;
+
+int predfit_plot_species(const AppState *state, PredfitSpeciesTrace *out, int max);
+SDL_Color predfit_species_color(const PickettSpecies *species, int fallback_index);
 void predfit_adopt_simulation(AppState *state);
 int predfit_move_hamiltonian(AppState *state, int index, int delta);
 int predfit_move_species(AppState *state, int index, int delta);

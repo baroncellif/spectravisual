@@ -369,6 +369,8 @@ static int pick_color(SDL_Color *c) {
 }
 
 
+int settings_pick_color(SDL_Color *c) { return c ? pick_color(c) : 0; }
+
 /* Picks a file or a folder with the panel the user already knows. */
 static int pick_path(const char *prompt, int folder, char *out, size_t n) {
 #ifdef __APPLE__

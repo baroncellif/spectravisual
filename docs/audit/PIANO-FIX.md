@@ -144,6 +144,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #26 | Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita | richiesta utente 2026-09-12 | medio: workspace leggibile e nessun salvataggio implicito | fatto `HEAD` |
 | #27 | Simulazione: più Hamiltoniani e più dipoli in un solo plot | richiesta utente 2026-09-12 | alto: finora si poteva vedere un Hamiltoniano alla volta | fatto `HEAD` |
 | #28 | Fit di un modello importato senza passi intermedi | segnalazione utente 2026-09-12 | alto: il fit di un `.lin` importato era bloccato | fatto `HEAD` |
+| #29 | Sottotracce del broadening, una per specie, con colore | richiesta utente 2026-09-12 | medio: si vede il contributo di ogni specie alla somma | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 **P0.3** → #1; **P1** → #2, #6, #7, #8, #11, #14, #15, #18, #19, #21;
@@ -1157,6 +1158,41 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
   `.cat`, non perso dalla lista.
 - **Test che passano**: `test_fit_calculates_the_missing_catalogue`,
   `test_simulation_supersedes_a_queued_catalog`.
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #29 — Broadening: una sottotraccia colorata per specie
+
+- **Richiesta**: utente, 2026-09-12. In Simulation si deve poter scegliere un
+  colore per specie. Non è il colore degli stick: con il broadening attivo (di
+  qualsiasi tipo) oltre alla traccia somma, che resta quella di sempre, va
+  disegnata la traccia di ogni specie nel suo colore. Ogni specie ha un colore
+  di default; l'opzione per mostrare le sottotracce si accende e si spegne, e
+  di default è **spenta**.
+- **Cosa è stato fatto**:
+  - `PickettSpecies.trace_color` (alpha 0 = mai scelto) e swatch cliccabile
+    nella colonna TRACE della pagina Simulation: apre il pannello colori del
+    sistema (`settings_pick_color`, lo stesso delle altre tinte dell'app);
+  - i colori di default ruotano su una palette **saltando quelli già usati nel
+    progetto**: cinque Hamiltoniani da uno stato ciascuno - cioè cinque modelli
+    importati - ricevono cinque colori diversi;
+  - `BroadCfg` sa valutare il profilo su un solo stato: la sottotraccia è lo
+    **stesso** calcolo della somma ristretto a quello stato, quindi le
+    sottotracce sommano esattamente alla traccia totale (verificato a
+    1e-15 nel test e sui file dell'utente a 0 esatto);
+  - il renderer disegna prima le sottotracce (un pixel più sottili) e sopra la
+    somma, che resta la linea da confrontare con l'esperimento;
+  - `predfit_plot_species` dice al renderer quali stati sono nel plot e con
+    quale colore: quali modelli sono su schermo è competenza di Pred&Fit,
+    disegnarli è competenza della vista;
+  - interruttore **Traces per state** nel footer di Simulation, spento per
+    default; sia l'interruttore sia i colori stanno nella sessione
+    (`species_traces`, `h4statecolor`).
+- **Test che passano**: `test_species_traces_split_the_broadened_profile`
+  (somma delle sottotracce = traccia totale; uno stato senza righe non disegna
+  nulla; senza broadening non c'è profilo),
+  `test_species_trace_colour_default_and_session`,
+  `test_default_species_colours_are_distinct`.
+- **Nota**: per ora vale per il broadening, non per gli stick, come richiesto.
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

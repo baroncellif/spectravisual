@@ -8,6 +8,10 @@
  * The file lives next to the executable, not in the working directory: the
  * program is started from whichever folder holds the data of the day, and the
  * way the user likes to see a spectrum has nothing to do with that folder. */
+/* The colour panel the user already knows (a palette cycle where there is
+   none): shared so every swatch in the app picks a colour the same way. */
+int settings_pick_color(SDL_Color *c);
+
 void settings_init(AppState *state, const char *argv0);   /* defaults, then load */
 int  settings_save(AppState *state);
 void settings_restore_defaults(AppState *state);

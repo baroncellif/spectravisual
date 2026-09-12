@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "plotgpu.h"
 #include "algorithms.h"
+#include "predfit.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -174,7 +175,20 @@ typedef struct {
     double dnu;         /* Kaiser fundamental resolution, MHz     */
     double cutoff;      /* how far a line still contributes, MHz  */
     double lorentz, gauss;
+    /* A sub-trace evaluates the very same profile over one state only, so the
+       state's contribution is directly comparable with the total. */
+    int    one_state;   /* 0 = every line, 1 = only the state below */
+    int    hamiltonian_id, state_index;
 } BroadCfg;
+
+/* The state a catalogue row belongs to: SPCAT prints it as the fourth QN of
+   its multistate record, and a plain three-QN catalogue is all state 0. */
+static int pred_line_state(const PredLine *q) { return q->n_qn >= 4 ? q->M1l : 0; }
+
+static int broad_line_included(const BroadCfg *c, const PredLine *q) {
+    if (!c->one_state) return 1;
+    return q->hamiltonian_id == c->hamiltonian_id && pred_line_state(q) == c->state_index;
+}
 
 static BroadCfg broad_config(const AppState *s) {
     BroadCfg c;
@@ -210,6 +224,7 @@ static double broad_value_at(const AppState *s, const BroadCfg *c, double f) {
     for (int k = lo; k <= hi; k++) {
         double dist = f - s->pred_lines[k].freq_mhz;
         if (fabs(dist) > c->cutoff || !pred_passes_filter(s, k)) continue;
+        if (!broad_line_included(c, &s->pred_lines[k])) continue;
         if (c->kmode) sum += s->pred_lines[k].linear_int * kaiser_kernel(dist / c->dnu);
         else          sum += s->pred_lines[k].linear_int * broaden_profile(dist, c->lorentz, c->gauss);
     }
@@ -241,10 +256,23 @@ static double broad_max_between(const AppState *s, const BroadCfg *c, double f0,
     for (int k = lo; k <= hi; k++) {
         if (s->pred_lines[k].freq_mhz < f0 || s->pred_lines[k].freq_mhz >= f1) continue;
         if (!pred_passes_filter(s, k)) continue;
+        if (!broad_line_included(c, &s->pred_lines[k])) continue;
         double v = broad_value_at(s, c, s->pred_lines[k].freq_mhz);
         if (v > best) best = v;
     }
     return best;
+}
+
+double broadened_value_at(const AppState *state, double f, int hamiltonian_id, int state_index) {
+    if (!state || state->n_pred <= 0) return 0.0;
+    BroadCfg cfg = broad_config(state);
+    if (!cfg.active) return 0.0;
+    if (hamiltonian_id > 0) {
+        cfg.one_state = 1;
+        cfg.hamiltonian_id = hamiltonian_id;
+        cfg.state_index = state_index;
+    }
+    return broad_value_at(state, &cfg, f);
 }
 
 double prediction_visible_max(const AppState *state, int samples) {
@@ -747,6 +775,33 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
             double col_span = span / (double)steps;
             int sub = broad_subsamples(&cfg, col_span);
 
+            /* Each state first, the total on top of them: the sum is the line
+               being compared with the experiment and must stay readable. */
+            if (state->predfit.show_species_traces) {
+                PredfitSpeciesTrace species[MAX_PICKETT_HAMILTONIANS * MAX_PICKETT_SPECIES];
+                int n_species = predfit_plot_species(state, species,
+                                                     (int)(sizeof(species) / sizeof(species[0])));
+                float sub_width = (float)state->settings.profile_width - 1.0f;
+                if (sub_width < 1.0f) sub_width = 1.0f;
+                for (int sp = 0; sp < n_species; sp++) {
+                    BroadCfg one = cfg;
+                    one.one_state = 1;
+                    one.hamiltonian_id = species[sp].hamiltonian_id;
+                    one.state_index = species[sp].state_index;
+                    int sn = 0;
+                    for (int i = 0; i < steps; i++) {
+                        double f0 = state->pvxmin + i * col_span;
+                        double best = broad_max_between(state, &one, f0, f0 + col_span, sub);
+                        double h_ratio = (best / state->pred_global_max) * state->pred_scale;
+                        double py = l->pred_y + l->pred_h - h_ratio * (l->pred_h - 10);
+                        if (py < l->pred_y) py = l->pred_y;
+                        if (pbuf && sn <= steps) pbuf[sn++] = (SDL_FPoint){(float)(l->pred_x + i), (float)py};
+                    }
+                    SDL_Color sc = species[sp].color;
+                    sc.a = (Uint8)(255 * (state->settings.profile_opacity / 100.0));
+                    if (pbuf) ui_plot_polyline(ren, pbuf, sn, sub_width, sc);
+                }
+            }
             for (int i = 0; i < steps; i++) {
                 double f0 = state->pvxmin + i * col_span;
                 double best = broad_max_between(state, &cfg, f0, f0 + col_span, sub);

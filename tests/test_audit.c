@@ -1829,6 +1829,113 @@ static int test_simulation_supersedes_a_queued_catalog(void) {
     DONE();
 }
 
+/* H-13: with broadening on, every state also has a trace of its own: the
+   per-state traces add up to exactly the total one, and a state's trace holds
+   only the lines of that state. */
+static int test_species_traces_split_the_broadened_profile(void) {
+    AppState *s = new_state();
+    s->pred_lines = calloc(3, sizeof(PredLine));
+    CHECK(s->pred_lines != NULL, "allocazione delle righe predette");
+    if (!s->pred_lines) DONE();
+    s->n_pred = 3;
+    /* H1 state 0, H1 state 1 (a multistate catalogue) and H2 state 0. */
+    s->pred_lines[0] = (PredLine){.freq_mhz = 10000.0, .linear_int = 1e-3, .lgint = -3.0,
+                                  .cat_lgint = -3.0, .n_qn = 4, .M1l = 0, .hamiltonian_id = 1,
+                                  .mu = 'a', .branch = 'R'};
+    s->pred_lines[1] = (PredLine){.freq_mhz = 10001.0, .linear_int = 2e-3, .lgint = -2.7,
+                                  .cat_lgint = -2.7, .n_qn = 4, .M1l = 1, .hamiltonian_id = 1,
+                                  .mu = 'a', .branch = 'R'};
+    s->pred_lines[2] = (PredLine){.freq_mhz = 10002.0, .linear_int = 4e-3, .lgint = -2.4,
+                                  .cat_lgint = -2.4, .n_qn = 4, .M1l = 0, .hamiltonian_id = 2,
+                                  .mu = 'a', .branch = 'R'};
+    s->pred_global_max = 4e-3;
+    s->broadening_active = 1;
+    s->broaden_mode = 0;                 /* analytic: the profile is additive */
+    s->gauss_gamma = 0.8;
+    s->lorentz_gamma = 0.0;
+
+    const double at = 10001.0;
+    double total = broadened_value_at(s, at, 0, 0);
+    double h1s0  = broadened_value_at(s, at, 1, 0);
+    double h1s1  = broadened_value_at(s, at, 1, 1);
+    double h2s0  = broadened_value_at(s, at, 2, 0);
+    CHECK(total > 0.0, "traccia totale nulla");
+    CHECK(h1s0 > 0.0 && h1s1 > 0.0 && h2s0 > 0.0, "una sottotraccia e' nulla dove dovrebbe contribuire");
+    CHECK_DBL("le sottotracce sommano alla traccia totale", h1s0 + h1s1 + h2s0, total, 1e-15);
+    /* Each state's own line dominates its trace at its own centre. */
+    CHECK(broadened_value_at(s, 10002.0, 2, 0) > broadened_value_at(s, 10002.0, 1, 0),
+          "la sottotraccia di H2 non domina sulla propria riga");
+    CHECK_DBL("uno stato senza righe non disegna nulla",
+              broadened_value_at(s, at, 99, 0), 0.0, 1e-18);
+    /* Without broadening there is nothing to split. */
+    s->broadening_active = 0;
+    CHECK_DBL("senza broadening non c'e' profilo", broadened_value_at(s, at, 1, 0), 0.0, 1e-18);
+    DONE();
+}
+
+/* H-14: the per-state traces are off until asked for, every state starts with
+   a colour of its own, and both survive a saved session. */
+static int test_species_trace_colour_default_and_session(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    CHECK_INT("sottotracce spente di default", p->show_species_traces, 0);
+    add_species(s);
+    CHECK_INT("due stati", p->n_species, 2);
+    SDL_Color first = predfit_species_color(&p->species[0], 0);
+    SDL_Color second = predfit_species_color(&p->species[1], 1);
+    CHECK(first.a > 0 && second.a > 0, "colore di default non assegnato");
+    CHECK(first.r != second.r || first.g != second.g || first.b != second.b,
+          "due stati con lo stesso colore di default");
+
+    /* Only the predicted states are drawn, and each is listed once. */
+    PredfitSpeciesTrace list[8];
+    p->generated_catalog_active = 1;
+    CHECK_INT("stati nel plot", predfit_plot_species(s, list, 8), 2);
+    p->species[1].predict_enabled = 0;
+    CHECK_INT("uno stato escluso non ha traccia", predfit_plot_species(s, list, 8), 1);
+    p->species[1].predict_enabled = 1;
+
+    p->show_species_traces = 1;
+    p->species[1].trace_color = (SDL_Color){10, 20, 30, 235};
+    predfit_save_session(s);
+
+    AppState *r = new_state();
+    predfit_load_session(r);
+    CHECK_INT("interruttore salvato", r->predfit.show_species_traces, 1);
+    CHECK_INT("colore salvato: rosso", r->predfit.species[1].trace_color.r, 10);
+    CHECK_INT("colore salvato: verde", r->predfit.species[1].trace_color.g, 20);
+    CHECK_INT("colore salvato: blu", r->predfit.species[1].trace_color.b, 30);
+    DONE();
+}
+
+/* H-15: five Hamiltonians of one state each - what importing five models
+   gives - must not end up sharing a default trace colour. */
+static int test_default_species_colours_are_distinct(void) {
+    AppState *s = new_state();
+    PredFitState *p = &s->predfit;
+    mono_model(p);
+    for (int i = 0; i < 4; i++)
+        CHECK_INT("crea un Hamiltoniano", predfit_add_hamiltonian(s, NULL), 1);
+    CHECK_INT("cinque Hamiltoniani", p->n_hamiltonians, 5);
+    store_active_hamiltonian(p);
+    SDL_Color seen[8];
+    int n = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        const PredFitSnapshot *m = &p->hamiltonian[h].model;
+        for (int k = 0; k < m->n_species && n < 8; k++) {
+            SDL_Color c = predfit_species_color(&m->species[k], n);
+            for (int j = 0; j < n; j++)
+                CHECK(!(seen[j].r == c.r && seen[j].g == c.g && seen[j].b == c.b),
+                      "colore ripetuto #%02X%02X%02X fra lo stato %d e lo stato %d",
+                      c.r, c.g, c.b, j, n);
+            seen[n++] = c;
+        }
+    }
+    CHECK_INT("colori raccolti", n, 5);
+    DONE();
+}
+
 /* H-04: the same QN transition may legitimately appear in two independent
    Hamiltonians. Ownership is therefore part of assignment identity and
    survives assignments.txt format 2. */
@@ -2595,6 +2702,9 @@ static const Test TESTS[] = {
     {"test_simulated_intensities_follow_their_own_model", test_simulated_intensities_follow_their_own_model},
     {"test_fit_calculates_the_missing_catalogue", test_fit_calculates_the_missing_catalogue},
     {"test_simulation_supersedes_a_queued_catalog", test_simulation_supersedes_a_queued_catalog},
+    {"test_species_traces_split_the_broadened_profile", test_species_traces_split_the_broadened_profile},
+    {"test_species_trace_colour_default_and_session", test_species_trace_colour_default_and_session},
+    {"test_default_species_colours_are_distinct", test_default_species_colours_are_distinct},
     {"test_session_saved_only_on_request", test_session_saved_only_on_request},
     {"test_sidebar_reorder_keeps_identity", test_sidebar_reorder_keeps_identity},
     {"test_assignment_owner_keeps_same_qn_in_two_hamiltonians", test_assignment_owner_keeps_same_qn_in_two_hamiltonians},

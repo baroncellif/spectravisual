@@ -338,6 +338,53 @@ static int current_model_nqn(const AppState *s, int *out) {
 /* The quick controls remain a view of the selected species.  The global
    parameter list is deliberately retained because SPFIT needs one .par/.var
    for all states. */
+/* Default colours of the per-state broadened traces.  Chosen to stay apart on
+   the dark plot and from the experimental trace; the user can replace any of
+   them from the Simulation page. */
+static const SDL_Color SPECIES_PALETTE[8] = {
+    { 90, 200, 250, 235}, {130, 220, 130, 235}, {245, 220,  90, 235}, {240, 110, 110, 235},
+    {235, 130, 200, 235}, {170, 150, 245, 235}, { 47, 212, 232, 235}, {255, 170,  80, 235}
+};
+
+static int species_color_taken(const PredFitState *p, SDL_Color c) {
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        const PredFitSnapshot *m = &p->hamiltonian[h].model;
+        for (int k = 0; k < m->n_species; k++) {
+            SDL_Color o = m->species[k].trace_color;
+            if (o.a > 0 && o.r == c.r && o.g == c.g && o.b == c.b) return 1;
+        }
+    }
+    /* The active Hamiltonian's live states are not in its snapshot yet. */
+    for (int k = 0; k < p->n_species; k++) {
+        SDL_Color o = p->species[k].trace_color;
+        if (o.a > 0 && o.r == c.r && o.g == c.g && o.b == c.b) return 1;
+    }
+    return 0;
+}
+
+/* The next colour of the project.  A state is given one when it is born, so
+   the swatch in Simulation, the plot and a saved session always agree.  A
+   colour already on screen is skipped: a plain counter can wrap onto one -
+   five Hamiltonians of one state each consume the palette unevenly - and two
+   traces of the same colour are exactly what this is for. */
+static void assign_default_species_color(PredFitState *p, PickettSpecies *sp) {
+    if (!p || !sp) return;
+    for (int step = 0; step < 8; step++) {
+        SDL_Color c = SPECIES_PALETTE[(p->species_color_next + step) % 8];
+        if (species_color_taken(p, c)) continue;
+        sp->trace_color = c;
+        p->species_color_next += step + 1;
+        return;
+    }
+    sp->trace_color = SPECIES_PALETTE[(p->species_color_next++) % 8];
+}
+
+SDL_Color predfit_species_color(const PickettSpecies *sp, int fallback_index) {
+    if (sp && sp->trace_color.a > 0) return sp->trace_color;
+    if (fallback_index < 0) fallback_index = 0;
+    return SPECIES_PALETTE[fallback_index % 8];
+}
+
 static void store_active_species(PredFitState *p) {
     PickettSpecies *sp = active_species(p);
     if (!sp) return;
@@ -407,6 +454,7 @@ void predfit_save_session(AppState *s) {
     fprintf(fp, "active_molecule %d\n", p->active_species);
     /* The unprefixed records above are a readable compatibility projection of
        the active model.  h4 records are the authoritative project list. */
+    fprintf(fp, "species_traces %d\n", p->show_species_traces != 0);
     fprintf(fp, "h4project %d %d %d\n", p->n_hamiltonians,
             p->active_hamiltonian, p->next_hamiltonian_id);
     for (int h = 0; h < p->n_hamiltonians; h++) {
@@ -434,6 +482,9 @@ void predfit_save_session(AppState *s) {
             if (sp->mu_excluded[0] || sp->mu_excluded[1] || sp->mu_excluded[2])
                 fprintf(fp, "h4statemu %d %d %d %d\n", i, sp->mu_excluded[0] != 0,
                         sp->mu_excluded[1] != 0, sp->mu_excluded[2] != 0);
+            if (sp->trace_color.a > 0)
+                fprintf(fp, "h4statecolor %d %d %d %d %d\n", i, sp->trace_color.r,
+                        sp->trace_color.g, sp->trace_color.b, sp->trace_color.a);
         }
         fprintf(fp, "h4active_state %d\n", m->active_species);
         fputs("h4end\n", fp);
@@ -523,6 +574,10 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         if (line[0] == '#') continue;
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
+        if (strncmp(line, "species_traces ", 15) == 0) {
+            p->show_species_traces = atoi(line + 15) != 0;
+            continue;
+        }
         if (strncmp(line, "h4project ", 10) == 0) {
             int ignored_count = 0;
             sscanf(line + 10, "%d %d %d", &ignored_count, &loaded_active_h, &loaded_next_h_id);
@@ -603,6 +658,15 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
                 h4->model.species[index].mu_excluded[0] = a != 0;
                 h4->model.species[index].mu_excluded[1] = b != 0;
                 h4->model.species[index].mu_excluded[2] = c != 0;
+            }
+            continue;
+        }
+        if (h4 && strncmp(line, "h4statecolor ", 13) == 0) {
+            int index = -1, cr = 0, cg = 0, cb = 0, ca = 235;
+            if (sscanf(line + 13, "%d %d %d %d %d", &index, &cr, &cg, &cb, &ca) >= 4 &&
+                index >= 0 && index < h4->model.n_species) {
+                SDL_Color c = {(Uint8)cr, (Uint8)cg, (Uint8)cb, (Uint8)(ca > 0 ? ca : 235)};
+                h4->model.species[index].trace_color = c;
             }
             continue;
         }
@@ -766,6 +830,16 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         }
         memcpy(p->hamiltonian, loaded_h, (size_t)n_loaded_h * sizeof(loaded_h[0]));
         p->n_hamiltonians = n_loaded_h;
+        /* Restart the palette past everything the session already holds, and
+           give a colour to the states of a session written before they had
+           one, so no two states of the project share a default. */
+        p->species_color_next = 0;
+        for (int i = 0; i < n_loaded_h; i++)
+            for (int k = 0; k < p->hamiltonian[i].model.n_species; k++) {
+                PickettSpecies *sp = &p->hamiltonian[i].model.species[k];
+                if (sp->trace_color.a > 0) p->species_color_next++;
+                else assign_default_species_color(p, sp);
+            }
         if (loaded_active_h < 0 || loaded_active_h >= n_loaded_h) loaded_active_h = 0;
         p->active_hamiltonian = loaded_active_h;
         int max_id = 0;
@@ -1061,6 +1135,7 @@ void predfit_init(AppState *s) {
        and its next Calculate/Fit will use that visible name as the basename. */
     snprintf(p->hamiltonian[0].name, sizeof(p->hamiltonian[0].name), "model");
     snapshot_active_model(p, &p->hamiltonian[0].model);
+    p->species_color_next = 1;   /* state 0 of H1 already holds the first colour */
     p->advanced_edit_param = -1;
     p->advanced_edit_species = -1;
     p->advanced_edit_hamiltonian = -1;
@@ -1095,7 +1170,7 @@ static void default_hamiltonian_model(PredFitSnapshot *m) {
     m->param[1] = (PickettParameter){20000, m->b, 1.0, "B"};
     m->param[2] = (PickettParameter){30000, m->c, 1.0, "C"};
     snprintf(m->hamiltonian_line, sizeof(m->hamiltonian_line), "s 1 1 0");
-    m->species[0] = (PickettSpecies){"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0};
+    m->species[0] = (PickettSpecies){"State 0", 0, 1, {1.0, 1.0, 1.0}, 1.0, {0, 0, 0}, SPECIES_PALETTE[0]};
     m->n_species = 1;
     m->active_species = 0;
 }
@@ -1115,6 +1190,8 @@ int predfit_add_hamiltonian(AppState *s, const char *name) {
     if (name && name[0]) snprintf(dst->name, sizeof(dst->name), "%s", name);
     else snprintf(dst->name, sizeof(dst->name), "Hamiltonian %d", dst->id);
     default_hamiltonian_model(&dst->model);
+    for (int i = 0; i < dst->model.n_species; i++)
+        assign_default_species_color(p, &dst->model.species[i]);
     p->active_hamiltonian = p->n_hamiltonians - 1;
     restore_active_model(p, &dst->model);
     predfit_refresh_work_dir(s);
@@ -1141,6 +1218,9 @@ int predfit_duplicate_hamiltonian(AppState *s, const char *name) {
     dst->id = p->next_hamiltonian_id++;
     if (name && name[0]) snprintf(dst->name, sizeof(dst->name), "%s", name);
     else snprintf(dst->name, sizeof(dst->name), "Hamiltonian %d", dst->id);
+    /* A copy is a different model in the same plot: give it its own colours. */
+    for (int i = 0; i < dst->model.n_species; i++)
+        assign_default_species_color(p, &dst->model.species[i]);
     p->active_hamiltonian = p->n_hamiltonians - 1;
     restore_active_model(p, &dst->model);
     predfit_refresh_work_dir(s);
@@ -1404,6 +1484,7 @@ static void add_species(AppState *s) {
     sp->predict_enabled = 1;
     memcpy(sp->mu, p->mu, sizeof(sp->mu));
     sp->concentration = 1.0;
+    assign_default_species_color(p, sp);
 
     /* Seed the independent A/B/C card for the new state.  All other terms
        can be added manually, including shared xx99 ones. */
@@ -2103,6 +2184,7 @@ static int import_one_model(AppState *s, const char *dir, const LoadCandidate *c
         return 0;
     }
     restore_active_model(p, &m);
+    for (int i = 0; i < p->n_species; i++) assign_default_species_color(p, &p->species[i]);
     sync_basic_from_parameters(p);
     store_active_hamiltonian(p);
     predfit_refresh_work_dir(s);
@@ -2329,6 +2411,38 @@ static int ensure_model_catalog(AppState *s) {
              "SPCAT produced no usable catalogue for %s: check the option line and the parameters.",
              p->hamiltonian[p->active_hamiltonian].name);
     return 0;
+}
+
+/* The states whose lines are in the plot right now, with the colour each of
+   their broadened traces is drawn in.  The renderer asks for this instead of
+   walking the project itself: which models are on screen is Pred&Fit's
+   business, drawing them is the view's. */
+int predfit_plot_species(const AppState *s, PredfitSpeciesTrace *out, int max) {
+    if (!s || !out || max <= 0) return 0;
+    const PredFitState *p = &s->predfit;
+    if (!p->generated_catalog_active) return 0;
+    int n = 0, fallback = 0;
+    int n_models = p->n_simulated > 0 ? p->n_simulated : 1;
+    for (int i = 0; i < n_models && n < max; i++) {
+        int h = p->n_simulated > 0
+              ? hamiltonian_index_by_id(p, p->simulated[i].hamiltonian_id)
+              : p->active_hamiltonian;
+        if (h < 0 || h >= p->n_hamiltonians) continue;
+        const PredFitSnapshot *m = h == p->active_hamiltonian ? NULL : &p->hamiltonian[h].model;
+        int n_states = m ? m->n_species : p->n_species;
+        for (int k = 0; k < n_states && n < max; k++) {
+            const PickettSpecies *sp = m ? &m->species[k] : &p->species[k];
+            if (!sp->predict_enabled) { fallback++; continue; }
+            out[n].hamiltonian_id = p->hamiltonian[h].id;
+            out[n].state_index = sp->state_index;
+            out[n].color = predfit_species_color(sp, fallback);
+            snprintf(out[n].label, sizeof(out[n].label), "%s / %s",
+                     p->hamiltonian[h].name, sp->name);
+            fallback++;
+            n++;
+        }
+    }
+    return n;
 }
 
 /* After an action that changed a model, refresh the plot the way it was
@@ -3055,7 +3169,7 @@ typedef struct {
     SDL_Rect params;        /* fitting tab: the SPFIT parameter block     */
     int param_rows_visible;
     SDL_Rect footer;
-    SDL_Rect btn_a, btn_b, btn_c;
+    SDL_Rect btn_a, btn_b, btn_c, btn_d;
     /* This navigator is deliberately present on every page.  A Hamiltonian
        is the unit of a Pickett calculation, while a state is its child: the
        hierarchy must therefore not be hidden behind a separate tab. */
@@ -3133,6 +3247,7 @@ static AdvUI adv_ui(AppState *s, int tab) {
     u.btn_a = (SDL_Rect){content_x, footer_y + 8, tab == 4 ? 150 : (tab == 0 || tab == 3) ? 142 : 110, 30};
     u.btn_b = (SDL_Rect){u.btn_a.x + u.btn_a.w + 10, footer_y + 8, 132, 30};
     u.btn_c = (SDL_Rect){u.btn_b.x + u.btn_b.w + 10, footer_y + 8, 150, 30};
+    u.btn_d = (SDL_Rect){u.btn_c.x + u.btn_c.w + 10, footer_y + 8, 168, 30};
     return u;
 }
 
@@ -3433,6 +3548,18 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                         PickettSpecies *sp = project_species(p, h, state);
                         if (sp) { sp->predict_enabled = !sp->predict_enabled; p->session_dirty = 1; }
                     }
+                } else if (state >= 0 && x >= adv_col(u.table, 0.43) &&
+                           x < adv_col(u.table, 0.50)) {
+                    /* The colour of this state's own broadened trace. */
+                    PickettSpecies *sp = project_species(p, h, state);
+                    if (sp) {
+                        SDL_Color chosen = predfit_species_color(sp, state);
+                        if (settings_pick_color(&chosen)) {
+                            chosen.a = chosen.a ? chosen.a : 235;
+                            sp->trace_color = chosen;
+                            p->session_dirty = 1;
+                        }
+                    }
                 } else if (state >= 0 && x >= adv_col(u.table, 0.50) &&
                            x < adv_col(u.table, 0.88)) {
                     PickettSpecies *sp = project_species(p, h, state);
@@ -3452,6 +3579,15 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
         if (point_in_rect(x, y, u.btn_a)) { predfit_simulate(s); return 1; }
+        if (point_in_rect(x, y, u.btn_d)) {
+            p->show_species_traces = !p->show_species_traces;
+            p->session_dirty = 1;
+            snprintf(p->status, sizeof(p->status),
+                     p->show_species_traces
+                         ? "Broadening draws one trace per state, in its colour, beside the total."
+                         : "Broadening draws the total trace only.");
+            return 1;
+        }
         if (point_in_rect(x, y, u.btn_b) || point_in_rect(x, y, u.btn_c)) {
             int include = point_in_rect(x, y, u.btn_b);
             for (int h = 0; h < p->n_hamiltonians; h++) {
@@ -3641,6 +3777,7 @@ void predfit_render_advanced(AppState *s) {
         int hy = u.table.y + 8;
         ui_text(r, UI_FONT_MONO_SM, "SIM",                adv_col(u.table, 0.00), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN / STATE", adv_col(u.table, 0.06), hy, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, "TRACE",              adv_col(u.table, 0.43), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu a",               adv_col(u.table, 0.50), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu b",               adv_col(u.table, 0.64), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "mu c",               adv_col(u.table, 0.78), hy, UI_DIM);
@@ -3678,6 +3815,13 @@ void predfit_render_advanced(AppState *s) {
                         on ? UI_OK : UI_FAINT);
                 snprintf(b, sizeof(b), "   \u2514 State %d  %s", sp->state_index, sp->name);
                 ui_text(r, UI_FONT_SANS_SM, b, adv_col(u.table, 0.06), ty, on ? UI_TEXT : UI_FAINT);
+                /* The colour this state's broadened trace is drawn in; click
+                   the swatch to change it. */
+                SDL_Rect swatch = {adv_col(u.table, 0.43), y + 3, 26, u.row_h - 8};
+                SDL_Color sc = predfit_species_color(sp, state_index);
+                if (!p->show_species_traces) { sc.r /= 3; sc.g /= 3; sc.b /= 3; }
+                ui_fill(r, swatch, sc);
+                ui_frame(r, swatch, UI_LINE);
                 static const double at[3] = {0.50, 0.64, 0.78};
                 for (int k = 0; k < 3; k++) {
                     int used = on && !sp->mu_excluded[k] && sp->mu[k] != 0.0;
@@ -3695,11 +3839,14 @@ void predfit_render_advanced(AppState *s) {
         ui_button(r, u.btn_a, b, -1, checked ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_b, "Check all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
         ui_button(r, u.btn_c, "Uncheck all", -1, UI_BTN_QUIET, 0, 0, 0, 0);
+        ui_button(r, u.btn_d,
+                  p->show_species_traces ? "Traces per state: on" : "Traces per state: off", -1,
+                  UI_BTN_QUIET, p->show_species_traces, 0, 0, 0);
         ui_text(r, UI_FONT_SANS_SM,
-                p->n_simulated > 0
-                    ? "One SPCAT run per checked Hamiltonian; the catalogues are shown in one plot."
-                    : "Check Hamiltonians, states and dipoles, then Simulate: all of them are plotted together.",
-                u.btn_c.x + u.btn_c.w + 16, u.footer.y + 17, UI_FAINT);
+                p->show_species_traces
+                    ? "With broadening on, each state is drawn in its colour under the total trace."
+                    : "One SPCAT run per checked Hamiltonian; the catalogues are shown in one plot.",
+                u.btn_d.x + u.btn_d.w + 16, u.footer.y + 17, UI_FAINT);
 
     } else if (p->advanced_tab == 4) {
         ui_text(r, UI_FONT_SANS, "Project — Hamiltonians and their states",

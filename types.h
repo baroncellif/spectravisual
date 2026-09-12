@@ -124,6 +124,9 @@ typedef struct {
        that a zeroed structure - a new state, an old session - simulates with
        every component, and only an explicit exclusion removes one. */
     int mu_excluded[3];
+    /* Colour of this state's own broadened trace.  A zero alpha means "never
+       chosen", and the default palette answers for it. */
+    SDL_Color trace_color;
 } PickettSpecies;
 
 /* The manually controllable .int fields.  QROT is deliberately absent: it is
@@ -226,6 +229,13 @@ typedef struct {
        Hamiltonian.  Empty while the prediction is a single external .cat. */
     SimulatedCatalog simulated[MAX_PICKETT_HAMILTONIANS];
     int n_simulated;
+    /* Draw one broadened trace per state beside the total one.  Off until the
+       user asks for it: with many states the plot becomes a thicket. */
+    int show_species_traces;
+    /* Rotates through the default palette so that two states of the project -
+       in the same Hamiltonian or in two of them - never start the same
+       colour. */
+    int species_color_next;
     int intensity_dirty;
     int session_dirty;             /* save on exit only after an actual edit */
     char work_dir[512];       // persistent .fit working state (latest run)
