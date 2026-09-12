@@ -144,6 +144,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #26 | Hamiltoniani: nome nei file, rinomina, riordino, sessione esplicita | richiesta utente 2026-09-12 | medio: workspace leggibile e nessun salvataggio implicito | fatto `HEAD` |
 | #27 | Simulazione: più Hamiltoniani e più dipoli in un solo plot | richiesta utente 2026-09-12 | alto: finora si poteva vedere un Hamiltoniano alla volta | fatto `HEAD` |
 | #28 | Fit di un modello importato senza passi intermedi | segnalazione utente 2026-09-12 | alto: il fit di un `.lin` importato era bloccato | fatto `HEAD` |
+| #30 | Import idempotente e colonna PREDICTED degli import | segnalazione utente 2026-09-12 (stesso problema dopo #28) | alto: righe duplicate e predizioni vuote su tutti i modelli importati | fatto `HEAD` |
 | #29 | Sottotracce del broadening, una per specie, con colore | richiesta utente 2026-09-12 | medio: si vede il contributo di ogni specie alla somma | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
@@ -1203,6 +1204,52 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Test aggiuntivo**: `test_broadening_panel_selects_the_traces` (i tre
   segmenti mappano sui tre modi; la riga non si sovrappone al toggle in
   nessuno dei due modi di broadening).
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #30 — Import: una sola copia di ogni modello, e la colonna PREDICTED piena
+
+- **Bug/issue**: dopo #28 l'utente ha ripetuto che «il fit dei `.lin`
+  importati» era ancora sbagliato. Riproduzione sui suoi file
+  (`.fit/`, `assignments.txt` del 2026-09-12 16:12), non su dati sintetici:
+  1. `assignments.txt` conteneva 1302 righe = 651 transizioni **ognuna
+     doppia**. Causa: `ensure_aux_loaded` ([main.c:162](../../main.c#L162))
+     legge `assignments.txt` all'apertura dello spettro, quindi le righe di un
+     import precedente sono già in lista con il loro `hamiltonian_id`;
+     `import_load_lines` le riaggiungeva senza guardare. Premere Import due
+     volte nella stessa sessione creava anche cinque modelli gemelli
+     `…-2`, perché `unique_hamiltonian_name` rinomina invece di riconoscere lo
+     stesso modello.
+  2. Tutte le 1302 righe avevano `CalcFreq = 0`: #28 riempie la predizione solo
+     quando un catalogo entra nel plot, cioè **un modello per volta**, quello
+     fittato o simulato. Gli altri quattro modelli importati restavano a
+     `PREDICTED 0.000000` a tempo indefinito, che è quello che si vedeva nella
+     prima schermata.
+- **Cosa è stato fatto** ([predfit.c](../../predfit.c)):
+  - `hamiltonian_index_by_file_stem` + ramo «import over» in `import_one_model`
+    — una cartella il cui stem nomina già un Hamiltoniano del progetto viene
+    importata **su** quello (parametri, stati, righe), non accanto;
+  - `assignment_already_present` — `import_load_lines` salta una riga del
+    `.lin` già presente per quel proprietario con la stessa frequenza
+    misurata. La frequenza fa parte dell'identità, quindi le due righe di un
+    blend restano distinte, e gli assignment fatti nell'app e mai scritti in
+    quel `.lin` non vengono toccati;
+  - `import_fill_predictions` + `fill_predictions_from_catalog` — all'import
+    ogni modello prende frequenza calcolata, intensità ed ELO dal `.cat` che lo
+    accompagna in `load/`; se la cartella non ne ha uno, da una corsa SPCAT del
+    modello appena letto. L'accoppiamento è su identità (proprietario + numeri
+    quantici), mai modificata. Restano vuote solo le righe che il catalogo non
+    contiene (sotto il cutoff del `.int`, o fuori finestra).
+- **Verifica sui file dell'utente**: import dei 5 modelli in `.fit/load/` →
+  651 assignment, **651 con PREDICTED** (prima: 163 solo dopo aver fittato un
+  modello); secondo Import → sempre 5 modelli e 651 righe; partendo dal loro
+  `assignments.txt` reale caricato all'avvio → nessuna riga duplicata. Il fit
+  continua a girare (RMS 0,011 MHz).
+- **Nota sul file già rovinato**: `assignments.txt` dell'utente ha ancora le
+  1302 righe, ma `load_assignments_file` deduplica in lettura (ne carica 651) e
+  il primo salvataggio lo riscrive pulito.
+- **Test che passano**: `test_import_twice_keeps_one_copy`,
+  `test_import_reads_predictions_from_the_catalog`, oltre a
+  `test_import_load_dir_builds_hamiltonians` invariato.
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

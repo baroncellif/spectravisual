@@ -1538,6 +1538,86 @@ static int test_two_hamiltonians_keep_independent_int_controls(void) {
 /* H-05: .fit/load is a drop box.  Every basename there is one Hamiltonian:
    the .par gives the option line and the parameters, the .int the states and
    the control card, the .lin the assignments that belong to it. */
+/* Writes in load/ one model whose .lin holds a single transition, and - when
+   with_cat - the catalogue that model comes with, holding that same
+   transition at 3000.100 MHz. */
+static void write_load_model(const char *stem, int with_cat) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/.fit/load/%s.par", g_work, stem);
+    FILE *fp = fopen(path, "w");
+    if (!fp) return;
+    fputs("imported monomer\n"
+          "   3    0   50    0  0.0000E+00  1.0000E+06  1.0000E+00 1.0000000000\n"
+          "s   1  2  0\n"
+          "       10000  1.15136041700E+03  1.00000000E+00 /A/\n"
+          "       20000  3.16151112700E+02  0.00000000E+00 /B/\n"
+          "       30000  3.13174236800E+02  1.00000000E+00 /C/\n", fp);
+    fclose(fp);
+
+    snprintf(path, sizeof(path), "%s/.fit/load/%s.lin", g_work, stem);
+    fp = fopen(path, "w");
+    if (!fp) return;
+    fprintf(fp, "%3d%3d%3d%3d%3d%3d%18s%15.6f %10.6f 1.0\n", 3, 1, 2, 2, 0, 2, "", 3000.125, 0.02);
+    fclose(fp);
+
+    if (!with_cat) return;
+    snprintf(path, sizeof(path), "%s/.fit/load/%s.cat", g_work, stem);
+    fp = fopen(path, "w");
+    if (!fp) return;
+    /* One fixed-width .cat record: FREQ ERR LGINT DR ELO GUP TAG QNFMT, then
+       six upper and six lower quantum numbers (calpgm/calcat.c:700). */
+    fprintf(fp, "%13.4f%8.4f%8.4f%2d%10.4f%3d%7d%4d%2d%2d%2d%2s%2s%2s%2d%2d%2d%2s%2s%2s\n",
+            3000.1000, 0.0020, -4.5000, 3, 1.2340, 7, 91, 303,
+            3, 1, 2, "", "", "", 2, 0, 2, "", "", "");
+    fclose(fp);
+}
+
+/* H-16: Import is idempotent.  Pressing it twice - or pressing it once in an
+   app that already read assignments.txt at startup - must leave one copy of
+   each model and one copy of each of its lines, not two. */
+static int test_import_twice_keeps_one_copy(void) {
+    AppState *s = new_state();
+    mkdir(work_path(".fit"), 0700);
+    mkdir(work_path(".fit/load"), 0700);
+    write_load_model("mon", 1);
+
+    CHECK_INT("primo import", predfit_import_load_dir(s), 1);
+    int hamiltonians = predfit_hamiltonian_count(s);
+    CHECK_INT("assignment dopo il primo import", s->n_assignments, 1);
+    int owner = s->assignments[0].hamiltonian_id;
+
+    CHECK_INT("secondo import", predfit_import_load_dir(s), 1);
+    CHECK_INT("nessun modello duplicato", predfit_hamiltonian_count(s), hamiltonians);
+    CHECK_INT("nessuna riga duplicata", s->n_assignments, 1);
+    CHECK_INT("stesso proprietario", s->assignments[0].hamiltonian_id, owner);
+    CHECK(strcmp(s->predfit.hamiltonian[s->predfit.active_hamiltonian].name, "mon") == 0,
+          "H attivo: atteso mon, ottenuto %s",
+          s->predfit.hamiltonian[s->predfit.active_hamiltonian].name);
+    DONE();
+}
+
+/* H-17: a .lin carries no calculated frequency, so the catalogue that comes
+   with the model in load/ fills the PREDICTED column at import time - without
+   changing the identity of the assignment or its measured frequency. */
+static int test_import_reads_predictions_from_the_catalog(void) {
+    AppState *s = new_state();
+    mkdir(work_path(".fit"), 0700);
+    mkdir(work_path(".fit/load"), 0700);
+    write_load_model("mon", 1);
+
+    CHECK_INT("import", predfit_import_load_dir(s), 1);
+    CHECK_INT("assignment importati", s->n_assignments, 1);
+    if (s->n_assignments != 1) DONE();
+    Assignment *a = &s->assignments[0];
+    CHECK_DBL("frequenza predetta dal .cat", a->pred.freq_mhz, 3000.1000, 1e-4);
+    CHECK_DBL("ELO dal .cat", a->pred.elo_cm, 1.2340, 1e-4);
+    CHECK_DBL("frequenza misurata invariata", a->exp_freq, 3000.125, 1e-6);
+    CHECK_INT("J superiore invariato", a->pred.Ju, 3);
+    CHECK_INT("J inferiore invariato", a->pred.Jl, 2);
+    CHECK_INT("proprietario invariato", a->pred.hamiltonian_id, a->hamiltonian_id);
+    DONE();
+}
+
 static int test_import_load_dir_builds_hamiltonians(void) {
     AppState *s = new_state();
     mkdir(work_path(".fit"), 0700);
@@ -2729,6 +2809,8 @@ static const Test TESTS[] = {
     {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
     {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
+    {"test_import_twice_keeps_one_copy", test_import_twice_keeps_one_copy},
+    {"test_import_reads_predictions_from_the_catalog", test_import_reads_predictions_from_the_catalog},
     {"test_simulation_plots_every_checked_hamiltonian", test_simulation_plots_every_checked_hamiltonian},
     {"test_dipole_checkbox_zeroes_the_int", test_dipole_checkbox_zeroes_the_int},
     {"test_simulated_intensities_follow_their_own_model", test_simulated_intensities_follow_their_own_model},

@@ -1008,6 +1008,26 @@ static void refresh_assignment_predictions(AppState *s) {
     }
 }
 
+/* Gives every assignment of one model the catalogue row of the same
+   transition.  The match is made on identity - owner and quantum numbers -
+   which the fill therefore never changes. */
+static int fill_predictions_from_catalog(AppState *s, int owner_id,
+                                         const PredLine *rows, int n) {
+    int filled = 0;
+    for (int i = 0; i < s->n_assignments; i++) {
+        Assignment *a = &s->assignments[i];
+        if (a->hamiltonian_id != owner_id) continue;
+        for (int k = 0; k < n; k++) {
+            if (!same_transition(&rows[k], &a->pred)) continue;
+            a->pred = rows[k];
+            a->pred.hamiltonian_id = owner_id;
+            filled++;
+            break;
+        }
+    }
+    return filled;
+}
+
 /* Counterpart of predfit_adopt_generated_catalog for a simulated plot: the
    Hamiltonian id of every row is set while merging the catalogues, so here
    only the shared display state is refreshed. */
@@ -2113,6 +2133,20 @@ static int read_pickett_int_file(const char *path, PredFitSnapshot *m, int *inte
 /* Two Hamiltonians may not share a Pickett basename, so an imported model
    whose name is taken is imported beside it as "mon-2" rather than writing
    over the files of the model already in the project. */
+/* Two Hamiltonians whose names reduce to the same file stem would share every
+   Pickett working file, which is why unique_hamiltonian_name compares stems.
+   An import asks the same question the other way round: which model of this
+   project, if any, is the one this folder holds. */
+static int hamiltonian_index_by_file_stem(const PredFitState *p, const char *stem) {
+    char want[128], existing[128];
+    name_file_stem(stem, 0, want, sizeof(want));
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        name_file_stem(p->hamiltonian[h].name, p->hamiltonian[h].id, existing, sizeof(existing));
+        if (strcmp(want, existing) == 0) return h;
+    }
+    return -1;
+}
+
 static void unique_hamiltonian_name(const PredFitState *p, const char *wanted,
                                     char *out, size_t size) {
     for (int attempt = 1; attempt <= MAX_PICKETT_HAMILTONIANS + 1; attempt++) {
@@ -2130,26 +2164,71 @@ static void unique_hamiltonian_name(const PredFitState *p, const char *wanted,
     snprintf(out, size, "%s", wanted);
 }
 
+/* The list can already hold this very line: assignments.txt is read when the
+   spectrum opens, and its rows carry the owner they were saved with, so an
+   import that ran before this one is in the list under the same id.  The
+   measured frequency is part of the identity, which keeps the two rows of a
+   blend apart. */
+static int assignment_already_present(const AppState *s, int owner, const PredLine *qn, double obs) {
+    for (int i = 0; i < s->n_assignments; i++) {
+        const Assignment *a = &s->assignments[i];
+        if (a->hamiltonian_id != owner) continue;
+        if (!same_transition(&a->pred, qn)) continue;
+        if (fabs(a->exp_freq - obs) < 1e-5) return 1;
+    }
+    return 0;
+}
+
+/* A .lin says what was measured and nothing about what the model calculates,
+   so an imported model would show an empty PREDICTED column until the user
+   calculated it.  The catalogue that comes with it in the load folder - or,
+   when the folder has none, one SPCAT run of the model just read - fills that
+   column at import time.  Lines the catalogue does not contain (below the
+   .int cutoff, outside its frequency window) simply stay empty. */
+static void import_fill_predictions(AppState *s, const char *dir, const char *stem) {
+    PredFitState *p = &s->predfit;
+    char path[900];
+    snprintf(path, sizeof(path), "%s/%s.cat", dir, stem);
+    if (access(path, R_OK) != 0) {
+        if (!have_program(s->settings.spcat_path)) return;
+        if (!write_inputs(s, 0)) return;
+        if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT")) return;
+        work_file(p, "model.cat", path, sizeof(path));
+    }
+    PredLine *rows = NULL;
+    double xmin = 0, xmax = 0, max_int = 0;
+    int n = read_pred_cat_alloc(path, &rows, &xmin, &xmax, &max_int);
+    if (n > 0) fill_predictions_from_catalog(s, predfit_active_hamiltonian_id(s), rows, n);
+    free(rows);
+}
+
 /* The .lin rows of an imported model become assignments owned by it.  They
    carry only what a .lin can say - quantum numbers and a measured frequency
    - so rows with fewer than three QN per state are kept and marked, exactly
    as a restored workspace .lin is. */
-static int import_load_lines(AppState *s, const char *path, int *marked) {
+static int import_load_lines(AppState *s, const char *path, int *marked, int *already) {
     int n_rows = read_lin_rows_path(path);
     int owner = predfit_active_hamiltonian_id(s);
     int added = 0;
     for (int k = 0; k < n_rows && s->n_assignments < MAX_ASSIGNMENTS; k++) {
         LinRow *row = &g_lin_rows[k];
-        Assignment *a = &s->assignments[s->n_assignments++];
-        memset(a, 0, sizeof(*a));
+        PredLine qn;
+        memset(&qn, 0, sizeof(qn));
         int u[6], l[6];
         lin_row_states(row, u, l);
-        a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
-        a->pred.M1u = u[3]; a->pred.M2u = u[4]; a->pred.M3u = u[5];
-        a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
-        a->pred.M1l = l[3]; a->pred.M2l = l[4]; a->pred.M3l = l[5];
-        a->pred.n_qn = row->nq;
-        set_branch_and_dipole(&a->pred);
+        qn.Ju = u[0]; qn.Kau = u[1]; qn.Kcu = u[2];
+        qn.M1u = u[3]; qn.M2u = u[4]; qn.M3u = u[5];
+        qn.Jl = l[0]; qn.Kal = l[1]; qn.Kcl = l[2];
+        qn.M1l = l[3]; qn.M2l = l[4]; qn.M3l = l[5];
+        qn.n_qn = row->nq;
+        set_branch_and_dipole(&qn);
+        if (assignment_already_present(s, owner, &qn, row->freq)) {
+            if (already) (*already)++;
+            continue;
+        }
+        Assignment *a = &s->assignments[s->n_assignments++];
+        memset(a, 0, sizeof(*a));
+        a->pred = qn;
         a->exp_freq = row->freq;
         a->fit_enabled = row->enabled;
         a->hamiltonian_id = owner;
@@ -2178,26 +2257,41 @@ static int import_one_model(AppState *s, const char *dir, const LoadCandidate *c
         snprintf(path, sizeof(path), "%s/%s.int", dir, c->stem);
         states_from_int = read_pickett_int_file(path, &m, &interstate);
     }
-    char name[64];
-    unique_hamiltonian_name(p, c->stem, name, sizeof(name));
-    if (!predfit_add_hamiltonian(s, name)) {
-        snprintf(note, note_size, "%s: no room for another Hamiltonian.", c->stem);
-        return 0;
+    /* Pressing Import twice must not leave the project with two copies of
+       every model: a folder whose stem already names a Hamiltonian here is
+       imported over it, parameters, states and lines. */
+    int over = hamiltonian_index_by_file_stem(p, c->stem);
+    if (over >= 0) {
+        store_active_hamiltonian(p);
+        p->active_hamiltonian = over;
+        p->history_count = 0;
+        p->generated_catalog_pending = 0;
+        p->session_dirty = 1;
+    } else {
+        char name[64];
+        unique_hamiltonian_name(p, c->stem, name, sizeof(name));
+        if (!predfit_add_hamiltonian(s, name)) {
+            snprintf(note, note_size, "%s: no room for another Hamiltonian.", c->stem);
+            return 0;
+        }
     }
     restore_active_model(p, &m);
     for (int i = 0; i < p->n_species; i++) assign_default_species_color(p, &p->species[i]);
     sync_basic_from_parameters(p);
     store_active_hamiltonian(p);
     predfit_refresh_work_dir(s);
-    int lines = 0, marked = 0;
+    int lines = 0, marked = 0, already = 0;
     if (c->has_lin) {
         snprintf(path, sizeof(path), "%s/%s.lin", dir, c->stem);
-        lines = import_load_lines(s, path, &marked);
+        lines = import_load_lines(s, path, &marked, &already);
     }
+    import_fill_predictions(s, dir, c->stem);
     size_t used = (size_t)snprintf(note, note_size, "%s: %d parameters, %d state%s, %d line%s",
                                    p->hamiltonian[p->active_hamiltonian].name,
                                    p->n_param, p->n_species, p->n_species == 1 ? "" : "s",
                                    lines, lines == 1 ? "" : "s");
+    if (already > 0 && used < note_size)
+        used += (size_t)snprintf(note + used, note_size - used, " (%d already assigned)", already);
     if (!states_from_int && used < note_size)
         snprintf(note + used, note_size - used, " (no .int: one default state)");
     else if (interstate > 0 && used < note_size)
