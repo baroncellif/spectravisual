@@ -367,6 +367,35 @@ static double tick_step_for_pixels(double range, int pixels, int min_px) {
     return 10.0 * base;
 }
 
+/* The relative intensity axis of the intensity-fit preview: 0 at y_bottom,
+   top at span_px above it.  Labels sit left of the pane, kept inside it
+   vertically so 0 and the top value both remain readable. */
+static void draw_relative_intensity_axis(SDL_Renderer *ren, const AppState *state, int x,
+                                         int pane_y, int y_bottom, int span_px, int width,
+                                         double top) {
+    if (!(top > 0.0) || span_px <= 0) return;
+    double step = tick_step_for_pixels(top, span_px, 34);
+    int decimals = step >= 1.0 ? 0 : (int)ceil(-log10(step) - 1e-9);
+    if (decimals > 6) decimals = 6;
+    int text_h = ui_text_h(UI_FONT_MONO_SM);
+    for (int k = 0; k * step <= top * (1.0 + 1e-9); k++) {
+        double v = k * step;
+        int py = y_bottom - (int)lround(v / top * span_px);
+        SDL_SetRenderDrawColor(ren, COL_AXIS.r, COL_AXIS.g, COL_AXIS.b, COL_AXIS.a);
+        SDL_RenderDrawLine(ren, x, py, x - 5, py);
+        if (state->settings.show_grid && k > 0) {
+            SDL_SetRenderDrawColor(ren, COL_GRID.r, COL_GRID.g, COL_GRID.b, 45);
+            SDL_RenderDrawLine(ren, x, py, x + width, py);
+        }
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.*f", decimals, v);
+        int ty = py - text_h / 2;
+        if (ty < pane_y) ty = pane_y;
+        if (ty > y_bottom - text_h) ty = y_bottom - text_h;
+        ui_text_right(ren, UI_FONT_MONO_SM, buf, x - 10, ty, UI_FAINT);
+    }
+}
+
 /* Scratch geometry for the plotted lines, grown once and reused every frame. */
 static SDL_FPoint *g_plot_buf = NULL;
 static int         g_plot_cap = 0;
@@ -726,7 +755,10 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     // --- Y-Axis Ticks & Labels (NEW) ---
     // In stack mode each subplot draws its own Y axis above, so skip the global one.
     double yrange = state->vymax - state->vymin;
-    if(yrange > 0 && !state->multi_layout) {
+    if (state->intensity_preview && state->intensity_axis_norm > 0.0) {
+        draw_relative_intensity_axis(ren, state, l->exp_x, l->exp_y, l->exp_y + l->exp_h,
+                                     l->exp_h, l->exp_w, yrange / state->intensity_axis_norm);
+    } else if(yrange > 0 && !state->multi_layout) {
         double ystep = tick_step_for_pixels(yrange, l->exp_h, 34);
         double ystart = ceil(state->vymin/ystep)*ystep;
 
@@ -917,6 +949,12 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
 
         SDL_RenderSetClipRect(ren, NULL);
     }
+
+    /* The preview's prediction shares the experimental intensity axis.  Its
+       lines rise over pred_h - 10 pixels at most (see h_ratio above). */
+    if (state->intensity_preview && state->intensity_axis_norm > 0.0 && state->pred_scale > 0.0)
+        draw_relative_intensity_axis(ren, state, l->pred_x, l->pred_y, l->pred_y + l->pred_h,
+                                     l->pred_h - 10, l->pred_w, 1.0 / state->pred_scale);
 
     // Ticks
     double xrange = state->pvxmax - state->pvxmin;
@@ -1195,7 +1233,11 @@ static void draw_status_bar(SDL_Renderer *ren, AppState *state, Layout *l) {
     ui_text(ren, UI_FONT_SANS_SM, "I", x, ty_sans, UI_FAINT); x += 14;
     if (in_exp) {
         double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
-        snprintf(buf, sizeof(buf), "%.2e", state->vymin + fy * (state->vymax - state->vymin));
+        double iy = state->vymin + fy * (state->vymax - state->vymin);
+        if (state->intensity_preview && state->intensity_axis_norm > 0.0)
+            snprintf(buf, sizeof(buf), "%.3f", iy / state->intensity_axis_norm);
+        else
+            snprintf(buf, sizeof(buf), "%.2e", iy);
     } else snprintf(buf, sizeof(buf), "\xE2\x80\x94");
     ui_text(ren, UI_FONT_MONO, buf, x, ty_mono, in_exp ? UI_TEXT : UI_FAINT);
     x += 92;
@@ -1904,7 +1946,10 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         double cx = state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset;
         double cy = state->vymin + fy * (state->vymax - state->vymin);
         char freq[48]; fmt_mhz(freq, sizeof(freq), cx, 4);
-        snprintf(buf, sizeof(buf), "f %s MHz   I %.1e", freq, cy);
+        if (state->intensity_preview && state->intensity_axis_norm > 0.0)
+            snprintf(buf, sizeof(buf), "f %s MHz   I %.3f", freq, cy / state->intensity_axis_norm);
+        else
+            snprintf(buf, sizeof(buf), "f %s MHz   I %.1e", freq, cy);
         int bx = mx + 14, by = my - 30;
         if (bx + 230 > l->exp_x + l->exp_w) bx = mx - 230;
         if (by < l->exp_y + 6) by = l->exp_y + 6;

@@ -3000,7 +3000,14 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     CHECK_DBL("range x iniziale = plot", v->vxmin, s->vxmin, 0.0);
     CHECK_DBL("range x finale = plot", v->vxmax, s->vxmax, 0.0);
     CHECK_DBL("range predizione = plot", v->pvxmax, s->pvxmax, 0.0);
-    CHECK_DBL("range y = plot", v->vymax, s->vymax, 0.0);
+    /* One relative intensity axis for both panes: 0 at the bottom, 1 the
+       maximum of the active experimental trace. */
+    double norm = s->spectra[s->active_spec].ymax;
+    CHECK_INT("anteprima delle intensita'", v->intensity_preview, 1);
+    CHECK_INT("plot principale senza asse relativo", s->intensity_preview, 0);
+    CHECK_DBL("1 = massimo sperimentale", v->intensity_axis_norm, norm, 0.0);
+    CHECK_DBL("asse da 0", v->vymin, 0.0, 0.0);
+    CHECK_DBL("asse fino a 1", v->vymax / norm, 1.0, 1e-12);
 
     /* Experimental order: median of observed peak / fitted intensity. */
     double k = 0.5 * (2.0 / (want0 / g) + 0.5 / (want1 / g));
@@ -3012,9 +3019,36 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     CHECK(strstr(v->view_caption, "not applied") != NULL, "didascalia dell'anteprima");
 
     /* Navigation through the controller of the main window. */
-    Layout L;
+    Layout L, main_layout;
     app_compute_layout(v, &L, WIN_W, WIN_H);
+    app_compute_layout(s, &main_layout, WIN_W, WIN_H);
     CHECK(L.exp_h > 0 && L.pred_h > 0, "due pannelli come nel plot");
+    CHECK(abs(L.exp_h - L.pred_h) <= 1, "anteprima: meta' finestra ciascuno (%d / %d)", L.exp_h, L.pred_h);
+    CHECK(main_layout.exp_h > main_layout.pred_h + 1, "plot principale: proporzioni invariate");
+
+    /* W and Z zoom both panes together; the arrows cannot lift 0. */
+    double factor = s->settings.nav_intensity_factor > 1.0 ? s->settings.nav_intensity_factor : 1.25;
+    viewer_key(v, &L, SDLK_w);
+    CHECK_DBL("W: cima dell'asse", v->intensity_axis_top, 1.0 / factor, 1e-12);
+    CHECK_DBL("W: pannello sperimentale", v->vymax / norm, 1.0 / factor, 1e-12);
+    CHECK_DBL("W: predizione in sync", v->pred_scale, factor, 1e-12);
+    shown = v->pred_lines[0].linear_int / v->pred_global_max * v->pred_scale;
+    exp_frac = w->preview_intensity_scale * (want0 / g) / (v->vymax - v->vymin);
+    CHECK_DBL("W: stessa altezza nei due pannelli", shown, exp_frac, exp_frac * 1e-9);
+    viewer_key(v, &L, SDLK_z);
+    viewer_key(v, &L, SDLK_z);
+    CHECK_DBL("Z: cima dell'asse", v->intensity_axis_top, factor, 1e-12);
+    CHECK_DBL("Z: predizione in sync", v->pred_scale, 1.0 / factor, 1e-12);
+    viewer_key(v, &L, SDLK_UP);
+    CHECK_DBL("frecce: lo zero resta in basso", v->vymin, 0.0, 0.0);
+    viewer_key(v, &L, SDLK_TAB);
+    CHECK(v->intensity_axis_top > 0.0 && v->pred_scale == 1.0 / v->intensity_axis_top,
+          "Tab: una sola scala per i due pannelli");
+    CHECK_DBL("W/Z non toccano il plot principale", s->vymax, 2.5, 0.0);
+    s->multi_layout = 1;
+    CHECK(intensity_analysis_preview_state(s) == v && v->multi_layout == 0,
+          "anteprima sempre sovrapposta, su un solo asse");
+    s->multi_layout = 0;
     double span = v->vxmax - v->vxmin;
     viewer_key(v, &L, SDLK_e);
     app_sync_view_state(v);
@@ -3030,6 +3064,8 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     viewer_key(v, &L, SDLK_r);
     CHECK_DBL("R: range completo", v->vxmin, v->xmin, 0.0);
     CHECK_DBL("R non tocca il plot principale", s->vxmin, 2998.0, 0.0);
+    CHECK_DBL("R: asse da 0 a 1", v->vymax / norm, 1.0, 1e-12);
+    CHECK_DBL("R: predizione da 0 a 1", v->pred_scale, 1.0, 1e-12);
 
     /* Nothing that edits or writes. */
     viewer_key(v, &L, SDLK_x);

@@ -990,31 +990,27 @@ static double preview_experimental_factor(const AppState *s, const AppState *v, 
     return isfinite(k) && k > 0.0 ? k : 1.0;
 }
 
-/* The prediction pane is normalised by pred_global_max / pred_scale.  Put it
-   on the experimental pane's intensity axis instead, so that a line of k*I
-   stands as tall as a sample of intensity I in the pane above.  Nothing but
-   these two display factors of the private state changes. */
-static void preview_set_vertical_scale(AppState *v, double k) {
-    double full = 0.0, shown = 0.0;
-    if (v->multi_ynorm && v->active_spec >= 0 && v->active_spec < v->n_spectra) {
-        const Spectrum *S = &v->spectra[v->active_spec];
-        full = S->ymax - S->ymin;
-        v->pred_scale = S->vscale > 0.0 ? S->vscale : 1.0;
-    } else {
-        double miny = v->ymin, maxy = v->ymax;
-        int seen = 0;
-        for (int i = 0; i < v->n_spectra; i++) {
-            const Spectrum *S = &v->spectra[i];
-            if (!S->visible) continue;
-            if (!seen) { miny = S->ymin; maxy = S->ymax; seen = 1; }
-            else { if (S->ymin < miny) miny = S->ymin; if (S->ymax > maxy) maxy = S->ymax; }
-        }
-        full = maxy - miny;
-        shown = v->vymax - v->vymin;
-        v->pred_scale = full > 0.0 && shown > 0.0 ? full / shown : 1.0;
-    }
-    if (full > 0.0 && k > 0.0) v->pred_global_max = full / k;
-    else if (!(v->pred_global_max > 0.0)) v->pred_global_max = 1.0;
+/* Experimental intensity shown as 1 on the preview's axis: the maximum of the
+   active trace, over its whole range, so the axis does not change with the
+   region the preview happens to open on. */
+static double preview_axis_norm(const AppState *v) {
+    double norm = 0.0;
+    if (v->active_spec >= 0 && v->active_spec < v->n_spectra)
+        norm = v->spectra[v->active_spec].ymax;
+    if (!(norm > 0.0)) norm = v->ymax;
+    return norm > 0.0 && isfinite(norm) ? norm : 1.0;
+}
+
+/* Both panes on one relative axis.  A drawn line is linear_int /
+   pred_global_max * pred_scale of the prediction pane, and k * linear_int is
+   the fitted line in experimental units, so pred_global_max = norm / k makes
+   a line of relative intensity r as tall as a sample of r * norm above it. */
+static void preview_set_vertical_scale(AppState *v, double k, double top) {
+    v->intensity_preview = 1;
+    v->intensity_axis_norm = preview_axis_norm(v);
+    v->intensity_axis_top = top;
+    v->pred_global_max = k > 0.0 ? v->intensity_axis_norm / k : v->intensity_axis_norm;
+    viewer_apply_intensity_axis(v);
 }
 
 static void preview_record_sources(IntensityFitWindow *w, const AppState *s) {
@@ -1051,7 +1047,7 @@ static int preview_sources_changed(const IntensityFitWindow *w, const AppState *
 /* Navigation belongs to the preview window once it is open. */
 typedef struct {
     double vxmin, vxmax, vymin, vymax, pvxmin, pvxmax, pred_scale;
-    double bar_x, pbar_x, measure_x1, exp_offset;
+    double bar_x, pbar_x, measure_x1, exp_offset, intensity_axis_top;
     int sync_active, bar_active, measure_active, measure_phase, show_help;
     double vscale[MAX_SPECTRA], voffset[MAX_SPECTRA], spec_offset[MAX_SPECTRA];
 } PreviewView;
@@ -1061,6 +1057,7 @@ static void preview_save_view(const AppState *v, PreviewView *out) {
     out->pvxmin = v->pvxmin; out->pvxmax = v->pvxmax; out->pred_scale = v->pred_scale;
     out->bar_x = v->bar_x; out->pbar_x = v->pbar_x; out->measure_x1 = v->measure_x1;
     out->exp_offset = v->exp_offset;
+    out->intensity_axis_top = v->intensity_axis_top;
     out->sync_active = v->sync_active; out->bar_active = v->bar_active;
     out->measure_active = v->measure_active; out->measure_phase = v->measure_phase;
     out->show_help = v->show_help;
@@ -1146,14 +1143,12 @@ static int preview_build(AppState *s, int keep_view) {
 
     if (keep_view) preview_restore_view(v, &view);
     w->preview_intensity_scale = preview_experimental_factor(s, v, &w->preview_scale_lines);
-    if (!keep_view) preview_set_vertical_scale(v, w->preview_intensity_scale);
-    else {
-        double scale = v->pred_scale;
-        preview_set_vertical_scale(v, w->preview_intensity_scale);
-        v->pred_scale = scale;
-    }
+    /* One shared axis needs one overlaid, commonly scaled experimental pane. */
+    v->multi_layout = 0;
+    v->multi_ynorm = 0;
+    preview_set_vertical_scale(v, w->preview_intensity_scale, keep_view ? view.intensity_axis_top : 1.0);
     snprintf(v->view_caption, sizeof(v->view_caption),
-             "fit preview, not applied \xC2\xB7 \xC3\x97%.3g to exp. intensity", w->preview_intensity_scale);
+             "fit preview, not applied \xC2\xB7 intensity 1 = experimental maximum");
     preview_record_sources(w, s);
     return 1;
 }
@@ -1187,8 +1182,9 @@ static void preview_follow_presentation(const AppState *s, AppState *v) {
     v->filt_dj = s->filt_dj; v->filt_dka = s->filt_dka; v->filt_dkc = s->filt_dkc;
     v->predfit.species_trace_mode = s->predfit.species_trace_mode;
     v->intensity_window.open = s->intensity_window.open;   /* the rail marks the open tool */
-    v->multi_layout = s->multi_layout;
-    v->multi_ynorm = s->multi_ynorm;
+    /* Stacked or per-trace scaled panes cannot share the preview's axis. */
+    v->multi_layout = 0;
+    v->multi_ynorm = 0;
     v->multi_indiv_int = s->multi_indiv_int;
     v->rolling_avg_window = s->rolling_avg_window;
     for (int i = 0; i < s->n_spectra && i < v->n_spectra; i++) {

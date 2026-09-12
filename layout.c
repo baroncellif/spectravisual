@@ -54,7 +54,8 @@ void app_compute_layout(AppState *state, Layout *layout, int width, int height) 
     if (has_exp && has_pred) {
         int usable = avail - 2 * UI_PANEL_HEADER_H - UI_PRED_AXIS_H;
         if (usable < 120) usable = 120;
-        layout->exp_h = (int)(usable * 0.62);
+        /* The fit preview compares the two panes line by line: half each. */
+        layout->exp_h = (int)(usable * (state->intensity_preview ? 0.5 : 0.62));
         layout->pred_h = usable - layout->exp_h;
         layout->exp_y = content_top + UI_PANEL_HEADER_H;
         layout->pred_y = layout->exp_y + layout->exp_h + UI_PANEL_HEADER_H;

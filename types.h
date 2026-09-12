@@ -697,6 +697,14 @@ struct AppState {
        selection) and nothing that edits the project or writes a file. */
     int viewer_readonly;
     char view_caption[160];   /* shown on the prediction pane when not empty */
+    /* Set only in the intensity-fit preview: the two panes share half the
+       window each and one relative intensity axis, 0 at the bottom of both.
+       1 is intensity_axis_norm in experimental units; the fitted prediction
+       is drawn on the same axis, and intensity_axis_top is the value at the
+       top of both panes, so W/Z zoom the two together. */
+    int intensity_preview;
+    double intensity_axis_norm;
+    double intensity_axis_top;
 
 };
 

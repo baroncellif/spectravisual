@@ -361,6 +361,53 @@ void handle_viewer_event(AppState *state, Layout *l, const SDL_Event *event) {
     }
 }
 
+/* The prediction pane draws linear_int / pred_global_max * pred_scale of its
+   height; the preview sets pred_global_max to the norm in prediction units,
+   so pred_scale = 1/top gives it the axis of the experimental pane. */
+void viewer_apply_intensity_axis(AppState *s) {
+    if (!s || !s->intensity_preview || !(s->intensity_axis_norm > 0.0)) return;
+    if (!(s->intensity_axis_top > 0.0) || !isfinite(s->intensity_axis_top))
+        s->intensity_axis_top = 1.0;
+    s->vymin = 0.0;
+    s->vymax = s->intensity_axis_top * s->intensity_axis_norm;
+    s->pred_scale = 1.0 / s->intensity_axis_top;
+}
+
+/* Vertical keys of the intensity-fit preview.  Returns 1 when handled. */
+static int preview_intensity_key(AppState *s, Layout *l, SDL_Keycode sym) {
+    if (!s->intensity_preview) return 0;
+    double f = s->settings.nav_intensity_factor > 1.0 ? s->settings.nav_intensity_factor : 1.25;
+    switch (sym) {
+        case SDLK_w: s->intensity_axis_top /= f; break;
+        case SDLK_z: s->intensity_axis_top *= f; break;
+        case SDLK_TAB: {
+            /* The tallest experimental sample or predicted line in view. */
+            double top = 0.0;
+            for (int k = 0; k < s->n_spectra; k++) {
+                const Spectrum *S = &s->spectra[k];
+                if (!S->visible || S->n_pts < 1 || !S->current_pts) continue;
+                int i0 = binary_search_lower(S->current_pts, S->n_pts, s->vxmin - S->exp_offset);
+                int i1 = binary_search_upper(S->current_pts, S->n_pts, s->vxmax - S->exp_offset);
+                if (i0 < 0) i0 = 0;
+                if (i1 >= S->n_pts) i1 = S->n_pts - 1;
+                for (int i = i0; i <= i1; i++)
+                    if (S->current_pts[i].y / s->intensity_axis_norm > top)
+                        top = S->current_pts[i].y / s->intensity_axis_norm;
+            }
+            double pred = prediction_visible_max(s, l->pred_w);
+            if (pred > 0.0 && s->pred_global_max > 0.0 && pred / s->pred_global_max > top)
+                top = pred / s->pred_global_max;
+            if (top > 0.0) s->intensity_axis_top = top;
+            break;
+        }
+        /* Panning the axis would lift 0 off the bottom of one pane only. */
+        case SDLK_UP: case SDLK_DOWN: break;
+        default: return 0;
+    }
+    viewer_apply_intensity_axis(s);
+    return 1;
+}
+
 /* The single explicit writer of the session.  Nothing else in the app saves
    .fit/spectravisual.state: a wrong model or a mistaken load can therefore
    never overwrite a good workspace on its way out. */
@@ -1220,8 +1267,13 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
         s->vymin = miny; s->vymax = maxy;
         s->pvxmin = s->xmin; s->pvxmax = s->xmax;
         s->pred_scale = 1.0;
+        if (s->intensity_preview) {
+            s->intensity_axis_top = 1.0;
+            viewer_apply_intensity_axis(s);
+        }
         return;
     }
+    if (preview_intensity_key(s, l, sym)) return;
     if (sym == SDLK_c) s->win_cut.visible = !s->win_cut.visible;
     if (sym == SDLK_f) s->win_jump.visible = !s->win_jump.visible;
     if (sym == SDLK_b) s->win_filt.visible = !s->win_filt.visible;
