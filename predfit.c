@@ -1,4 +1,5 @@
 #include "predfit.h"
+#include "intensity_fit.h"
 #include "controller.h"
 #include "layout.h"
 #include "loader.h"
@@ -520,6 +521,7 @@ void predfit_save_session(AppState *s) {
         saved_count++;
     }
     if (saved_active >= 0) fprintf(fp, "active %d\n", saved_active);
+    intensity_analysis_write_session(s, fp);
     if (fclose(fp) == 0 && rename(tmp_path, path) == 0) p->session_dirty = 0;
 }
 
@@ -585,6 +587,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
     char path[600]; session_path(s, path, sizeof(path));
     FILE *fp = fopen(path, "r");
     if (!fp) return;
+    intensity_analysis_session_begin(s);
     s->n_session_spec = 0;
     s->session_active_spec = -1;
     s->session_has_view = 0;
@@ -606,6 +609,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         if (line[0] == '#') continue;
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
+        if (intensity_analysis_read_session_line(s, line)) continue;
         if (strncmp(line, "species_traces ", 15) == 0) {
             int mode = atoi(line + 15);
             p->species_trace_mode = (mode >= 0 && mode <= 2) ? mode : TRACE_SUM;

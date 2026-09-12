@@ -3115,6 +3115,89 @@ static int test_fit_preview_is_the_main_viewer_readonly(void) {
     DONE();
 }
 
+/* An intensity fit is part of the session: its options, the choices made for
+   every species, the fitted values, the report and the fit log come back with
+   everything else, and survive reopening the window while Pred&Fit offers the
+   same species at the same catalogue TEMP. */
+static int test_intensity_fit_saved_in_session(void) {
+    AppState *s = new_state();
+    mono_model(&s->predfit);
+    add_species(s);
+    IntensityFitWindow *w = &s->intensity_window;
+    intensity_analysis_sync_species(s);
+    CHECK_INT("analisi inizializzata", w->initialized, 1);
+    CHECK_INT("due specie da Pred&Fit", w->n_species, 2);
+    if (w->n_species != 2) DONE();
+
+    w->fit_temperature = 0; w->common_temperature = 0; w->extraction_mode = 2;
+    w->branch_enabled[0] = 0; w->mu_enabled[2] = 0; w->residual_weighting = 2;
+    w->fmin_mhz = 2000.5; w->fmax_mhz = 6500.25; w->extraction_window_mhz = 0.07;
+    w->temp_min_k = 0.2; w->temp_max_k = 40.0;
+    w->species[1].included = 0; w->species[1].temperature_group = 3; w->species[0].fit_dipole[2] = 1;
+    w->species[0].fitted_concentration = 1.234567890123e-5;
+    w->species[0].fitted_temperature_k = 0.2928;
+    w->species[0].fitted_mu[1] = 0.321;
+    w->has_result = 1;
+    w->n_candidates = 951; w->n_parameters = 26; w->rmse = 4.754482e-4;
+    w->fit_line_count = 951; w->fit_blend_count = 4; w->fit_duplicate_count = 1;
+    snprintf(w->message, sizeof(w->message), "Python fit complete: 951 lines");
+    char long_line[1301];
+    for (int i = 0; i < 1300; i++) long_line[i] = (char)('a' + i % 26);
+    long_line[1300] = '\0';
+    snprintf(w->report, sizeof(w->report), "INTFIT: RELATIVE INTENSITY FIT\n\n%s\nTEMPERATURES\n", long_line);
+    snprintf(w->console_log, sizeof(w->console_log), "=== INTFIT SUMMARY ===\nsuccess : True\n");
+    predfit_save_session(s);
+
+    AppState *r = new_state();
+    predfit_load_session(r);
+    IntensityFitWindow *q = &r->intensity_window;
+    CHECK_INT("opzioni ripristinate", q->initialized, 1);
+    CHECK_INT("Fit Trot", q->fit_temperature, 0);
+    CHECK_INT("gruppi", q->common_temperature, 0);
+    CHECK_INT("estrazione", q->extraction_mode, 2);
+    CHECK_INT("ramo P", q->branch_enabled[0], 0);
+    CHECK_INT("mu c", q->mu_enabled[2], 0);
+    CHECK_INT("pesi", q->residual_weighting, 2);
+    CHECK_DBL("f min", q->fmin_mhz, 2000.5, 0.0);
+    CHECK_DBL("f max", q->fmax_mhz, 6500.25, 0.0);
+    CHECK_DBL("finestra", q->extraction_window_mhz, 0.07, 0.0);
+    CHECK_DBL("T max", q->temp_max_k, 40.0, 0.0);
+    CHECK_INT("specie", q->n_species, 2);
+    CHECK_INT("specie esclusa", q->species[1].included, 0);
+    CHECK_INT("gruppo di T", q->species[1].temperature_group, 3);
+    CHECK_INT("mu fittato", q->species[0].fit_dipole[2], 1);
+    CHECK_DBL("concentrazione fittata", q->species[0].fitted_concentration, 1.234567890123e-5, 0.0);
+    CHECK_DBL("Trot fittata", q->species[0].fitted_temperature_k, 0.2928, 0.0);
+    CHECK_DBL("mu fittato", q->species[0].fitted_mu[1], 0.321, 0.0);
+    CHECK_INT("risultato", q->has_result, 1);
+    CHECK_INT("righe", q->n_candidates, 951);
+    CHECK_DBL("RMS", q->rmse, 4.754482e-4, 0.0);
+    CHECK_INT("blend", q->fit_blend_count, 4);
+    CHECK(strcmp(q->message, w->message) == 0, "messaggio: %s", q->message);
+    CHECK(strcmp(q->report, w->report) == 0, "report identico, riga lunga compresa");
+    CHECK(strcmp(q->console_log, w->console_log) == 0, "log del fit identico");
+
+    /* Reopening the window on the same species keeps the result. */
+    intensity_analysis_sync_species(r);
+    CHECK_INT("risultato conservato alla riapertura", q->has_result, 1);
+    CHECK_INT("scelte conservate alla riapertura", q->species[1].temperature_group, 3);
+    CHECK(intensity_analysis_preview_state(r) != NULL, "anteprima disponibile dopo il ripristino");
+
+    /* A catalogue from another TEMP no longer matches the fit. */
+    q->species[0].cat_temperature_k += 1.0;
+    intensity_analysis_sync_species(r);
+    CHECK_INT("risultato scartato se il catalogo cambia", q->has_result, 0);
+    CHECK_INT("scelte conservate comunque", q->species[1].temperature_group, 3);
+
+    /* A session with no intensity fit clears the one in memory. */
+    AppState *empty = new_state();
+    predfit_save_session(empty);
+    predfit_load_session(r);
+    CHECK_INT("sessione senza fit: analisi da rifare", q->initialized, 0);
+    CHECK_INT("sessione senza fit: nessun risultato", q->has_result, 0);
+    DONE();
+}
+
 /* The Python intensity model scales each species from the TEMP of its .int
    to Trot, so a row reaches it as SPCAT's LGINT at that TEMP and the .int
    states the catalogue TEMP; a blend is one observation whose intensity is
@@ -3334,6 +3417,7 @@ static const Test TESTS[] = {
     {"test_interstate_line_uses_lower_state_concentration", test_interstate_line_uses_lower_state_concentration},
     {"test_fit_preview_is_the_main_viewer_readonly", test_fit_preview_is_the_main_viewer_readonly},
     {"test_python_intensity_inputs", test_python_intensity_inputs},
+    {"test_intensity_fit_saved_in_session", test_intensity_fit_saved_in_session},
 };
 #define N_TESTS ((int)(sizeof(TESTS) / sizeof(TESTS[0])))
 

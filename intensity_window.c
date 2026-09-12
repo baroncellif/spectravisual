@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -79,35 +80,19 @@ static void report_add(IntensityFitWindow *w, const char *fmt, ...) {
     va_end(ap);
 }
 
-static void initialise_from_predfit(AppState *s) {
-    IntensityFitWindow *w = &s->intensity_window;
-    memset(w, 0, sizeof(*w));
-    w->fit_concentration = 1;
-    w->fit_temperature = 1;
-    w->fit_dipoles = 0;
-    w->fit_mode = 0;
-    w->extraction_mode = 1;
-    w->common_temperature = 1;
-    w->branch_enabled[0] = w->branch_enabled[1] = w->branch_enabled[2] = 1;
-    w->mu_enabled[0] = w->mu_enabled[1] = w->mu_enabled[2] = 1;
-    w->residual_weighting = 0;
-    w->temp_min_k = 0.1;
-    w->temp_max_k = 100.0;
-    w->extraction_window_mhz = 0.05;
-    w->intensity_uncertainty_fraction = 0.20;
-    w->intensity_uncertainty_floor = 0.02;
-    w->fmin_mhz = s->n_pts ? s->current_pts[0].x : 0.0;
-    w->fmax_mhz = s->n_pts ? s->current_pts[s->n_pts - 1].x : 0.0;
-
-    PredFitState *p = &s->predfit;
-    for (int h = 0; h < p->n_hamiltonians && w->n_species < MAX_INTFIT_SPECIES; h++) {
+/* The species Pred&Fit currently offers, with their catalogue values. */
+static int collect_predfit_species(const AppState *s, IntensityFitSpecies *out, int cap) {
+    const PredFitState *p = &s->predfit;
+    int n = 0;
+    for (int h = 0; h < p->n_hamiltonians && n < cap; h++) {
         int h_id = 0;
         const PredFitSnapshot *m = model_for_hamiltonian(s, h, &h_id);
         if (!m) continue;
         double tcat = cat_temperature_for(s, h_id, m);
-        for (int i = 0; i < m->n_species && w->n_species < MAX_INTFIT_SPECIES; i++) {
+        for (int i = 0; i < m->n_species && n < cap; i++) {
             const PickettSpecies *sp = &m->species[i];
-            IntensityFitSpecies *dst = &w->species[w->n_species++];
+            IntensityFitSpecies *dst = &out[n++];
+            memset(dst, 0, sizeof(*dst));
             dst->hamiltonian_id = h_id;
             dst->state_index = sp->state_index;
             snprintf(dst->name, sizeof(dst->name), "%s", sp->name[0] ? sp->name : "Species");
@@ -116,8 +101,8 @@ static void initialise_from_predfit(AppState *s) {
                label exactly when it is unique; a repeated state label from
                another Hamiltonian is the one case that needs disambiguation. */
             int duplicate_name = 0;
-            for (int k = 0; k < w->n_species - 1; k++) {
-                IntensityFitSpecies *prior = &w->species[k];
+            for (int k = 0; k < n - 1; k++) {
+                IntensityFitSpecies *prior = &out[k];
                 if (strcmp(prior->name, dst->name) != 0) continue;
                 duplicate_name = 1;
                 snprintf(prior->backend_name, sizeof(prior->backend_name), "%s [H%d]",
@@ -139,6 +124,38 @@ static void initialise_from_predfit(AppState *s) {
             }
         }
     }
+    return n;
+}
+
+/* Default choices.  The windows the analysis already has stay open. */
+static void initialise_from_predfit(AppState *s) {
+    IntensityFitWindow *w = &s->intensity_window;
+    SDL_Window *window = w->window;
+    SDL_Renderer *renderer = w->renderer;
+    Uint32 window_id = w->window_id;
+    int open = w->open;
+    memset(w, 0, sizeof(*w));
+    w->window = window;
+    w->renderer = renderer;
+    w->window_id = window_id;
+    w->open = open;
+    w->fit_concentration = 1;
+    w->fit_temperature = 1;
+    w->fit_dipoles = 0;
+    w->fit_mode = 0;
+    w->extraction_mode = 1;
+    w->common_temperature = 1;
+    w->branch_enabled[0] = w->branch_enabled[1] = w->branch_enabled[2] = 1;
+    w->mu_enabled[0] = w->mu_enabled[1] = w->mu_enabled[2] = 1;
+    w->residual_weighting = 0;
+    w->temp_min_k = 0.1;
+    w->temp_max_k = 100.0;
+    w->extraction_window_mhz = 0.05;
+    w->intensity_uncertainty_fraction = 0.20;
+    w->intensity_uncertainty_floor = 0.02;
+    w->fmin_mhz = s->n_pts ? s->current_pts[0].x : 0.0;
+    w->fmax_mhz = s->n_pts ? s->current_pts[s->n_pts - 1].x : 0.0;
+    w->n_species = collect_predfit_species(s, w->species, MAX_INTFIT_SPECIES);
     w->initialized = 1;
 }
 
@@ -487,6 +504,7 @@ static void finish_python_reference_fit(AppState *s, int status) {
             w->species[i].fitted_mu[c] = w->species[i].mu_cat[c] * factor;
     }
     w->has_result = 1; w->result_generation++; w->n_candidates = 0; w->n_parameters = 0;
+    s->predfit.session_dirty = 1;   /* the fit is part of the session */
     char *hit = strstr(w->report, "LINES USED=");
     if (hit) sscanf(hit, "LINES USED=%d  NUMBER OF PARAMETERS=%d", &w->n_candidates, &w->n_parameters);
     hit = strstr(w->report, "RMS ERROR =");
@@ -517,6 +535,8 @@ static void poll_python_reference_fit(AppState *s) {
 
 void intensity_analysis_poll(AppState *s) {
     poll_python_reference_fit(s);
+    if (s->intensity_window.species_sync_pending && s->intensity_window.open)
+        intensity_analysis_sync_species(s);
 }
 
 /* Assignments of one species at the same experimental frequency are the
@@ -850,11 +870,222 @@ static void commit_edit(IntensityFitWindow *w){double v=strtod(w->edit_text,NULL
 
 static void export_report(AppState *s){IntensityFitWindow*w=&s->intensity_window;char path[600];settings_data_file(s,"intensity_fit.txt",path,sizeof(path));FILE*f=fopen(path,"w");if(!f){snprintf(w->message,sizeof(w->message),"Cannot write %s",path);return;}fputs(w->report,f);fclose(f);snprintf(w->message,sizeof(w->message),"Saved %s",path);}
 
+/* The window keeps its choices and its result - also those restored from a
+ * session - for as long as Pred&Fit offers the same species.  Their catalogue
+ * values are read again every time: a different species list starts over,
+ * and a catalogue generated at another TEMP or with other dipoles no longer
+ * matches the fit, whose result is then dropped rather than misdrawn. */
+void intensity_analysis_sync_species(AppState *s) {
+    IntensityFitWindow *w = &s->intensity_window;
+    if (w->fit_running) return;
+    w->species_sync_pending = 0;
+    static IntensityFitSpecies fresh[MAX_INTFIT_SPECIES];
+    int n = collect_predfit_species(s, fresh, MAX_INTFIT_SPECIES);
+    int same = w->initialized && n == w->n_species;
+    for (int i = 0; same && i < n; i++)
+        same = fresh[i].hamiltonian_id == w->species[i].hamiltonian_id &&
+               fresh[i].state_index == w->species[i].state_index;
+    if (!same) {
+        preview_close(s);
+        initialise_from_predfit(s);
+        return;
+    }
+    int catalogue_changed = 0;
+    for (int i = 0; i < n; i++) {
+        IntensityFitSpecies *sp = &w->species[i];
+        const IntensityFitSpecies *f = &fresh[i];
+        if (sp->cat_temperature_k != f->cat_temperature_k ||
+            memcmp(sp->mu_cat, f->mu_cat, sizeof(sp->mu_cat)) != 0) catalogue_changed = 1;
+        memcpy(sp->name, f->name, sizeof(sp->name));
+        memcpy(sp->backend_name, f->backend_name, sizeof(sp->backend_name));
+        sp->concentration = f->concentration;
+        sp->temperature_k = f->temperature_k;
+        sp->cat_temperature_k = f->cat_temperature_k;
+        memcpy(sp->mu_cat, f->mu_cat, sizeof(sp->mu_cat));
+    }
+    if (catalogue_changed && w->has_result) {
+        preview_close(s);
+        w->has_result = 0;
+        snprintf(w->message, sizeof(w->message),
+                 "The Pred&Fit catalogue changed since the fit: run it again.");
+    }
+}
+
+/* ---------------------------------------------------------------- session
+ * One intfit_* record per line of spectravisual.state.  Report and fit log are
+ * stored line by line; a long line continues in "+" records, so no record
+ * outgrows the session reader's line buffer. */
+enum { IF_SESSION_CHUNK = 500 };
+static int g_if_session_skip;
+
+static void if_session_write_text(FILE *fp, const char *key, const char *text) {
+    const char *p = text;
+    while (*p) {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p), off = 0;
+        do {
+            size_t chunk = len - off > IF_SESSION_CHUNK ? IF_SESSION_CHUNK : len - off;
+            fprintf(fp, "%s%s ", key, off ? "+" : "");
+            for (size_t i = 0; i < chunk; i++) if (p[off + i] != '\r') fputc(p[off + i], fp);
+            fputc('\n', fp);
+            off += chunk;
+        } while (off < len);
+        p += len;
+        if (*p == '\n') p++;
+    }
+}
+
+static void if_session_append(char *text, size_t size, const char *chunk, int continuation) {
+    size_t at = strlen(text);
+    if (continuation && at > 0 && text[at - 1] == '\n') text[--at] = '\0';
+    snprintf(text + at, size - at, "%s\n", chunk);
+}
+
+void intensity_analysis_write_session(const AppState *s, FILE *fp) {
+    const IntensityFitWindow *w = &s->intensity_window;
+    if (!w->initialized || !fp) return;
+    fprintf(fp, "intfit_options %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+                "%.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+            w->fit_concentration, w->fit_temperature, w->fit_dipoles, w->fit_mode,
+            w->extraction_mode, w->branch_enabled[0], w->branch_enabled[1], w->branch_enabled[2],
+            w->mu_enabled[0], w->mu_enabled[1], w->mu_enabled[2], w->common_temperature,
+            w->residual_weighting, w->fit_log_space, w->exact_temperature_scaling, w->loss,
+            w->fmin_mhz, w->fmax_mhz, w->extraction_window_mhz, w->temp_min_k, w->temp_max_k,
+            w->intensity_uncertainty_fraction, w->intensity_uncertainty_floor);
+    for (int i = 0; i < w->n_species; i++) {
+        const IntensityFitSpecies *sp = &w->species[i];
+        fprintf(fp, "intfit_species %d %d %d %d %d %d %d "
+                    "%.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %s\n",
+                sp->hamiltonian_id, sp->state_index, sp->included != 0, sp->temperature_group,
+                sp->fit_dipole[0] != 0, sp->fit_dipole[1] != 0, sp->fit_dipole[2] != 0,
+                sp->concentration, sp->temperature_k, sp->cat_temperature_k,
+                sp->mu_cat[0], sp->mu_cat[1], sp->mu_cat[2],
+                sp->fitted_concentration, sp->fitted_temperature_k,
+                sp->fitted_mu[0], sp->fitted_mu[1], sp->fitted_mu[2], sp->name);
+    }
+    if (!w->has_result) return;
+    fprintf(fp, "intfit_result %d %d %d %d %.17g %.17g %.17g %d %d %d\n",
+            w->n_candidates, w->n_used, w->n_rejected, w->n_parameters,
+            w->rss, w->rmse, w->raw_rmse, w->fit_line_count, w->fit_blend_count,
+            w->fit_duplicate_count);
+    if_session_write_text(fp, "intfit_message", w->message);
+    if_session_write_text(fp, "intfit_report", w->report);
+    if_session_write_text(fp, "intfit_console", w->console_log);
+}
+
+void intensity_analysis_session_begin(AppState *s) {
+    IntensityFitWindow *w = &s->intensity_window;
+    /* A fit still running belongs to the species it was started on. */
+    g_if_session_skip = w->fit_running;
+    if (g_if_session_skip) return;
+    preview_close(s);
+    initialise_from_predfit(s);
+    w->n_species = 0;
+    w->initialized = 0;
+    /* The species list is read again once Pred&Fit has finished loading. */
+    w->species_sync_pending = 1;
+}
+
+int intensity_analysis_read_session_line(AppState *s, const char *line) {
+    if (strncmp(line, "intfit_", 7) != 0) return 0;
+    IntensityFitWindow *w = &s->intensity_window;
+    if (g_if_session_skip) return 1;
+    if (strncmp(line, "intfit_options ", 15) == 0) {
+        IntensityFitWindow o = {0};
+        if (sscanf(line + 15, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+                              "%lf %lf %lf %lf %lf %lf %lf",
+                   &o.fit_concentration, &o.fit_temperature, &o.fit_dipoles, &o.fit_mode,
+                   &o.extraction_mode, &o.branch_enabled[0], &o.branch_enabled[1], &o.branch_enabled[2],
+                   &o.mu_enabled[0], &o.mu_enabled[1], &o.mu_enabled[2], &o.common_temperature,
+                   &o.residual_weighting, &o.fit_log_space, &o.exact_temperature_scaling, &o.loss,
+                   &o.fmin_mhz, &o.fmax_mhz, &o.extraction_window_mhz, &o.temp_min_k, &o.temp_max_k,
+                   &o.intensity_uncertainty_fraction, &o.intensity_uncertainty_floor) != 23) return 1;
+        w->fit_concentration = o.fit_concentration != 0;
+        w->fit_temperature = o.fit_temperature != 0;
+        w->fit_dipoles = o.fit_dipoles != 0;
+        w->fit_mode = o.fit_mode != 0;
+        w->extraction_mode = o.extraction_mode >= 0 && o.extraction_mode <= 2 ? o.extraction_mode : 1;
+        for (int c = 0; c < 3; c++) {
+            w->branch_enabled[c] = o.branch_enabled[c] != 0;
+            w->mu_enabled[c] = o.mu_enabled[c] != 0;
+        }
+        w->common_temperature = o.common_temperature != 0;
+        w->residual_weighting = o.residual_weighting >= 0 && o.residual_weighting <= 2 ? o.residual_weighting : 0;
+        w->fit_log_space = o.fit_log_space != 0;
+        w->exact_temperature_scaling = o.exact_temperature_scaling != 0;
+        w->loss = o.loss >= 0 && o.loss <= 4 ? o.loss : 0;
+        w->fmin_mhz = o.fmin_mhz;
+        w->fmax_mhz = o.fmax_mhz;
+        if (o.extraction_window_mhz > 0.0) w->extraction_window_mhz = o.extraction_window_mhz;
+        if (o.temp_min_k > 0.0 && o.temp_max_k > o.temp_min_k) {
+            w->temp_min_k = o.temp_min_k;
+            w->temp_max_k = o.temp_max_k;
+        }
+        if (o.intensity_uncertainty_fraction >= 0.0) w->intensity_uncertainty_fraction = o.intensity_uncertainty_fraction;
+        if (o.intensity_uncertainty_floor >= 0.0) w->intensity_uncertainty_floor = o.intensity_uncertainty_floor;
+        w->n_species = 0;
+        w->initialized = 1;
+        return 1;
+    }
+    if (strncmp(line, "intfit_species ", 15) == 0) {
+        IntensityFitSpecies sp = {0};
+        int consumed = 0;
+        if (!w->initialized || w->n_species >= MAX_INTFIT_SPECIES) return 1;
+        if (sscanf(line + 15, "%d %d %d %d %d %d %d %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %n",
+                   &sp.hamiltonian_id, &sp.state_index, &sp.included, &sp.temperature_group,
+                   &sp.fit_dipole[0], &sp.fit_dipole[1], &sp.fit_dipole[2],
+                   &sp.concentration, &sp.temperature_k, &sp.cat_temperature_k,
+                   &sp.mu_cat[0], &sp.mu_cat[1], &sp.mu_cat[2],
+                   &sp.fitted_concentration, &sp.fitted_temperature_k,
+                   &sp.fitted_mu[0], &sp.fitted_mu[1], &sp.fitted_mu[2], &consumed) != 18) return 1;
+        const char *name = line + 15 + consumed;
+        snprintf(sp.name, sizeof(sp.name), "%s", *name ? name : "Species");
+        snprintf(sp.backend_name, sizeof(sp.backend_name), "%s", sp.name);
+        sp.included = sp.included != 0;
+        if (sp.temperature_group < 1 || sp.temperature_group > MAX_INTFIT_GROUPS) sp.temperature_group = 1;
+        for (int c = 0; c < 3; c++) sp.fit_dipole[c] = sp.fit_dipole[c] != 0;
+        w->species[w->n_species++] = sp;
+        return 1;
+    }
+    if (strncmp(line, "intfit_result ", 14) == 0) {
+        if (!w->initialized) return 1;
+        if (sscanf(line + 14, "%d %d %d %d %lf %lf %lf %d %d %d",
+                   &w->n_candidates, &w->n_used, &w->n_rejected, &w->n_parameters,
+                   &w->rss, &w->rmse, &w->raw_rmse, &w->fit_line_count, &w->fit_blend_count,
+                   &w->fit_duplicate_count) == 10) {
+            w->has_result = 1;
+            w->result_generation++;
+        }
+        return 1;
+    }
+    static const struct { const char *key; size_t offset, size; } texts[] = {
+        {"intfit_message", offsetof(IntensityFitWindow, message), sizeof(((IntensityFitWindow *)0)->message)},
+        {"intfit_report", offsetof(IntensityFitWindow, report), sizeof(((IntensityFitWindow *)0)->report)},
+        {"intfit_console", offsetof(IntensityFitWindow, console_log), sizeof(((IntensityFitWindow *)0)->console_log)},
+    };
+    for (size_t k = 0; k < sizeof(texts) / sizeof(texts[0]); k++) {
+        size_t n = strlen(texts[k].key);
+        if (strncmp(line, texts[k].key, n) != 0) continue;
+        int continuation = line[n] == '+';
+        const char *chunk = line + n + continuation;
+        if (*chunk != ' ') continue;
+        char *text = (char *)w + texts[k].offset;
+        if (texts[k].offset == offsetof(IntensityFitWindow, message)) {
+            /* The status line is a single line: no newline of its own. */
+            size_t at = continuation ? strlen(text) : 0;
+            snprintf(text + at, texts[k].size - at, "%s", chunk + 1);
+        } else {
+            if_session_append(text, texts[k].size, chunk + 1, continuation);
+        }
+        return 1;
+    }
+    return 1;
+}
+
 void intensity_analysis_open(AppState *s) {
     IntensityFitWindow *w=&s->intensity_window;
     if(w->window){SDL_RaiseWindow(w->window);return;}
-    /* Reinitialising clears the result, so a preview of it closes first. */
-    if (!w->fit_running) { preview_close(s); initialise_from_predfit(s); }
+    if (!w->fit_running) intensity_analysis_sync_species(s);
     w->window=SDL_CreateWindow("Intensity analysis",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1000,900,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
     if(!w->window){snprintf(s->status_message,sizeof(s->status_message),"Could not open Intensity analysis.");return;}
     SDL_SetWindowMinimumSize(w->window, 1000, 760);

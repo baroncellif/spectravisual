@@ -179,6 +179,7 @@ typedef struct {
     int open;
     int preview_open;
     int initialized;
+    int species_sync_pending;  /* a session replaced the list: re-read Pred&Fit */
     int species_scroll;
     int report_scroll;
     int fit_concentration;

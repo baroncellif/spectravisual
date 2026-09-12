@@ -37,4 +37,15 @@ int intensity_analysis_write_python_inputs(AppState *state, const char *dir,
    until a fit has produced a result.  The working state is never modified. */
 AppState *intensity_analysis_preview_state(AppState *state);
 
+/* Keep the window's choices and result while Pred&Fit offers the same
+   species, refreshing their catalogue values; start over otherwise. */
+void intensity_analysis_sync_species(AppState *state);
+
+/* The intensity fit in spectravisual.state: its options, species choices,
+   result, report and fit log.  session_begin clears the analysis before a
+   session is read; read_session_line returns 1 for an intfit_ record. */
+void intensity_analysis_write_session(const AppState *state, FILE *fp);
+void intensity_analysis_session_begin(AppState *state);
+int intensity_analysis_read_session_line(AppState *state, const char *line);
+
 #endif
