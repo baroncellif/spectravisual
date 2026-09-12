@@ -18,7 +18,6 @@
 #include <time.h>
 #include <dirent.h>
 
-#define FIT_DIR_NAME ".fit"
 /* Drop box inside .fit: Pickett files put here are read by Import, never
    written to.  Every generated file keeps living one level up, in .fit. */
 #define LOAD_DIR_NAME "load"
@@ -489,6 +488,15 @@ void predfit_save_session(AppState *s) {
         fprintf(fp, "h4active_state %d\n", m->active_species);
         fputs("h4end\n", fp);
     }
+    /* Which catalogues the plot is made of.  Without this a session reopened
+       with the active Hamiltonian alone: the sticks and the per-state
+       broadened traces of every other simulated model were simply gone.  Only
+       the model and its Tcat are recorded - the file itself is found again
+       from the Hamiltonian's name, so the project can be moved. */
+    fprintf(fp, "h4plot_count %d\n", p->n_simulated);
+    for (int i = 0; i < p->n_simulated; i++)
+        fprintf(fp, "h4plot %d %.17g\n", p->simulated[i].hamiltonian_id,
+                p->simulated[i].cat_temp_k);
     fprintf(fp, "view %.17g %.17g %.17g %.17g %.17g %.17g %d %d\n",
             s->vxmin, s->vxmax, s->vymin, s->vymax, s->pvxmin, s->pvxmax,
             s->sync_active != 0, s->rolling_avg_window);
@@ -545,6 +553,9 @@ static void snapshot_set_parameter(PredFitSnapshot *m, int id, double value, dou
 
 typedef struct {
     int has_int_settings;
+    /* Sessions written before the plot was recorded say nothing about which
+       catalogues were on screen; theirs has to be deduced. */
+    int has_plot_record;
 } SessionRestoreInfo;
 
 /* The public entry point is used during normal startup.  Restore also needs
@@ -561,6 +572,9 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
     s->session_has_view = 0;
     p->n_species = 0;
     p->active_species = 0;
+    /* The session says which catalogues were in the plot; until it does, the
+       plot holds nothing. */
+    p->n_simulated = 0;
     double legacy_state_temp[MAX_PICKETT_SPECIES] = {0.0};
     int legacy_state_temp_count = 0;
     double legacy_int_temp = 0.0;
@@ -577,6 +591,21 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         if (strncmp(line, "species_traces ", 15) == 0) {
             int mode = atoi(line + 15);
             p->species_trace_mode = (mode >= 0 && mode <= 2) ? mode : TRACE_SUM;
+            continue;
+        }
+        if (strncmp(line, "h4plot_count ", 13) == 0) {
+            if (restore_info) restore_info->has_plot_record = 1;
+            continue;
+        }
+        if (strncmp(line, "h4plot ", 7) == 0) {
+            int id = 0; double cat_temp = 0.0;
+            if (sscanf(line + 7, "%d %lf", &id, &cat_temp) == 2 && id > 0 &&
+                p->n_simulated < MAX_PICKETT_HAMILTONIANS) {
+                SimulatedCatalog *c = &p->simulated[p->n_simulated++];
+                memset(c, 0, sizeof(*c));
+                c->hamiltonian_id = id;
+                c->cat_temp_k = cat_temp;
+            }
             continue;
         }
         if (strncmp(line, "h4project ", 10) == 0) {
@@ -819,6 +848,19 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) { p->param[i].error = error; break; }
     }
     fclose(fp);
+    /* A plot entry only means something while its model is still in the
+       project: a Hamiltonian deleted from a hand-edited session must not
+       leave a catalogue behind that nothing can rescale. */
+    {
+        int kept = 0;
+        for (int i = 0; i < p->n_simulated; i++) {
+            int known = 0;
+            for (int h = 0; h < n_loaded_h && !known; h++)
+                known = loaded_h[h].id == p->simulated[i].hamiltonian_id;
+            if (known) p->simulated[kept++] = p->simulated[i];
+        }
+        p->n_simulated = kept;
+    }
     if (n_loaded_h > 0) {
         for (int i = 0; i < n_loaded_h; i++) {
             if (loaded_h[i].model.n_species == 0) {
@@ -2373,6 +2415,50 @@ int predfit_import_load_dir(AppState *s) {
     return imported;
 }
 
+/* The catalogue SPCAT wrote for one Hamiltonian, addressed by that model's own
+   name instead of by whichever model happens to be active - work_file() always
+   answers for the active one. */
+static void hamiltonian_cat_path(const PredFitState *p, int h, char *out, size_t size) {
+    char stem[128];
+    name_file_stem(p->hamiltonian[h].name, p->hamiltonian[h].id, stem, sizeof(stem));
+    snprintf(out, size, "%s/%s.cat", p->work_dir, stem);
+}
+
+/* A session written before the plot was recorded: take the Simulation page's
+   own answer to "which Hamiltonians are drawn" - the checkboxes, which those
+   sessions do store - so an old project still reopens with everything it was
+   simulating.  A project with a single checked model is unaffected. */
+static void adopt_checked_hamiltonians_as_plot(AppState *s) {
+    PredFitState *p = &s->predfit;
+    p->n_simulated = 0;
+    for (int h = 0; h < p->n_hamiltonians && p->n_simulated < MAX_PICKETT_HAMILTONIANS; h++) {
+        if (p->hamiltonian[h].simulate_excluded) continue;
+        SimulatedCatalog *c = &p->simulated[p->n_simulated++];
+        memset(c, 0, sizeof(*c));
+        c->hamiltonian_id = p->hamiltonian[h].id;
+        c->cat_temp_k = p->hamiltonian[h].model.temp_k;
+    }
+}
+
+/* Give back the catalogue file of every model the session left in the plot and
+   drop those whose file is gone.  Returns how many are ready to be merged. */
+static int reattach_simulated_catalogs(AppState *s) {
+    PredFitState *p = &s->predfit;
+    int kept = 0;
+    for (int i = 0; i < p->n_simulated; i++) {
+        int h = hamiltonian_index_by_id(p, p->simulated[i].hamiltonian_id);
+        if (h < 0) continue;
+        SimulatedCatalog c = p->simulated[i];
+        hamiltonian_cat_path(p, h, c.cat_path, sizeof(c.cat_path));
+        FILE *f = fopen(c.cat_path, "r");
+        if (!f) continue;
+        fclose(f);
+        p->simulated[kept++] = c;
+    }
+    p->n_simulated = kept;
+    return kept;
+}
+
 int predfit_restore_latest(AppState *s) {
     PredFitState *p=&s->predfit;
     SessionRestoreInfo restore_info;
@@ -2388,7 +2474,14 @@ int predfit_restore_latest(AppState *s) {
     import_int_settings(p, restore_info.has_int_settings);
     int ignored_exclusions = 0;
     int marked = import_fit_lines(s, &ignored_exclusions);
-    app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
+    /* Reopen the plot the user left, not just the model they were editing: a
+       session that held several simulated Hamiltonians comes back with all of
+       them, so their sticks and their per-state broadened traces are there. */
+    if (!restore_info.has_plot_record) adopt_checked_hamiltonians_as_plot(s);
+    if (reattach_simulated_catalogs(s) > 0)
+        app_enqueue_pending_load(s, PENDING_LOAD_SIMULATION, p->simulated[0].cat_path, 1);
+    else
+        app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
     /* Reapply Tcat -> per-species Tred/concentration after main loads CAT. */
     p->generated_catalog_pending=1;
     p->generated_catalog_active=1;

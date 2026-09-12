@@ -3,6 +3,10 @@
 
 #include "types.h"
 
+/* Every Pickett file of a project - catalogues, .par/.var/.lin and the session
+   itself - lives in this folder inside the data directory. */
+#define FIT_DIR_NAME ".fit"
+
 void predfit_init(AppState *state);
 void predfit_refresh_work_dir(AppState *state);
 /* Project-level Hamiltonian selection.  The current editor continues to use

@@ -210,6 +210,24 @@ static void free_dataset(AppState *state) {
     state->data_loaded = 0;
 }
 
+/* Point the workspace at the session the user named.  The session file lives
+   in the .fit of its own project, and that folder is where the catalogues and
+   the Pickett files it refers to are: opening one from elsewhere has to move
+   the data directory with it, or the restore would read another project. */
+static void adopt_session_data_dir(AppState *state, const char *session_path) {
+    char dir[600];
+    snprintf(dir, sizeof(dir), "%s", session_path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) return;              /* "spectravisual.state": already in .fit */
+    *slash = '\0';                   /* .../<data dir>/.fit                    */
+    slash = strrchr(dir, '/');
+    const char *leaf = slash ? slash + 1 : dir;
+    if (strcmp(leaf, FIT_DIR_NAME) != 0) return;   /* not a .fit: leave settings alone */
+    if (slash) *slash = '\0';
+    else dir[0] = '\0';              /* ".fit/spectravisual.state" = here      */
+    snprintf(state->settings.data_dir, sizeof(state->settings.data_dir), "%s", dir);
+}
+
 /* Open the state file as a session, not as a two-column trace.  A dropped
    spectravisual.state intentionally replaces the active working set, just as
    opening a project file would in a conventional program. */
@@ -574,23 +592,27 @@ int main(int argc, char *argv[])
     const char *spec_args[MAX_SPECTRA];
     int n_spec_args = 0;
     const char *pred_arg = NULL;
+    const char *session_arg = NULL;
     for (int k = argi; k < argc; k++) {
         int len = (int)strlen(argv[k]);
         const char *base = strrchr(argv[k], '/');
         base = base ? base + 1 : argv[k];
-        /* The default state is a project/session file.  Session restoration
-           below already opens its experimental spectrum(s), so never pass it
-           to the generic two-column spectrum reader. */
-        if (strcmp(base, "spectravisual.state") == 0) continue;
+        /* A session file is a project, not a two-column trace: it is opened
+           below, the way dropping it on the window opens it. */
+        if (strcmp(base, "spectravisual.state") == 0) { session_arg = argv[k]; continue; }
         if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 
     /* Startup is deliberately a blank workspace. A prior session is restored
-       only through the explicit Open/Drop session action, never merely because
-       a .fit directory happens to be beside the executable. */
+       only when the user names one, never merely because a .fit directory
+       happens to be beside the executable. */
     settings_init(&state, argv[0]);
     settings_apply_defaults(&state);
+    /* A session names the workspace it belongs to: everything Pred&Fit reads
+       back - the catalogues, the Pickett files - lives in the .fit beside it,
+       which is not necessarily the configured data directory. */
+    if (session_arg) adopt_session_data_dir(&state, session_arg);
     predfit_refresh_work_dir(&state);
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
@@ -619,10 +641,15 @@ int main(int argc, char *argv[])
     if (!plotgpu_init(ren)) fprintf(stderr, "Plot renderer unavailable; spectra will not be drawn.\n");
     TTF_Font *font = ui_font(UI_FONT_SANS);
 
-    if (pred_arg) set_predictions(&state, pred_arg);
+    /* The session comes first: it replaces the working set, so anything else
+       named on the command line is opened on top of what it restored.  Its own
+       catalogue is queued, so a .cat given here supersedes it - naming both
+       means "this session, but that prediction". */
+    if (session_arg) reopen_predfit_session(&state);
+    if (pred_arg) app_enqueue_pending_load(&state, PENDING_LOAD_CATALOG, pred_arg, 0);
     for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
-    /* Command-line files are a fresh task. They never cause a hidden session
-       restore or overwrite an existing Pred&Fit session with defaults. */
+    /* Command-line files other than a session are a fresh task: they never
+       cause a hidden restore or overwrite an existing Pred&Fit session. */
     
     int running = 1;
     Layout layout;
