@@ -1911,6 +1911,23 @@ static void lin_row_states(const LinRow *row, int upper[6], int lower[6]) {
     }
 }
 
+/* A .lin row as the transition it stands for.  The two layouts are not the
+   same and must never be compared field by field: a .lin packs the quantum
+   numbers of the two states one after the other, NQN of each, while a
+   PredLine - and every key derived from one - keeps six fixed slots per
+   state and pads the unused ones with zero. */
+static void lin_row_pred(const LinRow *row, PredLine *q) {
+    int u[6], l[6];
+    lin_row_states(row, u, l);
+    memset(q, 0, sizeof(*q));
+    q->Ju = u[0]; q->Kau = u[1]; q->Kcu = u[2];
+    q->M1u = u[3]; q->M2u = u[4]; q->M3u = u[5];
+    q->Jl = l[0]; q->Kal = l[1]; q->Kcl = l[2];
+    q->M1l = l[3]; q->M2l = l[4]; q->M3l = l[5];
+    q->n_qn = row->nq;
+    set_branch_and_dipole(q);
+}
+
 /* Returns the number of assignments marked for reassignment because their
    .lin row has fewer than three QN per state. */
 static int import_fit_lines(AppState *s, int *ignored_exclusions) {
@@ -1979,14 +1996,7 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
         LinRow *row = &g_lin_rows[k];
         Assignment *a = &s->assignments[s->n_assignments++];
         memset(a, 0, sizeof(*a));
-        int u[6], l[6];
-        lin_row_states(row, u, l);
-        a->pred.Ju = u[0]; a->pred.Kau = u[1]; a->pred.Kcu = u[2];
-        a->pred.M1u = u[3]; a->pred.M2u = u[4]; a->pred.M3u = u[5];
-        a->pred.Jl = l[0]; a->pred.Kal = l[1]; a->pred.Kcl = l[2];
-        a->pred.M1l = l[3]; a->pred.M2l = l[4]; a->pred.M3l = l[5];
-        a->pred.n_qn = row->nq;
-        set_branch_and_dipole(&a->pred);
+        lin_row_pred(row, &a->pred);
         a->exp_freq = row->freq;
         a->fit_enabled = legacy_exclusions ? row->enabled : 1;
         a->hamiltonian_id = predfit_active_hamiltonian_id(s);
@@ -2213,15 +2223,7 @@ static int import_load_lines(AppState *s, const char *path, int *marked, int *al
     for (int k = 0; k < n_rows && s->n_assignments < MAX_ASSIGNMENTS; k++) {
         LinRow *row = &g_lin_rows[k];
         PredLine qn;
-        memset(&qn, 0, sizeof(qn));
-        int u[6], l[6];
-        lin_row_states(row, u, l);
-        qn.Ju = u[0]; qn.Kau = u[1]; qn.Kcu = u[2];
-        qn.M1u = u[3]; qn.M2u = u[4]; qn.M3u = u[5];
-        qn.Jl = l[0]; qn.Kal = l[1]; qn.Kcl = l[2];
-        qn.M1l = l[3]; qn.M2l = l[4]; qn.M3l = l[5];
-        qn.n_qn = row->nq;
-        set_branch_and_dipole(&qn);
+        lin_row_pred(row, &qn);
         if (assignment_already_present(s, owner, &qn, row->freq)) {
             if (already) (*already)++;
             continue;
@@ -3094,7 +3096,8 @@ typedef enum {
     FIT_ROW_NOT_USED,
     FIT_ROW_STALE,
     FIT_ROW_NOT_READ,
-    FIT_ROW_NOT_FITTED
+    FIT_ROW_NOT_FITTED,
+    FIT_ROW_OTHER_MODEL   /* owned by a Hamiltonian this report is not about */
 } FitRowState;
 
 static FitReport g_report;
@@ -3193,8 +3196,9 @@ static void report_refresh(const PredFitState *p) {
        assignment cannot make the fitting view show another row's residual. */
     int n_lin = read_lin_rows(p);
     for (int i = 0; i < n_lin; i++) {
-        g_report.obs_key[i].n_qn = g_lin_rows[i].nq;
-        memcpy(g_report.obs_key[i].qn, g_lin_rows[i].qn, sizeof(g_report.obs_key[i].qn));
+        PredLine q;
+        lin_row_pred(&g_lin_rows[i], &q);
+        exclusion_key_from_pred(&g_report.obs_key[i], &q);
         g_report.obs_key_valid[i] = 1;
     }
 }
@@ -3219,6 +3223,19 @@ static FitRowState fitting_row_state(const Assignment *a, int row) {
     if (observation_is_current(a, o)) return o.used ? FIT_ROW_USED : FIT_ROW_NOT_USED;
     if (o.found) return FIT_ROW_STALE;
     return g_report.loaded ? FIT_ROW_NOT_READ : FIT_ROW_NOT_FITTED;
+}
+
+/* Where one assignment stands in the SPFIT report now in memory, and the
+   observation to show beside it.  SPFIT fitted one Hamiltonian, and the
+   conformers of one molecule share their quantum numbers, so a line of
+   another model is never looked up here: it would be shown somebody else's
+   residual. */
+static FitRowState fitting_row(const AppState *s, const Assignment *a, FitObservation *out) {
+    if (out) *out = (FitObservation){0, 0, 0, 0, 0, 0};
+    if (!assignment_belongs_to_active_hamiltonian(s, a)) return FIT_ROW_OTHER_MODEL;
+    int row = report_line_for_assignment(a);
+    if (out && row >= 0) *out = report_observation(row + 1);
+    return fitting_row_state(a, row);
 }
 
 /* The assignment editor is the owner of the measured frequency.  A .fit file
@@ -4223,9 +4240,8 @@ void predfit_render_advanced(AppState *s) {
             int actual = p->advanced_line_scroll + i;
             int y = u.rows.y + i * u.row_h;
             Assignment *a = &s->assignments[actual];
-            int report_line = report_line_for_assignment(a);
-            FitObservation o = report_line >= 0 ? report_observation(report_line + 1) : (FitObservation){0};
-            FitRowState state = fitting_row_state(a, report_line);
+            FitObservation o;
+            FitRowState state = fitting_row(s, a, &o);
             SDL_Rect row = {u.rows.x, y, u.rows.w, u.row_h - 2};
             if (actual == p->advanced_hover_line) ui_fill(r, row, UI_RAISED);
             else if (i % 2)                       ui_fill(r, row, UI_PANEL);
@@ -4239,7 +4255,7 @@ void predfit_render_advanced(AppState *s) {
                 ui_fill(r, (SDL_Rect){u.rows.x, y, 3, u.row_h - 2}, c);
             } else if (state == FIT_ROW_REJECTED) {
                 c = UI_DANGER_TEXT;
-            } else if (state == FIT_ROW_NOT_READ) {
+            } else if (state == FIT_ROW_NOT_READ || state == FIT_ROW_OTHER_MODEL) {
                 c = UI_DIM;
             } else if (a->fit_enabled) {
                 c = UI_TEXT;
@@ -4275,6 +4291,11 @@ void predfit_render_advanced(AppState *s) {
                 ui_text(r, UI_FONT_MONO_SM, "reassigned — run Fit", adv_col(u.table, 0.47), ty, UI_ACCENT_TEXT);
             } else if (state == FIT_ROW_NOT_READ) {
                 ui_text(r, UI_FONT_MONO_SM, "not read by SPFIT", adv_col(u.table, 0.47), ty, UI_DIM);
+            } else if (state == FIT_ROW_OTHER_MODEL) {
+                int owner = hamiltonian_index_by_id(p, a->hamiltonian_id);
+                snprintf(b, sizeof(b), "belongs to %s",
+                         owner >= 0 ? p->hamiltonian[owner].name : "another Hamiltonian");
+                ui_text(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.47), ty, UI_FAINT);
             } else {
                 ui_text(r, UI_FONT_MONO_SM, "not fitted yet", adv_col(u.table, 0.47), ty, UI_FAINT);
             }

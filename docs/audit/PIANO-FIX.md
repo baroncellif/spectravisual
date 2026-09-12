@@ -145,6 +145,7 @@ e il salvataggio della sessione un'azione esplicita.
 | #27 | Simulazione: più Hamiltoniani e più dipoli in un solo plot | richiesta utente 2026-09-12 | alto: finora si poteva vedere un Hamiltoniano alla volta | fatto `HEAD` |
 | #28 | Fit di un modello importato senza passi intermedi | segnalazione utente 2026-09-12 | alto: il fit di un `.lin` importato era bloccato | fatto `HEAD` |
 | #30 | Import idempotente e colonna PREDICTED degli import | segnalazione utente 2026-09-12 (stesso problema dopo #28) | alto: righe duplicate e predizioni vuote su tutti i modelli importati | fatto `HEAD` |
+| #31 | La schermata Fitting rilegge il report di SPFIT | segnalazione utente 2026-09-12 | alto: dopo un fit riuscito ogni riga diceva «not read by SPFIT» | fatto `HEAD` |
 | #29 | Sottotracce del broadening, una per specie, con colore | richiesta utente 2026-09-12 | medio: si vede il contributo di ogni specie alla somma | fatto `HEAD` |
 
 Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
@@ -1250,6 +1251,45 @@ Copertura dei problemi segnalati: **P0.1** → #5; **P0.2** → #1, #4, #6;
 - **Test che passano**: `test_import_twice_keeps_one_copy`,
   `test_import_reads_predictions_from_the_catalog`, oltre a
   `test_import_load_dir_builds_hamiltonians` invariato.
+- **Stato**: ☑ fatto il 2026-09-12.
+
+### #31 — Fitting: le righe rileggono il report di SPFIT
+
+- **Bug/issue**: precisazione dell'utente il 2026-09-12 — «il fitting va, è la
+  lista della schermata Fitting che dopo aver fittato non rilegge i dati e dice
+  *not read by SPFIT*». Riprodotto sui suoi 5 modelli: dopo un fit riuscito
+  (RMS 0,011 MHz, 134 righe lette da SPFIT) **tutte** le 621 righe restavano
+  `NOT_READ`.
+- **Causa**: `report_refresh` legava le righe del report alle transizioni
+  copiando *alla lettera* l'array di un `LinRow`
+  (`memcpy(obs_key[i].qn, g_lin_rows[i].qn, ...)`), ma i due layout non sono lo
+  stesso: un `.lin` impacchetta i numeri quantici dei due stati uno dopo
+  l'altro, NQN per stato (`4 1 4 3 1 3 0 0 0 0 0 0`), mentre ogni chiave
+  dell'app tiene sei slot fissi per stato (`4 1 4 0 0 0 3 1 3 0 0 0`). Il
+  `memcmp` in `exclusion_key_matches` non poteva coincidere con meno di 6 QN
+  per stato, cioè sempre, e la riga cadeva su «non presente nel report».
+  Regressione introdotta in `5986dc6` (Fix #8, 2026-09-11), che ha aggiunto il
+  legame per identità.
+- **Cosa è stato fatto** ([predfit.c](../../predfit.c)):
+  - `lin_row_pred` — un solo posto converte una riga `.lin` nella transizione
+    che rappresenta; `report_refresh` costruisce ora la chiave con
+    `exclusion_key_from_pred` come tutti gli altri. Le altre due copie
+    dell'unpacking (`import_fit_lines`, `import_load_lines`) usano lo stesso
+    helper: la duplicazione era esattamente l'origine del bug;
+  - `fitting_row` — la decisione della riga (stato + osservazione) sta in una
+    funzione sola, testabile, e non nel disegno. Un report di SPFIT descrive
+    **un** Hamiltoniano: le righe di un altro modello non ci vengono più
+    cercate dentro, altrimenti — e i conformeri condividono i numeri quantici
+    — mostrerebbero il residuo di qualcun altro. Ora dicono «belongs to
+    *nome*», stato `FIT_ROW_OTHER_MODEL`.
+- **Verifica sui file dell'utente**: import dei 5 modelli + Fit su `G-G+ttt` →
+  134 righe `USED` con residuo e colore (prima: 0), 30 escluse, 487 marcate
+  come appartenenti agli altri quattro modelli; nessuna riga `NOT_READ`,
+  nessuna `STALE` fasulla (erano 260 righe di altri modelli che agganciavano
+  la riga di report di questo).
+- **Test che passano**: `test_fitting_view_reads_the_report_back`,
+  `test_fitting_view_ignores_another_model` (verificati falliti sul codice
+  precedente e passati su quello corretto).
 - **Stato**: ☑ fatto il 2026-09-12.
 
 ## Dopo i fix (facoltativo)

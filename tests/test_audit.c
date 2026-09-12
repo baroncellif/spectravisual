@@ -1572,6 +1572,87 @@ static void write_load_model(const char *stem, int with_cat) {
     fclose(fp);
 }
 
+/* One assignment of the active Hamiltonian, three QNs per state. */
+static Assignment *add_line(AppState *s, int ju, int kau, int kcu,
+                            int jl, int kal, int kcl, double obs) {
+    Assignment *a = &s->assignments[s->n_assignments++];
+    memset(a, 0, sizeof(*a));
+    a->pred.Ju = ju; a->pred.Kau = kau; a->pred.Kcu = kcu;
+    a->pred.Jl = jl; a->pred.Kal = kal; a->pred.Kcl = kcl;
+    a->pred.n_qn = 3;
+    a->exp_freq = obs;
+    a->fit_enabled = 1;
+    a->hamiltonian_id = predfit_active_hamiltonian_id(s);
+    return a;
+}
+
+/* The .lin SPFIT read and the report it wrote, in the working directory of
+   the active Hamiltonian: the two files the fitting view is made of. */
+static void write_fit_record(const char *stem, int ju, int kau, int kcu,
+                             int jl, int kal, int kcl, double obs, double calc) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/.fit/%s.lin", g_work, stem);
+    FILE *fp = fopen(path, "w");
+    if (fp) {
+        fprintf(fp, "%3d%3d%3d%3d%3d%3d%18s%15.6f %10.6f 1.0\n",
+                ju, kau, kcu, jl, kal, kcl, "", obs, 0.01);
+        fclose(fp);
+    }
+    snprintf(path, sizeof(path), "%s/.fit/%s.fit", g_work, stem);
+    fp = fopen(path, "w");
+    if (!fp) return;
+    /* SPFIT writes the quantum numbers in a 12I3 field, then EXP.FREQ,
+       CALC.FREQ, DIFF and ERROR. */
+    fprintf(fp, "    1:%3d%3d%3d%3d%3d%3d%18s%13.5f%13.5f%11.5f%11.5f\n",
+            ju, kau, kcu, jl, kal, kcl, "", obs, calc, obs - calc, 0.01);
+    fclose(fp);
+}
+
+/* H-18: after a fit the fitting view must read the report back.  A .lin packs
+   the QNs of the two states one after the other while every key in the app
+   keeps six slots per state, so binding the report rows to the raw .lin array
+   matched nothing below six QNs per state and every line of a successful fit
+   read "not read by SPFIT". */
+static int test_fitting_view_reads_the_report_back(void) {
+    AppState *s = new_state();
+    mkdir(work_path(".fit"), 0700);
+    Assignment *a = add_line(s, 4, 1, 4, 3, 1, 3, 2511.33750);
+    write_fit_record("model", 4, 1, 4, 3, 1, 3, 2511.33750, 2511.33180);
+
+    report_invalidate();
+    report_refresh(&s->predfit);
+    CHECK_INT("report letto", g_report.loaded, 1);
+    CHECK_INT("osservazioni nel report", g_report.n_obs, 1);
+    CHECK_INT("riga del report per l'assignment", report_line_for_assignment(a), 0);
+
+    FitObservation o;
+    CHECK_INT("stato della riga", (int)fitting_row(s, a, &o), (int)FIT_ROW_USED);
+    CHECK_INT("osservazione trovata", o.found, 1);
+    CHECK_DBL("frequenza calcolata", o.calc, 2511.33180, 1e-5);
+    CHECK_DBL("OBS-CALC", o.diff, 0.00570, 1e-5);
+    DONE();
+}
+
+/* H-19: the report describes the Hamiltonian that was fitted.  Conformers
+   share their quantum numbers, so a line owned by another model must not be
+   looked up in it - with or without a matching frequency. */
+static int test_fitting_view_ignores_another_model(void) {
+    AppState *s = new_state();
+    mkdir(work_path(".fit"), 0700);
+    Assignment *mine = add_line(s, 4, 1, 4, 3, 1, 3, 2511.33750);
+    Assignment *other = add_line(s, 4, 1, 4, 3, 1, 3, 2511.33750);
+    other->hamiltonian_id = predfit_active_hamiltonian_id(s) + 1;
+    write_fit_record("model", 4, 1, 4, 3, 1, 3, 2511.33750, 2511.33180);
+
+    report_invalidate();
+    report_refresh(&s->predfit);
+    FitObservation o;
+    CHECK_INT("la riga dell'H attivo", (int)fitting_row(s, mine, &o), (int)FIT_ROW_USED);
+    CHECK_INT("la riga di un altro modello", (int)fitting_row(s, other, &o), (int)FIT_ROW_OTHER_MODEL);
+    CHECK_INT("nessun residuo prestato", o.found, 0);
+    DONE();
+}
+
 /* H-16: Import is idempotent.  Pressing it twice - or pressing it once in an
    app that already read assignments.txt at startup - must leave one copy of
    each model and one copy of each of its lines, not two. */
@@ -2809,6 +2890,8 @@ static const Test TESTS[] = {
     {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
     {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
+    {"test_fitting_view_reads_the_report_back", test_fitting_view_reads_the_report_back},
+    {"test_fitting_view_ignores_another_model", test_fitting_view_ignores_another_model},
     {"test_import_twice_keeps_one_copy", test_import_twice_keeps_one_copy},
     {"test_import_reads_predictions_from_the_catalog", test_import_reads_predictions_from_the_catalog},
     {"test_simulation_plots_every_checked_hamiltonian", test_simulation_plots_every_checked_hamiltonian},
