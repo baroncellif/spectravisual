@@ -1201,6 +1201,32 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
     DONE();
 }
 
+/* XIAM prints the intensity that its SPCAT-compatible calculation produced,
+ * but its .xo records do not carry the CAT lower-energy fields needed for
+ * extrapolating it in T.  The generic intensity layer must therefore retain
+ * that number, while still allowing a fitted concentration/scale. */
+static int test_xiam_native_intensity_scale(void) {
+    PredLine line;
+    memset(&line, 0, sizeof(line));
+    line.backend = PRED_BACKEND_XIAM;
+    line.intensity_native = 1;
+    line.cat_lgint = -5.0756;
+    line.n_qn = 6;
+    line.M1l = 1;
+    PickettSpecies species;
+    memset(&species, 0, sizeof(species));
+    species.state_index = -1;  /* one XIAM .xi model, not a Pickett state */
+    species.concentration = 0.25;
+    double max_int = 0.0;
+    rescale_predicted_intensities_by_species(&line, 1, 2.0, 300.0,
+                                             &species, 1, &max_int);
+    CHECK_DBL("XIAM nativa non viene estrapolata in temperatura", line.linear_int,
+              pow(10.0, -5.0756) * 0.25, 1e-15);
+    CHECK_DBL("scala XIAM riflessa in lgint", line.lgint, -5.0756 + log10(0.25), 1e-12);
+    CHECK_DBL("massimo intensita XIAM nativa", max_int, line.linear_int, 1e-18);
+    DONE();
+}
+
 /* The exact v0.44 binary is an optional local integration check.  CI and
  * other machines run the parser fixture above; the maintainer can enable this
  * one without hard-coding a personal XIAM installation into the test suite. */
@@ -3411,6 +3437,7 @@ static const Test TESTS[] = {
     {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
     {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
     {"test_xiam_native_prediction_and_assignment_roundtrip", test_xiam_native_prediction_and_assignment_roundtrip},
+    {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},

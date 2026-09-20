@@ -173,6 +173,14 @@ static void initialise_from_predfit(AppState *s) {
     w->fmin_mhz = s->n_pts ? s->current_pts[0].x : 0.0;
     w->fmax_mhz = s->n_pts ? s->current_pts[s->n_pts - 1].x : 0.0;
     w->n_species = collect_predfit_species(s, w->species, MAX_INTFIT_SPECIES);
+    for (int i = 0; i < w->n_species; i++) if (w->species[i].hamiltonian_id == s->xiam.model_id &&
+                                                 w->species[i].state_index == -1) {
+        /* Native .xo lines supply the SPCAT intensity but not the CAT lower
+           energy/DR fields needed for a safe temperature extrapolation. */
+        w->fit_temperature = 0;
+        snprintf(w->message, sizeof(w->message), "XIAM native SPCAT intensities: concentration/scale only; Trot is held at the prediction value.");
+        break;
+    }
     w->initialized = 1;
 }
 
@@ -1146,7 +1154,7 @@ void intensity_analysis_open(AppState *s) {
 static Layout g_preview_layout;
 
 static int preview_species_for_line(const IntensityFitWindow *w, const PredLine *p) {
-    int state = p->n_qn >= 4 ? p->M1l : 0;
+    int state = p->backend == PRED_BACKEND_XIAM ? -1 : p->n_qn >= 4 ? p->M1l : 0;
     for (int i = 0; i < w->n_species; i++)
         if (w->species[i].hamiltonian_id == p->hamiltonian_id && w->species[i].state_index == state)
             return i;
@@ -1663,7 +1671,15 @@ int intensity_analysis_handle_event(AppState *s, const SDL_Event *e) {
     int x = e->button.x, y = e->button.y;
     if (w->edit_field) commit_edit(w);
     if (point_in_rect(x,y,if_button(18,52,104))) { w->fit_concentration = !w->fit_concentration; return 1; }
-    if (point_in_rect(x,y,if_button(128,52,104))) { w->fit_temperature = !w->fit_temperature; return 1; }
+    if (point_in_rect(x,y,if_button(128,52,104))) {
+        for (int i = 0; i < w->n_species; i++) if (w->species[i].hamiltonian_id == s->xiam.model_id &&
+                                                     w->species[i].state_index == -1) {
+            w->fit_temperature = 0;
+            snprintf(w->message,sizeof(w->message),"XIAM native SPCAT intensities have no CAT thermal fields; Trot fitting is disabled.");
+            return 1;
+        }
+        w->fit_temperature = !w->fit_temperature; return 1;
+    }
     if (point_in_rect(x,y,if_button(238,52,104))) { w->fit_dipoles = !w->fit_dipoles; return 1; }
     if (point_in_rect(x,y,if_button(348,52,104))) { w->common_temperature = !w->common_temperature; return 1; }
     for (int i=0;i<3;i++) {

@@ -429,6 +429,15 @@ static void rescale_line_by_species(PredLine *p, double cat_temp_k, double rot_t
     if (p->intensity_native) {
         p->lgint = p->cat_lgint;
         p->linear_int = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+        if (species) {
+            int state = p->n_qn >= 4 ? p->M1l : 0;
+            for (int i = 0; i < n_species; i++)
+                if (species[i].state_index == state || species[i].state_index == -1) {
+                    p->linear_int *= species[i].concentration;
+                    break;
+                }
+        }
+        p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
         return;
     }
     const double c2 = 1.438776877;
