@@ -507,18 +507,24 @@ static int xiam_run(AppState *s, int fitting) {
     return 1;
 }
 
-static void xiam_parse_fit_parameters(XiamState *x, const char *path) {
-    FILE *fp = fopen(path, "rb"); if (!fp) return;
-    char line[1024]; int in = 0;
+static int xiam_parse_fit_parameters(XiamState *x, const char *path) {
+    FILE *fp = fopen(path, "rb"); if (!fp) return 0;
+    char line[1024]; int in = 0, values_are_errors = 0, updated = 0;
     while (fgets(line,sizeof(line),fp)) {
-        if (strstr(line,"Parameters") && strstr(line,"Errors")) { in = 1; continue; }
+        /* v0.44 writes each iteration as “Parameters Change”, then closes
+           with “Parameters and Errors”.  Both contain the fitted value; only
+           the latter's braced number is an uncertainty rather than a step. */
+        if (strstr(line,"Parameters") && strstr(line,"Errors")) { in = 1; values_are_errors = 1; continue; }
+        if (strstr(line,"Parameters") && strstr(line,"Change")) { in = 1; values_are_errors = 0; continue; }
         if (!in) continue;
         char name[64]="", value[128]="", error[128]="";
         if (sscanf(line," %63s %127s { %127[^}]",name,value,error) < 3) continue;
         int pi = xiam_find_parameter(x,name); if (pi < 0) continue;
-        x->params[pi].value_ghz = xiam_number(value,NULL); x->params[pi].error_ghz = xiam_number(error,NULL);
+        x->params[pi].value_ghz = xiam_number(value,NULL);
+        if (values_are_errors) x->params[pi].error_ghz = xiam_number(error,NULL);
+        updated++;
     }
-    fclose(fp); xiam_update_axis_convention(x);
+    fclose(fp); xiam_update_axis_convention(x); return updated;
 }
 
 void xiam_init(AppState *s) { if (!s) return; s->xiam.edit_param = XIAM_EDIT_NONE; }
@@ -553,7 +559,17 @@ int xiam_load_input_file(AppState *s, const char *path) {
 int xiam_load_output_file(AppState *s, const char *path) {
     PredLine *rows=NULL; int n=0; double lo=0,hi=0,top=0;
     int model_id = s && s->xiam.loaded ? s->xiam.model_id : xiam_model_id_from_path(path);
-    if (!s || !path || !xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) { if(s) snprintf(s->xiam.status,sizeof(s->xiam.status),"No readable native XIAM prediction records in %s.",path?path:"output"); return 0; }
+    if (!s || !path) return 0;
+    int fit_parameters = s->xiam.loaded ? xiam_parse_fit_parameters(&s->xiam,path) : 0;
+    if (!xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) {
+        if (fit_parameters) {
+            snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path);
+            snprintf(s->xiam.status,sizeof(s->xiam.status),"Loaded %d fitted XIAM parameters; this .xo contains no native prediction list.",fit_parameters);
+            return 1;
+        }
+        snprintf(s->xiam.status,sizeof(s->xiam.status),"No readable native XIAM prediction records in %s.",path);
+        return 0;
+    }
     xiam_adopt_prediction(s,rows,n,lo,hi,top,path); snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path); if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s); return 1;
 }
 

@@ -1243,6 +1243,23 @@ static int test_xiam_native_intensity_scale(void) {
     DONE();
 }
 
+/* Fit reports produced with ints=1 normally contain no stick list.  Their
+ * last “Parameters Change” iteration and final uncertainty summary still
+ * need to update the editable XIAM model in MHz-facing UI units. */
+static int test_xiam_fit_report_updates_parameters(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "input XIAM fit letto");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xo"), "report XIAM fit letto senza catalogo");
+    int bj = -1;
+    for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "BJ")) { bj = i; break; }
+    CHECK(bj >= 0, "BJ presente nel modello XIAM");
+    if (bj >= 0) {
+        CHECK_DBL("ultimo BJ convergente letto", s->xiam.params[bj].value_ghz, 0.215066122, 1e-10);
+        CHECK_DBL("errore finale BJ letto", s->xiam.params[bj].error_ghz, 0.000000171, 1e-12);
+    }
+    DONE();
+}
+
 /* The exact v0.44 binary is an optional local integration check.  CI and
  * other machines run the parser fixture above; the maintainer can enable this
  * one without hard-coding a personal XIAM installation into the test suite. */
@@ -3454,6 +3471,7 @@ static const Test TESTS[] = {
     {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
     {"test_xiam_native_prediction_and_assignment_roundtrip", test_xiam_native_prediction_and_assignment_roundtrip},
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
+    {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
