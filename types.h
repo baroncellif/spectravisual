@@ -420,6 +420,7 @@ typedef struct {
     XiamParameter params[MAX_XIAM_PARAMS];
     int n_params;
     int spin, spin2;
+    int model_id;              /* stable negative owner, derived from the .xi path */
     int max_j;
     double fmin_mhz, fmax_mhz;
     double temperature_k;

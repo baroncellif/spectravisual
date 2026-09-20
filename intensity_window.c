@@ -129,11 +129,12 @@ static int collect_predfit_species(const AppState *s, IntensityFitSpecies *out, 
        analysis so concentration/scale work remains available. */
     int have_xiam = 0;
     for (int i = 0; i < s->n_assignments; i++)
-        if (s->assignments[i].pred.backend == PRED_BACKEND_XIAM) { have_xiam = 1; break; }
+        if (s->assignments[i].pred.backend == PRED_BACKEND_XIAM &&
+            s->assignments[i].hamiltonian_id == s->xiam.model_id) { have_xiam = 1; break; }
     if (have_xiam && n < cap) {
         IntensityFitSpecies *dst = &out[n++];
         memset(dst, 0, sizeof(*dst));
-        dst->hamiltonian_id = -1; dst->state_index = -1;
+        dst->hamiltonian_id = s->xiam.model_id; dst->state_index = -1;
         snprintf(dst->name, sizeof(dst->name), "XIAM");
         snprintf(dst->backend_name, sizeof(dst->backend_name), "XIAM");
         dst->included = 1; dst->temperature_group = 1; dst->concentration = 1.0;
@@ -215,7 +216,7 @@ static int extract_observation(const AppState *s, double center, int mode, doubl
 static int find_species(const IntensityFitWindow *w, const Assignment *a) {
     if (a->pred.backend == PRED_BACKEND_XIAM) {
         for (int i = 0; i < w->n_species; i++)
-            if (w->species[i].hamiltonian_id == -1 && w->species[i].state_index == -1) return i;
+            if (w->species[i].hamiltonian_id == a->hamiltonian_id && w->species[i].state_index == -1) return i;
         return -1;
     }
     int state = a->pred.n_qn >= 4 ? a->pred.M1l : 0;

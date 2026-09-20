@@ -101,6 +101,37 @@ static double xiam_source_value(const XiamParameter *p, double shown) {
     return shown * (p->is_quadrupole ? 2.0 : 1.0) / 1000.0;
 }
 
+/* XIAM's x/y/z are principal inertial axes, not immutable A/B/C labels.
+ * Present the physical alias beside the native keyword but always write the
+ * native keyword back to the .xi file.  This avoids the particularly easy
+ * mistake of copying prolate quadrupole components into an oblate model. */
+static void xiam_parameter_label(const XiamState *x, const XiamParameter *p, char *out, size_t size) {
+    const char *alias = NULL;
+    char low[64]; xiam_lower(low, sizeof(low), p->name);
+    if (x->axis_convention == 1) { /* x/y/z = b/c/a */
+        if (!strncmp(low, "mu_x", 4)) alias = "mu_b";
+        else if (!strncmp(low, "mu_y", 4)) alias = "mu_c";
+        else if (!strncmp(low, "mu_z", 4)) alias = "mu_a";
+        else if (strstr(low, "_z")) alias = "aa";
+        else if (strstr(low, "_-") || strstr(low, "_minus")) alias = "bb-cc";
+        else if (strstr(low, "_xy")) alias = "bc";
+        else if (strstr(low, "_xz")) alias = "ab";
+        else if (strstr(low, "_yz")) alias = "ac";
+    } else if (x->axis_convention == 2) { /* x/y/z = a/b/c */
+        if (!strncmp(low, "mu_x", 4)) alias = "mu_a";
+        else if (!strncmp(low, "mu_y", 4)) alias = "mu_b";
+        else if (!strncmp(low, "mu_z", 4)) alias = "mu_c";
+        else if (strstr(low, "_z")) alias = "cc";
+        else if (strstr(low, "_-") || strstr(low, "_minus")) alias = "aa-bb";
+        else if (strstr(low, "_xy")) alias = "ab";
+        else if (strstr(low, "_xz")) alias = "ac";
+        else if (strstr(low, "_yz")) alias = "bc";
+    }
+    if (alias && (p->is_quadrupole || !strncmp(low, "mu_", 3)))
+        snprintf(out, size, "%s  -> %s", p->name, alias);
+    else snprintf(out, size, "%s", p->name);
+}
+
 static int xiam_known_control(const char *name) {
     static const char *keys[] = {
         "ncyc", "nzyk", "ncycl", "ints", "ntop", "print", "reduc", "freq", "freq_l", "freq_h",
@@ -115,6 +146,17 @@ static int xiam_known_control(const char *name) {
 static int xiam_find_parameter(const XiamState *x, const char *name) {
     for (int i = 0; x && i < x->n_params; i++) if (xiam_equal(x->params[i].name, name)) return i;
     return -1;
+}
+
+/* Pickett owns positive Hamiltonian ids.  A stable negative id means a saved
+ * XIAM assignment returns to its own .xi model, rather than becoming part of
+ * whatever XIAM input was opened most recently. */
+static int xiam_model_id_from_path(const char *path) {
+    unsigned int h = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)(path ? path : ""); *p; p++) {
+        h ^= *p; h *= 16777619u;
+    }
+    return -1 - (int)(h % 1000000000u);
 }
 
 static void xiam_update_axis_convention(XiamState *x) {
@@ -257,12 +299,13 @@ int xiam_same_transition(const PredLine *a, const PredLine *b) {
            memcmp(&a->xiam, &b->xiam, sizeof(a->xiam)) == 0;
 }
 
-static int xiam_read_output_records(const char *path, PredLine **out, int *count, double *lo, double *hi, double *top) {
+static int xiam_read_output_records(const char *path, int model_id, PredLine **out, int *count, double *lo, double *hi, double *top) {
     FILE *fp = fopen(path, "rb"); if (!fp) return 0;
     PredLine *rows = NULL; int n = 0, cap = 0; char line[2048];
     while (fgets(line, sizeof(line), fp)) {
         PredLine p; if (!xiam_parse_output_line(line, &p)) continue;
         if (n == cap) { int next = cap ? cap * 2 : 2048; PredLine *grown = realloc(rows, (size_t)next * sizeof(*rows)); if (!grown) { free(rows); fclose(fp); return 0; } rows = grown; cap = next; }
+        p.hamiltonian_id = model_id;
         rows[n++] = p;
     }
     fclose(fp);
@@ -347,9 +390,9 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
     if (!x->has_freq) fprintf(fp, " freq %.12g %.12g\n", x->fmin_mhz/1000.0, x->fmax_mhz/1000.0);
     if (!x->has_j) fprintf(fp, " J %d\n", x->max_j);
     if (fitting) {
-        int n = 0; for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM) n++;
+        int n = 0; for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) n++;
         fprintf(fp, "\\ SpectraVisual XIAM fit assignments (%d selected)\n", n);
-        for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM) xiam_write_assignment(fp, &s->assignments[i]);
+        for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) xiam_write_assignment(fp, &s->assignments[i]);
     }
     int bad = ferror(fp) || fclose(fp) != 0; return !bad;
 }
@@ -370,7 +413,7 @@ static int xiam_run(AppState *s, int fitting) {
     XiamState *x = &s->xiam;
     if (!x->loaded) { snprintf(x->status,sizeof(x->status),"Open a .xi input first (drop it onto the main window)."); return 0; }
     if (!s->settings.xiam_path[0] || access(s->settings.xiam_path, X_OK) != 0) { snprintf(x->status,sizeof(x->status),"Set the executable XIAM-2NQ v0.44 path in Settings."); return 0; }
-    if (fitting) { int n = 0; for (int i=0;i<s->n_assignments;i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM) n++; if (!n) { snprintf(x->status,sizeof(x->status),"Select and assign at least one XIAM prediction before fitting."); return 0; } }
+    if (fitting) { int n = 0; for (int i=0;i<s->n_assignments;i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) n++; if (!n) { snprintf(x->status,sizeof(x->status),"Select and assign at least one prediction from this .xi model before fitting."); return 0; } }
     if (!xiam_prepare_work_dir(s)) return 0;
     char in[700], out[700]; xiam_work_file(x,"model.xi",in,sizeof(in)); xiam_work_file(x,"model.xo",out,sizeof(out));
     if (!xiam_write_input(s, in, fitting)) { snprintf(x->status,sizeof(x->status),"Cannot write XIAM input: %s",strerror(errno)); return 0; }
@@ -426,15 +469,18 @@ void xiam_open(AppState *s) {
 int xiam_load_input_file(AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0; XiamState *x=&s->xiam;
     if (!xiam_read_source(x,path)) { snprintf(x->status,sizeof(x->status),"Cannot read XIAM input: %s",path); return 0; }
-    snprintf(x->input_path,sizeof(x->input_path),"%s",path); x->loaded=1; xiam_parse_source(s); xiam_open(s);
+    snprintf(x->input_path,sizeof(x->input_path),"%s",path); x->loaded=1; xiam_parse_source(s);
+    x->model_id = xiam_model_id_from_path(x->input_path);
+    if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s);
     snprintf(x->status,sizeof(x->status),"Loaded %s: %d molecular parameters; input/output are displayed in MHz.",strrchr(path,'/')?strrchr(path,'/')+1:path,x->n_params);
     return 1;
 }
 
 int xiam_load_output_file(AppState *s, const char *path) {
     PredLine *rows=NULL; int n=0; double lo=0,hi=0,top=0;
-    if (!s || !path || !xiam_read_output_records(path,&rows,&n,&lo,&hi,&top)) { if(s) snprintf(s->xiam.status,sizeof(s->xiam.status),"No readable native XIAM prediction records in %s.",path?path:"output"); return 0; }
-    xiam_adopt_prediction(s,rows,n,lo,hi,top,path); snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path); xiam_open(s); return 1;
+    int model_id = s && s->xiam.loaded ? s->xiam.model_id : xiam_model_id_from_path(path);
+    if (!s || !path || !xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) { if(s) snprintf(s->xiam.status,sizeof(s->xiam.status),"No readable native XIAM prediction records in %s.",path?path:"output"); return 0; }
+    xiam_adopt_prediction(s,rows,n,lo,hi,top,path); snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path); if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s); return 1;
 }
 
 int xiam_calculate(AppState *s) {
@@ -524,6 +570,6 @@ void xiam_render(AppState *s) {
     char b[256];ui_text(r,UI_FONT_SANS_SM,"MHz",470,38,UI_FAINT);snprintf(b,sizeof(b),"%.8g",x->fmin_mhz);ui_field_ex(r,(SDL_Rect){470,52,104,28},NULL,x->edit_param==XIAM_EDIT_FMIN?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_FMIN,x->edit_caret,x->edit_anchor);snprintf(b,sizeof(b),"%.8g",x->fmax_mhz);ui_field_ex(r,(SDL_Rect){582,52,104,28},NULL,x->edit_param==XIAM_EDIT_FMAX?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_FMAX,x->edit_caret,x->edit_anchor);ui_text(r,UI_FONT_SANS_SM,"T / K",694,38,UI_FAINT);snprintf(b,sizeof(b),"%.6g",x->temperature_k);ui_field_ex(r,(SDL_Rect){694,52,82,28},NULL,x->edit_param==XIAM_EDIT_TEMP?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_TEMP,x->edit_caret,x->edit_anchor);ui_text(r,UI_FONT_SANS_SM,"Jmax",784,38,UI_FAINT);snprintf(b,sizeof(b),"%d",x->max_j);ui_field_ex(r,(SDL_Rect){784,52,65,28},NULL,x->edit_param==XIAM_EDIT_JMAX?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_JMAX,x->edit_caret,x->edit_anchor);
     ui_hline(r,18,w-18,96,UI_LINE);ui_text(r,UI_FONT_SANS_SM,"Parameter",24,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"value shown in MHz",260,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"error",500,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"fit",660,113,UI_DIM);
     const char *axes=x->axis_convention==1?"Prolate mapping: XIAM x/y/z = b/c/a (z is A).":x->axis_convention==2?"Oblate mapping: XIAM x/y/z = a/b/c (z is C).":"Axis mapping needs BJ, BK and B-; verify before assigning labels.";ui_text(r,UI_FONT_SANS_SM,axes,24,h-48,UI_WARN);
-    SDL_Rect rows={18,138,w-36,h-202};ui_fill(r,rows,UI_INPUT);ui_frame(r,rows,UI_LINE);SDL_RenderSetClipRect(r,&rows);int vis=rows.h/24;for(int row=0;row<vis;row++){int i=x->params_scroll+row;if(i>=x->n_params)break;int y=rows.y+row*24;XiamParameter*p=&x->params[i];if(i&1)ui_fill(r,(SDL_Rect){rows.x,y,rows.w,24},UI_CHROME);ui_text(r,UI_FONT_MONO_SM,p->name,rows.x+7,y+6,UI_TEXT);snprintf(b,sizeof(b),"%.12g%s",xiam_display_value(p),p->is_frequency?" MHz":"");if(x->edit_param==i)snprintf(b,sizeof(b),"%s",x->edit_buf);ui_text(r,UI_FONT_MONO_SM,b,rows.x+235,y+6,x->edit_param==i?UI_ACCENT_TEXT:UI_TEXT);if(p->error_ghz!=0.0){snprintf(b,sizeof(b),"%.5g",xiam_display_error(p));ui_text(r,UI_FONT_MONO_SM,b,rows.x+475,y+6,UI_DIM);}ui_text(r,UI_FONT_MONO_SM,p->fit_method==1?"fit":p->fit_method==2?"dqu":p->fit_method==3?"dqx":"—",rows.x+635,y+6,p->fit_method?UI_ACCENT_TEXT:UI_FAINT);}
+    SDL_Rect rows={18,138,w-36,h-202};ui_fill(r,rows,UI_INPUT);ui_frame(r,rows,UI_LINE);SDL_RenderSetClipRect(r,&rows);int vis=rows.h/24;for(int row=0;row<vis;row++){int i=x->params_scroll+row;if(i>=x->n_params)break;int y=rows.y+row*24;XiamParameter*p=&x->params[i];if(i&1)ui_fill(r,(SDL_Rect){rows.x,y,rows.w,24},UI_CHROME);char label[96];xiam_parameter_label(x,p,label,sizeof(label));ui_text(r,UI_FONT_MONO_SM,label,rows.x+7,y+6,UI_TEXT);snprintf(b,sizeof(b),"%.12g%s",xiam_display_value(p),p->is_frequency?" MHz":"");if(x->edit_param==i)snprintf(b,sizeof(b),"%s",x->edit_buf);ui_text(r,UI_FONT_MONO_SM,b,rows.x+235,y+6,x->edit_param==i?UI_ACCENT_TEXT:UI_TEXT);if(p->error_ghz!=0.0){snprintf(b,sizeof(b),"%.5g",xiam_display_error(p));ui_text(r,UI_FONT_MONO_SM,b,rows.x+475,y+6,UI_DIM);}ui_text(r,UI_FONT_MONO_SM,p->fit_method==1?"fit":p->fit_method==2?"dqu":p->fit_method==3?"dqx":"—",rows.x+635,y+6,p->fit_method?UI_ACCENT_TEXT:UI_FAINT);}
     SDL_RenderSetClipRect(r,NULL);ui_hline(r,18,w-18,h-70,UI_LINE);ui_text(r,UI_FONT_SANS_SM,x->status[0]?x->status:"Drop a .xi input onto the main window. Drop a .xo to inspect a native prediction.",24,h-28,UI_TEXT);SDL_RenderPresent(r);
 }
