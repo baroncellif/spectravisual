@@ -1052,10 +1052,16 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
         /* In a simulation the plot holds several models at once, so the owner
            is the Hamiltonian of the catalogue row itself; only a row without
            one falls back to the active Hamiltonian. */
-        int hamiltonian_id = s->pred_lines[idx].hamiltonian_id > 0
+        /* Pickett owns positive Hamiltonian ids; XIAM intentionally owns a
+           stable negative id for each .xi file.  Do not let the generic
+           fallback turn an assigned native XIAM line into owner 0: its later
+           fit must select precisely the .xi model that produced it. */
+        int hamiltonian_id = s->pred_lines[idx].backend == PRED_BACKEND_XIAM
                            ? s->pred_lines[idx].hamiltonian_id
-                           : (s->predfit.generated_catalog_active
-                              ? predfit_active_hamiltonian_id(s) : 0);
+                           : (s->pred_lines[idx].hamiltonian_id > 0
+                              ? s->pred_lines[idx].hamiltonian_id
+                              : (s->predfit.generated_catalog_active
+                                 ? predfit_active_hamiltonian_id(s) : 0));
         add_or_update_assignment(s->assignments, &s->n_assignments,
                                  s->pred_lines[idx], exp_freq, exp_int, hamiltonian_id);
         assigned++;

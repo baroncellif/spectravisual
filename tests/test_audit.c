@@ -1197,6 +1197,17 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
             CHECK(xiam_same_transition(&restored[0].pred, picked), "identita XIAM completa persistita");
             CHECK_DBL("intensita XIAM persistita", restored[0].pred.cat_lgint, -5.0756, 1e-9);
         }
+
+        /* Go through the main viewer's normal assignment path too: XIAM's
+           negative per-.xi owner id is what selects this input for fitting. */
+        int picked_index = (int)(picked - s->pred_lines);
+        s->n_selected = 1;
+        s->selected_indices[0] = picked_index;
+        assign_selected_predictions(s, picked->freq_mhz, 0.0);
+        CHECK(s->n_assignments >= 1, "assegnazione XIAM dal viewer presente");
+        if (s->n_assignments)
+            CHECK_INT("assegnazione XIAM conserva il proprietario .xi",
+                      s->assignments[0].hamiltonian_id, s->xiam.model_id);
     }
     DONE();
 }
