@@ -403,8 +403,39 @@ typedef struct {
     int is_frequency;
 } XiamParameter;
 
+/* Serializable contents of one native XIAM input.  Unlike a Pickett state,
+ * this is a complete Hamiltonian: torsional/tunnelling labels remain inside
+ * the .xi model and are never promoted to separate project species. */
+typedef struct {
+    char name[96];
+    int simulate_excluded;
+    int loaded;
+    char input_path[512];
+    char output_path[512];
+    char work_dir[512];
+    char source_lines[MAX_XIAM_SOURCE_LINES][256];
+    int n_source_lines;
+    XiamParameter params[MAX_XIAM_PARAMS];
+    int n_params;
+    int spin, spin2;
+    int model_id;              /* stable negative owner, derived from the .xi path */
+    int max_j;
+    double fmin_mhz, fmax_mhz;
+    double temperature_k;
+    int has_freq, has_ints, has_j;
+    int axis_convention;
+    int axis_auto_convention;
+    int axis_override;
+    char status[256];
+    char diagnostics[8192];
+} XiamHamiltonian;
+
+#define MAX_XIAM_HAMILTONIANS 16
+
 /* A separate, one-Hamiltonian XIAM workspace.  It retains the input text so
- * directives XIAM knows but SpectraVisual does not are never discarded. */
+ * directives XIAM knows but SpectraVisual does not are never discarded.
+ * The legacy-looking fields below are the active Hamiltonian projection;
+ * xiam.c saves/restores it atomically when the project selection changes. */
 typedef struct {
     int open;
     SDL_Window *window;
@@ -412,9 +443,21 @@ typedef struct {
     Uint32 window_id;
     int loaded;
     int running;
+    int active_tab;            /* Parameters, Lines, Fitting, Hamiltonians, Simulation */
+    int active_hamiltonian;
+    int n_hamiltonians;
+    XiamHamiltonian hamiltonian[MAX_XIAM_HAMILTONIANS];
+    int simulate_excluded;     /* active Hamiltonian projection */
     int params_scroll;
     int lines_scroll;
     int assignments_scroll;
+    int fitting_scroll;
+    int hamiltonians_scroll;
+    int simulation_scroll;
+    int delete_hamiltonian_id; /* a second click confirms removal */
+    int edit_assignment;       /* assignment currently edited in Lines, or -1 */
+    int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
+    int session_dirty;
     int edit_param;            /* -1 while no parameter value is edited */
     int edit_caret, edit_anchor, edit_replace;
     char edit_buf[96];

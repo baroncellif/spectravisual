@@ -1334,6 +1334,39 @@ static int test_xiam_fit_report_updates_parameters(void) {
     DONE();
 }
 
+/* XIAM uses one .xi per Hamiltonian.  Opening a second native model must not
+ * replace the first model, its prediction, or its independent calculation
+ * controls; selecting a model restores exactly that native workspace. */
+static int test_xiam_project_keeps_independent_hamiltonians(void) {
+    AppState *s = new_state();
+    const char *first_xi = SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi";
+    const char *first_xo = SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo";
+    const char *second_xi = SV_TESTS_DIR "/../xiam_examples/v6_fit.xi";
+    const char *second_xo = SV_TESTS_DIR "/../xiam_examples/v6_fit.xo";
+    CHECK(xiam_load_input_file(s, first_xi), "primo Hamiltoniano XIAM caricato");
+    CHECK(xiam_load_output_file(s, first_xo), "catalogo del primo Hamiltoniano caricato");
+    int first_owner = s->xiam.model_id, first_lines = s->n_pred;
+    s->xiam.temperature_k = 6.5; /* must be captured when the active H changes */
+
+    CHECK(xiam_load_input_file(s, second_xi), "secondo Hamiltoniano XIAM caricato");
+    CHECK_INT("progetto XIAM contiene due Hamiltoniani", s->xiam.n_hamiltonians, 2);
+    CHECK(s->xiam.model_id != first_owner, "ogni .xi ha un proprietario indipendente");
+    CHECK_INT("catalogo del primo H non viene cancellato", s->n_pred, first_lines);
+    CHECK(xiam_load_output_file(s, second_xo), "report di fit del secondo Hamiltoniano caricato");
+
+    CHECK(xiam_load_input_file(s, first_xi), "ri-selezione del primo Hamiltoniano");
+    CHECK_INT("primo Hamiltoniano attivo", s->xiam.model_id, first_owner);
+    CHECK_DBL("temperatura del primo H ripristinata", s->xiam.temperature_k, 6.5, 1e-12);
+    CHECK_INT("catalogo del primo H ancora presente", s->n_pred, first_lines);
+
+    CHECK(xiam_load_input_file(s, second_xi), "ri-selezione del secondo Hamiltoniano");
+    int bj = -1;
+    for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "BJ")) { bj = i; break; }
+    CHECK(bj >= 0, "BJ disponibile nel secondo Hamiltoniano");
+    if (bj >= 0) CHECK_DBL("risultato di fit resta nel secondo H", s->xiam.params[bj].value_ghz, 0.215066122, 1e-10);
+    DONE();
+}
+
 /* The exact v0.44 binary is an optional local integration check.  CI and
  * other machines run the parser fixture above; the maintainer can enable this
  * one without hard-coding a personal XIAM installation into the test suite. */
@@ -3572,6 +3605,7 @@ static const Test TESTS[] = {
     {"test_xiam_imports_block_viii_and_saves_fit_input", test_xiam_imports_block_viii_and_saves_fit_input},
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
+    {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
