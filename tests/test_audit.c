@@ -1217,6 +1217,80 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
     DONE();
 }
 
+/* A XIAM .xi is both the parameter model and its native observation list.
+ * Opening it must therefore populate assignments before any .xo exists, keep
+ * F1/F/S labels and per-line Err values, and export a runnable standalone fit
+ * input without altering the imported source. */
+static int test_xiam_imports_block_viii_and_saves_fit_input(void) {
+    AppState *s = new_state();
+    const char *source = SV_TESTS_DIR "/../xiam_examples/2n_v3_fit.xi";
+    CHECK(xiam_load_input_file(s, source), "input XIAM con F1/F letto");
+    CHECK(s->n_assignments > 100, "Block VIII XIAM importato (%d righe)", s->n_assignments);
+    Assignment *hyperfine = NULL;
+    for (int i = 0; i < s->n_assignments; i++) {
+        PredLine *p = &s->assignments[i].pred;
+        if (p->Ju == 1 && p->Kau == 1 && p->Kcu == 0 &&
+            p->xiam.f1u == 2 && p->xiam.f1l == 2 &&
+            p->xiam.fu == 4 && p->xiam.fl == 2 && p->xiam.su == 1) {
+            hyperfine = &s->assignments[i];
+            break;
+        }
+    }
+    CHECK(hyperfine != NULL, "assegnazione F1/F/S del Block VIII conservata");
+    if (hyperfine) {
+        CHECK_DBL("frequenza osservata XIAM importata", hyperfine->exp_freq, 7662.194, 1e-6);
+        CHECK_DBL("Err XIAM importato", hyperfine->line_error_mhz, 0.02, 1e-12);
+        CHECK_INT("assegnazione XIAM attiva per il fit", hyperfine->fit_enabled, 1);
+    }
+    Assignment restored_assignments[MAX_ASSIGNMENTS];
+    AssignmentFileReport assignment_report;
+    int restored_n = 0;
+    char assignments_path[700];
+    settings_data_file(s, "assignments.txt", assignments_path, sizeof(assignments_path));
+    CHECK(load_assignments_file(assignments_path, restored_assignments, &restored_n, &assignment_report),
+          "assegnazioni XIAM importate persistite");
+    int restored_error = 0;
+    for (int i = 0; i < restored_n; i++)
+        if (fabs(restored_assignments[i].line_error_mhz - 0.02) < 1e-12) restored_error = 1;
+    CHECK(restored_error, "Err XIAM individuale persistito in assignments.txt");
+
+    CHECK_INT("mappa automatica prolate", s->xiam.axis_auto_convention, 1);
+
+    s->xiam.fmin_mhz = 1200.5;
+    s->xiam.fmax_mhz = 3400.25;
+    s->xiam.temperature_k = 4.2;
+    s->xiam.max_j = 17;
+    char saved[700];
+    snprintf(saved, sizeof(saved), "%s", work_path("xiam_saved_fit.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "fit XIAM salvato separatamente");
+    char *text = read_all(saved);
+    CHECK(text != NULL, "file .xi di fit leggibile");
+    if (text) {
+        const char *controls = strstr(text, "SpectraVisual XIAM runtime controls");
+        const char *block3 = strstr(text, "block III");
+        const char *limit = strstr(text, "SpectraVisual prediction limit");
+        const char *block8 = strstr(text, "block VIII");
+        CHECK(controls && block3 && controls < block3, "controlli generati dentro Block II");
+        CHECK(limit && block8 && limit < block8, "J generato dentro Block VII");
+        CHECK(strstr(text, "ncycl 100") != NULL, "salvataggio prepara cicli di fit");
+        CHECK(strstr(text, "ints 1") != NULL, "salvataggio prepara intensita per fit");
+        CHECK(strstr(text, "freq_l 1.2005") != NULL && strstr(text, "freq_h 3.40025") != NULL,
+              "finestra MHz convertita nei controlli XIAM GHz");
+        CHECK(strstr(text, "temp 4.2") != NULL && strstr(text, "J 17") != NULL,
+              "temperatura e Jmax della GUI salvati");
+        CHECK(strstr(text, "Err 0.02") != NULL, "errore individuale XIAM riscritto");
+        free(text);
+    }
+
+    AppState *restored = new_state();
+    CHECK(xiam_load_input_file(restored, saved), "fit XIAM salvato ricaricabile");
+    CHECK(restored->n_assignments > 100, "assegnazioni presenti nel fit XIAM salvato");
+    CHECK_INT("fit salvato legge Jmax", restored->xiam.max_j, 17);
+    CHECK_DBL("fit salvato legge limite inferiore", restored->xiam.fmin_mhz, 1200.5, 1e-9);
+    CHECK_DBL("fit salvato legge limite superiore", restored->xiam.fmax_mhz, 3400.25, 1e-9);
+    DONE();
+}
+
 /* XIAM prints the intensity that its SPCAT-compatible calculation produced,
  * but its .xo records do not carry the CAT lower-energy fields needed for
  * extrapolating it in T.  The generic intensity layer must therefore retain
@@ -3495,6 +3569,7 @@ static const Test TESTS[] = {
     {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
     {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
     {"test_xiam_native_prediction_and_assignment_roundtrip", test_xiam_native_prediction_and_assignment_roundtrip},
+    {"test_xiam_imports_block_viii_and_saves_fit_input", test_xiam_imports_block_viii_and_saves_fit_input},
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},

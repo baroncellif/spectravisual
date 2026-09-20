@@ -11,6 +11,7 @@ void xiam_open(AppState *state);
 void xiam_close(AppState *state);
 int  xiam_load_input_file(AppState *state, const char *path);
 int  xiam_load_output_file(AppState *state, const char *path);
+int  xiam_save_fit_file(AppState *state, const char *path);
 int  xiam_calculate(AppState *state);
 int  xiam_fit(AppState *state);
 int  xiam_handle_event(AppState *state, const SDL_Event *event);

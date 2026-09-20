@@ -109,7 +109,7 @@ int save_assignments(AppState *s) {
     /* The header names the layout and its version, so the reader never has
        to guess it from a row (a .lin has the same field count). */
     fprintf(fp, "# SpectraVisual assignments, format %d: upper QNs, lower QNs (SPFIT .lin order), "
-                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN HamiltonianID Backend CAT_LGINT FitEnabled XIAM-state\n", ASSIGNMENT_FORMAT);
+                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN HamiltonianID Backend CAT_LGINT FitEnabled XIAMErr(MHz) XIAM-state\n", ASSIGNMENT_FORMAT);
     int written = 0, skipped = 0;
     for (int k = 0; k < s->n_assignments; k++) {
         PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
@@ -124,11 +124,11 @@ int save_assignments(AppState *s) {
         for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
         /* Match the .lin's fixed 12I3 quantum-number field. */
         for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
-        fprintf(fp, "%15.6f %15.6f %15.6E %d %d %d %.12g %d"
+        fprintf(fp, "%15.6f %15.6f %15.6E %d %d %d %.12g %d %.12g"
                     " %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                 s->assignments[k].exp_freq, p2.freq_mhz,
                 p2.linear_int, nq, s->assignments[k].hamiltonian_id, (int)p2.backend, p2.cat_lgint,
-                s->assignments[k].fit_enabled ? 1 : 0,
+                s->assignments[k].fit_enabled ? 1 : 0, s->assignments[k].line_error_mhz,
                 p2.xiam.f1u,p2.xiam.f1l,p2.xiam.fu,p2.xiam.fl,
                 p2.xiam.su,p2.xiam.sl,p2.xiam.vu,p2.xiam.vl,
                 p2.xiam.bu,p2.xiam.bl,p2.xiam.ku,p2.xiam.kl,p2.xiam.tu,p2.xiam.tl);

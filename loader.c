@@ -762,12 +762,14 @@ static void set_row_qn(PredLine *p, const double *upper, const double *lower, in
 
 /* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity,
  * NQN, owner and (from format 3) backend/native XIAM identity; format 4
- * also preserves whether this observation is enabled in a backend's fit. */
+ * also preserves whether this observation is enabled in a backend's fit.
+ * Format 5 adds XIAM's native per-transition uncertainty. */
 static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
                                 double *exp_freq, int *hamiltonian_id,
-                                int *fit_enabled) {
-    int tail = format >= 4 ? 19 : format >= 3 ? 18 : format >= 2 ? 2 : 1;
+                                int *fit_enabled, double *line_error_mhz) {
+    int tail = format >= 5 ? 20 : format >= 4 ? 19 : format >= 3 ? 18 : format >= 2 ? 2 : 1;
     if (fit_enabled) *fit_enabled = 1;
+    if (line_error_mhz) *line_error_mhz = 0.0;
     if (r->n < 5 + tail || !r->integer[r->n - tail]) return 0;
     int nq = (int)lround(r->v[r->n - tail]);
     if (nq < 1 || nq > 6 || r->n != 2 * nq + 3 + tail || !all_integers(r, 0, 2 * nq)) return 0;
@@ -792,6 +794,11 @@ static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
         if (format >= 4) {
             if (!r->integer[at + 2] || (r->v[at + 2] != 0.0 && r->v[at + 2] != 1.0)) return 0;
             if (fit_enabled) *fit_enabled = (int)r->v[at + 2];
+            meta_at++;
+        }
+        if (format >= 5) {
+            if (!isfinite(r->v[at + 3]) || r->v[at + 3] < 0.0) return 0;
+            if (line_error_mhz) *line_error_mhz = r->v[at + 3];
             meta_at++;
         }
         const double *m = &r->v[meta_at];
@@ -872,8 +879,9 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         double ef = 0.0, ei = 0.0;                       /* the file has no observed intensity */
         int hamiltonian_id = 0;
         int fit_enabled = 1;
+        double line_error_mhz = 0.0;
         int ok = numbers > 0 && rep->format <= ASSIGNMENT_FORMAT &&
-                 (rep->format ? parse_assignment_row(&r, rep->format, &p, &ef, &hamiltonian_id, &fit_enabled)
+                 (rep->format ? parse_assignment_row(&r, rep->format, &p, &ef, &hamiltonian_id, &fit_enabled, &line_error_mhz)
                               : parse_legacy_row(&r, &p, &ef, &ei));
         if (!ok) { rep->ignored++; continue; }
         p.branch = branch_from_qn(p.Ju, p.Jl);
@@ -888,6 +896,7 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         a->pred = p;
         a->exp_freq = ef;
         a->exp_int = ei;
+        a->line_error_mhz = line_error_mhz;
         a->fit_enabled = fit_enabled;
         a->needs_reassign = p.n_qn == 0 || looks_truncated(&p);
         a->hamiltonian_id = hamiltonian_id;

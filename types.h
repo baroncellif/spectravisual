@@ -118,6 +118,10 @@ typedef struct {
     PredLine pred;
     double exp_freq;
     double exp_int;
+    /* XIAM stores an uncertainty on every transition (its native `Err`
+       field).  Pickett keeps using the model-wide line error, so zero here
+       means "use the backend default". */
+    double line_error_mhz;
     int fit_enabled;          // assignment remains visible when this is 0
     int needs_reassign;       // restored from a .lin row with fewer than 3 QN per state
     int hamiltonian_id;       // stable owner; 0 denotes a pre-v2 legacy assignment
@@ -427,7 +431,9 @@ typedef struct {
     double fmin_mhz, fmax_mhz;
     double temperature_k;
     int has_freq, has_ints, has_j;
-    int axis_convention;       /* 0=not declared, 1=prolate, 2=oblate */
+    int axis_convention;       /* effective: 0=not declared, 1=prolate, 2=oblate */
+    int axis_auto_convention;  /* convention inferred from BJ/BK/B- */
+    int axis_override;         /* 0=automatic, 1=prolate, 2=oblate */
     char status[256];
     char diagnostics[8192];
 } XiamState;

@@ -83,7 +83,7 @@ void deduplicate_assignments(Assignment *list, int *n);
 void load_existing_assignments(const char *filename, Assignment *list, int *n);
 
 /* Version written in the header line of assignments.txt. */
-#define ASSIGNMENT_FORMAT 4
+#define ASSIGNMENT_FORMAT 5
 
 /* What reading assignments.txt had to decide, for the message shown to the user. */
 typedef struct {
