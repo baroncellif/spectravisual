@@ -761,10 +761,13 @@ static void set_row_qn(PredLine *p, const double *upper, const double *lower, in
 }
 
 /* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity,
- * NQN, owner and (from format 3) backend/native XIAM identity. */
+ * NQN, owner and (from format 3) backend/native XIAM identity; format 4
+ * also preserves whether this observation is enabled in a backend's fit. */
 static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
-                                double *exp_freq, int *hamiltonian_id) {
-    int tail = format >= 3 ? 18 : format >= 2 ? 2 : 1;
+                                double *exp_freq, int *hamiltonian_id,
+                                int *fit_enabled) {
+    int tail = format >= 4 ? 19 : format >= 3 ? 18 : format >= 2 ? 2 : 1;
+    if (fit_enabled) *fit_enabled = 1;
     if (r->n < 5 + tail || !r->integer[r->n - tail]) return 0;
     int nq = (int)lround(r->v[r->n - tail]);
     if (nq < 1 || nq > 6 || r->n != 2 * nq + 3 + tail || !all_integers(r, 0, 2 * nq)) return 0;
@@ -785,13 +788,19 @@ static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
         if (!r->integer[at] || r->v[at] < PRED_BACKEND_EXTERNAL || r->v[at] > PRED_BACKEND_XIAM) return 0;
         p->backend = (PredictionBackend)lround(r->v[at]);
         p->cat_lgint = r->v[at + 1];
-        const double *m = &r->v[at + 2];
+        int meta_at = at + 2;
+        if (format >= 4) {
+            if (!r->integer[at + 2] || (r->v[at + 2] != 0.0 && r->v[at + 2] != 1.0)) return 0;
+            if (fit_enabled) *fit_enabled = (int)r->v[at + 2];
+            meta_at++;
+        }
+        const double *m = &r->v[meta_at];
         int *dst[] = {&p->xiam.f1u,&p->xiam.f1l,&p->xiam.fu,&p->xiam.fl,
                       &p->xiam.su,&p->xiam.sl,&p->xiam.vu,&p->xiam.vl,
                       &p->xiam.bu,&p->xiam.bl,&p->xiam.ku,&p->xiam.kl,
                       &p->xiam.tu,&p->xiam.tl};
         for (int i = 0; i < 14; i++) {
-            if (!r->integer[at + 2 + i] || m[i] < INT_MIN || m[i] > INT_MAX) return 0;
+            if (!r->integer[meta_at + i] || m[i] < INT_MIN || m[i] > INT_MAX) return 0;
             *dst[i] = (int)lround(m[i]);
         }
         p->xiam.present = p->backend == PRED_BACKEND_XIAM;
@@ -862,8 +871,9 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         memset(&p, 0, sizeof(p));
         double ef = 0.0, ei = 0.0;                       /* the file has no observed intensity */
         int hamiltonian_id = 0;
+        int fit_enabled = 1;
         int ok = numbers > 0 && rep->format <= ASSIGNMENT_FORMAT &&
-                 (rep->format ? parse_assignment_row(&r, rep->format, &p, &ef, &hamiltonian_id)
+                 (rep->format ? parse_assignment_row(&r, rep->format, &p, &ef, &hamiltonian_id, &fit_enabled)
                               : parse_legacy_row(&r, &p, &ef, &ei));
         if (!ok) { rep->ignored++; continue; }
         p.branch = branch_from_qn(p.Ju, p.Jl);
@@ -878,7 +888,7 @@ int load_assignments_file(const char *filename, Assignment *list, int *n, Assign
         a->pred = p;
         a->exp_freq = ef;
         a->exp_int = ei;
-        a->fit_enabled = 1;
+        a->fit_enabled = fit_enabled;
         a->needs_reassign = p.n_qn == 0 || looks_truncated(&p);
         a->hamiltonian_id = hamiltonian_id;
         rep->loaded++;

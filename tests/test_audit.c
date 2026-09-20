@@ -1188,6 +1188,7 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
         CHECK_INT("F upper", picked->xiam.fu, 6); CHECK_INT("F lower", picked->xiam.fl, 4);
         CHECK_INT("S", picked->xiam.su, 1); CHECK_INT("V", picked->xiam.vu, 1);
         add_or_update_assignment(s->assignments, &s->n_assignments, *picked, 85557.700, 0.0, picked->hamiltonian_id);
+        s->assignments[0].fit_enabled = 0;
         CHECK(save_assignments(s), "assegnazione XIAM salvata");
         Assignment restored[MAX_ASSIGNMENTS]; int n = 0; AssignmentFileReport report;
         char assignments[700]; settings_data_file(s, "assignments.txt", assignments, sizeof(assignments));
@@ -1196,6 +1197,7 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
         if (n) {
             CHECK(xiam_same_transition(&restored[0].pred, picked), "identita XIAM completa persistita");
             CHECK_DBL("intensita XIAM persistita", restored[0].pred.cat_lgint, -5.0756, 1e-9);
+            CHECK_INT("inclusione nel fit XIAM persistita", restored[0].fit_enabled, 0);
         }
 
         /* Go through the main viewer's normal assignment path too: XIAM's
@@ -1208,6 +1210,9 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
         if (s->n_assignments)
             CHECK_INT("assegnazione XIAM conserva il proprietario .xi",
                       s->assignments[0].hamiltonian_id, s->xiam.model_id);
+        if (s->n_assignments)
+            CHECK_INT("riassegnazione XIAM conserva esclusione dal fit",
+                      s->assignments[0].fit_enabled, 0);
     }
     DONE();
 }

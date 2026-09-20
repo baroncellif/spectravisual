@@ -410,6 +410,7 @@ typedef struct {
     int running;
     int params_scroll;
     int lines_scroll;
+    int assignments_scroll;
     int edit_param;            /* -1 while no parameter value is edited */
     int edit_caret, edit_anchor, edit_replace;
     char edit_buf[96];

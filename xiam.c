@@ -399,6 +399,42 @@ static void xiam_write_fit_choices(FILE *fp, const XiamState *x) {
     }
 }
 
+/* A XIAM input is one Hamiltonian, even if it resolves several torsional or
+ * hyperfine states.  Only rows owned by that exact .xi belong in its fit. */
+static int xiam_assignment_index(const AppState *s, int ordinal) {
+    if (!s || ordinal < 0) return -1;
+    int seen = 0;
+    for (int i = 0; i < s->n_assignments; i++) {
+        const Assignment *a = &s->assignments[i];
+        if (a->pred.backend != PRED_BACKEND_XIAM ||
+            a->hamiltonian_id != s->xiam.model_id) continue;
+        if (seen++ == ordinal) return i;
+    }
+    return -1;
+}
+
+static int xiam_assignment_count(const AppState *s, int *enabled) {
+    int total = 0, used = 0;
+    if (s) for (int i = 0; i < s->n_assignments; i++) {
+        const Assignment *a = &s->assignments[i];
+        if (a->pred.backend != PRED_BACKEND_XIAM ||
+            a->hamiltonian_id != s->xiam.model_id) continue;
+        total++;
+        if (a->fit_enabled) used++;
+    }
+    if (enabled) *enabled = used;
+    return total;
+}
+
+static void xiam_clamp_assignment_scroll(AppState *s, int rows) {
+    if (!s) return;
+    int total = xiam_assignment_count(s, NULL);
+    int max_scroll = total - rows;
+    if (max_scroll < 0) max_scroll = 0;
+    if (s->xiam.assignments_scroll < 0) s->xiam.assignments_scroll = 0;
+    if (s->xiam.assignments_scroll > max_scroll) s->xiam.assignments_scroll = max_scroll;
+}
+
 static int xiam_write_input(AppState *s, const char *path, int fitting) {
     XiamState *x = &s->xiam; FILE *fp = fopen(path, "w"); if (!fp) return 0;
     int wrote_fit_choices = 0;
@@ -589,14 +625,39 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if(k==SDLK_BACKSPACE&&x->edit_caret>0){memmove(x->edit_buf+x->edit_caret-1,x->edit_buf+x->edit_caret,strlen(x->edit_buf+x->edit_caret)+1);x->edit_caret--;x->edit_anchor=x->edit_caret;} else if(k==SDLK_LEFT&&x->edit_caret>0)x->edit_caret--; else if(k==SDLK_RIGHT&&x->edit_caret<(int)strlen(x->edit_buf))x->edit_caret++; return 1;
     }
     if (e->type==SDL_KEYDOWN && e->key.windowID==id && e->key.keysym.sym==SDLK_ESCAPE) { xiam_close(s); return 1; }
-    if (e->type==SDL_MOUSEWHEEL && e->wheel.windowID==id) { x->params_scroll-=e->wheel.y*3; if(x->params_scroll<0)x->params_scroll=0; if(x->params_scroll>x->n_params-1)x->params_scroll=x->n_params-1; return 1; }
+    if (e->type==SDL_MOUSEWHEEL && e->wheel.windowID==id) {
+        int mw=0,mh=0,mx=0,my=0; SDL_GetWindowSize(x->window,&mw,&mh); SDL_GetMouseState(&mx,&my);
+        int assignments_top = mh - 184;
+        if (my >= assignments_top) {
+            x->assignments_scroll -= e->wheel.y * 3;
+            xiam_clamp_assignment_scroll(s, 3);
+        } else {
+            x->params_scroll -= e->wheel.y * 3;
+            if (x->params_scroll < 0) x->params_scroll = 0;
+            if (x->params_scroll > x->n_params - 1) x->params_scroll = x->n_params - 1;
+        }
+        return 1;
+    }
     if (e->type!=SDL_MOUSEBUTTONDOWN || e->button.windowID!=id) return 0;
     int w=0,h=0; SDL_GetWindowSize(x->window,&w,&h); int px=e->button.x,py=e->button.y;
     SDL_Rect open={18,52,104,28},predict={130,52,112,28},fit={250,52,92,28},reload={350,52,100,28};
     if(point_in_rect(px,py,open)){char path[512];if(xiam_pick_input(path,sizeof(path)))xiam_load_input_file(s,path);else snprintf(x->status,sizeof(x->status),"Choose or drag a .xi input onto the main window.");return 1;} if(point_in_rect(px,py,predict)){xiam_edit_commit(x);xiam_calculate(s);return 1;} if(point_in_rect(px,py,fit)){xiam_edit_commit(x);xiam_fit(s);return 1;} if(point_in_rect(px,py,reload)){xiam_load_input_file(s,x->input_path);return 1;}
     SDL_Rect fmin={470,52,104,28},fmax={582,52,104,28},temp={694,52,82,28},jmax={784,52,65,28};
     if(point_in_rect(px,py,fmin)){xiam_edit_begin(x,XIAM_EDIT_FMIN);return 1;} if(point_in_rect(px,py,fmax)){xiam_edit_begin(x,XIAM_EDIT_FMAX);return 1;} if(point_in_rect(px,py,temp)){xiam_edit_begin(x,XIAM_EDIT_TEMP);return 1;} if(point_in_rect(px,py,jmax)){xiam_edit_begin(x,XIAM_EDIT_JMAX);return 1;}
-    int first=x->params_scroll, row=(py-142)/24; if(py>=142 && row>=0){int p=first+row;if(p>=0&&p<x->n_params){
+    int assignments_top = h - 184;
+    if (py >= assignments_top + 24 && py < assignments_top + 96) {
+        int assignment = xiam_assignment_index(s, x->assignments_scroll + (py - assignments_top - 24) / 24);
+        if (assignment >= 0) {
+            s->assignments[assignment].fit_enabled = !s->assignments[assignment].fit_enabled;
+            save_assignments(s);
+            snprintf(x->status, sizeof(x->status), "%s %.6f MHz is %s in this XIAM fit.",
+                     s->assignments[assignment].fit_enabled ? "Including" : "Excluding",
+                     s->assignments[assignment].exp_freq,
+                     s->assignments[assignment].fit_enabled ? "included" : "excluded");
+        }
+        return 1;
+    }
+    int first=x->params_scroll, row=(py-142)/24; if(py>=142 && py<assignments_top-12 && row>=0){int p=first+row;if(p>=0&&p<x->n_params){
         if (px >= 630) {
             x->params[p].fit_method = (x->params[p].fit_method + 1) % 4;
             snprintf(x->status,sizeof(x->status),"%s: %s",x->params[p].name,x->params[p].fit_method==1?"fit":x->params[p].fit_method==2?"dqu":x->params[p].fit_method==3?"dqx":"not fitted");
@@ -614,6 +675,12 @@ void xiam_render(AppState *s) {
     char b[256];ui_text(r,UI_FONT_SANS_SM,"MHz",470,38,UI_FAINT);snprintf(b,sizeof(b),"%.8g",x->fmin_mhz);ui_field_ex(r,(SDL_Rect){470,52,104,28},NULL,x->edit_param==XIAM_EDIT_FMIN?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_FMIN,x->edit_caret,x->edit_anchor);snprintf(b,sizeof(b),"%.8g",x->fmax_mhz);ui_field_ex(r,(SDL_Rect){582,52,104,28},NULL,x->edit_param==XIAM_EDIT_FMAX?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_FMAX,x->edit_caret,x->edit_anchor);ui_text(r,UI_FONT_SANS_SM,"T / K",694,38,UI_FAINT);snprintf(b,sizeof(b),"%.6g",x->temperature_k);ui_field_ex(r,(SDL_Rect){694,52,82,28},NULL,x->edit_param==XIAM_EDIT_TEMP?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_TEMP,x->edit_caret,x->edit_anchor);ui_text(r,UI_FONT_SANS_SM,"Jmax",784,38,UI_FAINT);snprintf(b,sizeof(b),"%d",x->max_j);ui_field_ex(r,(SDL_Rect){784,52,65,28},NULL,x->edit_param==XIAM_EDIT_JMAX?x->edit_buf:b,NULL,x->edit_param==XIAM_EDIT_JMAX,x->edit_caret,x->edit_anchor);
     ui_hline(r,18,w-18,96,UI_LINE);ui_text(r,UI_FONT_SANS_SM,"Parameter",24,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"value in MHz (chi uses SPFIT /2)",260,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"error",500,113,UI_DIM);ui_text(r,UI_FONT_SANS_SM,"fit (click cycles)",660,113,UI_DIM);
     const char *axes=x->axis_convention==1?"Prolate mapping: XIAM x/y/z = b/c/a (z is A).":x->axis_convention==2?"Oblate mapping: XIAM x/y/z = a/b/c (z is C).":"Axis mapping needs BJ, BK and B-; verify before assigning labels.";ui_text(r,UI_FONT_SANS_SM,axes,24,h-48,UI_WARN);
-    SDL_Rect rows={18,138,w-36,h-202};ui_fill(r,rows,UI_INPUT);ui_frame(r,rows,UI_LINE);SDL_RenderSetClipRect(r,&rows);int vis=rows.h/24;for(int row=0;row<vis;row++){int i=x->params_scroll+row;if(i>=x->n_params)break;int y=rows.y+row*24;XiamParameter*p=&x->params[i];if(i&1)ui_fill(r,(SDL_Rect){rows.x,y,rows.w,24},UI_CHROME);char label[96];xiam_parameter_label(x,p,label,sizeof(label));ui_text(r,UI_FONT_MONO_SM,label,rows.x+7,y+6,UI_TEXT);snprintf(b,sizeof(b),"%.12g%s",xiam_display_value(p),p->is_frequency?" MHz":"");if(x->edit_param==i)snprintf(b,sizeof(b),"%s",x->edit_buf);ui_text(r,UI_FONT_MONO_SM,b,rows.x+235,y+6,x->edit_param==i?UI_ACCENT_TEXT:UI_TEXT);if(p->error_ghz!=0.0){snprintf(b,sizeof(b),"%.5g",xiam_display_error(p));ui_text(r,UI_FONT_MONO_SM,b,rows.x+475,y+6,UI_DIM);}ui_text(r,UI_FONT_MONO_SM,p->fit_method==1?"fit":p->fit_method==2?"dqu":p->fit_method==3?"dqx":"—",rows.x+635,y+6,p->fit_method?UI_ACCENT_TEXT:UI_FAINT);}
-    SDL_RenderSetClipRect(r,NULL);ui_hline(r,18,w-18,h-70,UI_LINE);ui_text(r,UI_FONT_SANS_SM,x->status[0]?x->status:"Drop a .xi input onto the main window. Drop a .xo to inspect a native prediction.",24,h-28,UI_TEXT);SDL_RenderPresent(r);
+    int assignments_top = h - 184;
+    SDL_Rect rows={18,138,w-36,assignments_top-150};ui_fill(r,rows,UI_INPUT);ui_frame(r,rows,UI_LINE);SDL_RenderSetClipRect(r,&rows);int vis=rows.h/24;for(int row=0;row<vis;row++){int i=x->params_scroll+row;if(i>=x->n_params)break;int y=rows.y+row*24;XiamParameter*p=&x->params[i];if(i&1)ui_fill(r,(SDL_Rect){rows.x,y,rows.w,24},UI_CHROME);char label[96];xiam_parameter_label(x,p,label,sizeof(label));ui_text(r,UI_FONT_MONO_SM,label,rows.x+7,y+6,UI_TEXT);snprintf(b,sizeof(b),"%.12g%s",xiam_display_value(p),p->is_frequency?" MHz":"");if(x->edit_param==i)snprintf(b,sizeof(b),"%s",x->edit_buf);ui_text(r,UI_FONT_MONO_SM,b,rows.x+235,y+6,x->edit_param==i?UI_ACCENT_TEXT:UI_TEXT);if(p->error_ghz!=0.0){snprintf(b,sizeof(b),"%.5g",xiam_display_error(p));ui_text(r,UI_FONT_MONO_SM,b,rows.x+475,y+6,UI_DIM);}ui_text(r,UI_FONT_MONO_SM,p->fit_method==1?"fit":p->fit_method==2?"dqu":p->fit_method==3?"dqx":"—",rows.x+635,y+6,p->fit_method?UI_ACCENT_TEXT:UI_FAINT);}
+    SDL_RenderSetClipRect(r,NULL);
+    int enabled=0,total=xiam_assignment_count(s,&enabled);xiam_clamp_assignment_scroll(s,3);
+    snprintf(b,sizeof(b),"Fit transitions for this .xi: %d / %d selected (click row to include/exclude)",enabled,total);ui_text(r,UI_FONT_SANS_SM,b,24,assignments_top,UI_DIM);
+    SDL_Rect assignment_rows={18,assignments_top+20,w-36,76};ui_fill(r,assignment_rows,UI_INPUT);ui_frame(r,assignment_rows,UI_LINE);
+    for(int row=0;row<3;row++){int ai=xiam_assignment_index(s,x->assignments_scroll+row);if(ai<0)break;Assignment*a=&s->assignments[ai];int y=assignment_rows.y+row*24;if(row&1)ui_fill(r,(SDL_Rect){assignment_rows.x,y,assignment_rows.w,24},UI_CHROME);ui_text(r,UI_FONT_MONO_SM,a->fit_enabled?"[x]":"[ ]",assignment_rows.x+8,y+6,a->fit_enabled?UI_ACCENT_TEXT:UI_FAINT);snprintf(b,sizeof(b),"%d %d %d - %d %d %d",a->pred.Ju,a->pred.Kau,a->pred.Kcu,a->pred.Jl,a->pred.Kal,a->pred.Kcl);ui_text(r,UI_FONT_MONO_SM,b,assignment_rows.x+52,y+6,a->fit_enabled?UI_TEXT:UI_DIM);snprintf(b,sizeof(b),"obs %.6f MHz",a->exp_freq);ui_text_right(r,UI_FONT_MONO_SM,b,assignment_rows.x+assignment_rows.w-8,y+6,a->fit_enabled?UI_TEXT:UI_DIM);}
+    ui_hline(r,18,w-18,h-70,UI_LINE);ui_text(r,UI_FONT_SANS_SM,x->status[0]?x->status:"Drop a .xi input onto the main window. Drop a .xo to inspect a native prediction.",24,h-28,UI_TEXT);SDL_RenderPresent(r);
 }
