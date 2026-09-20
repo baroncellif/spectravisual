@@ -1279,6 +1279,31 @@ static int test_xiam_v044_runner_when_configured(void) {
     DONE();
 }
 
+/* This is the complete native workflow: retain XIAM state labels when the
+ * user assigns predictions, write exactly those observations to a fit input,
+ * parse v0.44's fitted report, then regenerate the MHz prediction. */
+static int test_xiam_v044_fit_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "input XIAM per fit letto");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "previsione nativa per fit letta");
+    CHECK(s->n_pred >= 2, "servono almeno due righe XIAM per il fit");
+    for (int i = 0; i < s->xiam.n_params; i++) s->xiam.params[i].fit_method = 0;
+    int bj = -1;
+    for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "BJ")) { bj = i; break; }
+    CHECK(bj >= 0, "BJ disponibile per il fit XIAM");
+    if (bj >= 0) s->xiam.params[bj].fit_method = 2; /* dqu: safe with exact NQ */
+    for (int i = 0; i < 2 && i < s->n_pred; i++)
+        add_or_update_assignment(s->assignments, &s->n_assignments, s->pred_lines[i],
+                                 s->pred_lines[i].freq_mhz, 0.0, s->xiam.model_id);
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    CHECK(xiam_fit(s), "fit e previsione aggiornati con XIAM v0.44");
+    CHECK(s->n_pred > 100, "fit XIAM rigenera la previsione nativa");
+    if (bj >= 0) CHECK(s->xiam.params[bj].error_ghz >= 0.0, "report XIAM aggiorna errore BJ");
+    DONE();
+}
+
 /* T-09: the blended pair at 392.7959 MHz of pred.cat, assigned with one click to
    one peak, comes back as two assignments. */
 static int test_blend_pair_survives_reload(void) {
@@ -3473,6 +3498,7 @@ static const Test TESTS[] = {
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
+    {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
     {"test_reload_reports_collisions",         test_reload_reports_collisions},

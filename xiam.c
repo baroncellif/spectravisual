@@ -386,8 +386,10 @@ static void xiam_write_assignment(FILE *fp, const Assignment *a) {
     fprintf(fp, " S %d", p->xiam.su);
     if (p->xiam.vu || p->xiam.vl) fprintf(fp, " V %d", p->xiam.vu);
     if (p->xiam.bu || p->xiam.bl) fprintf(fp, " B %d", p->xiam.bu);
-    if (p->xiam.ku || p->xiam.kl) fprintf(fp, " K %d %d", p->xiam.ku,p->xiam.kl);
-    if (p->xiam.tu || p->xiam.tl) fprintf(fp, " t %d %d", p->xiam.tu,p->xiam.tl);
+    /* K and t appended to a native prediction line are output annotations,
+       not a safe inverse-input syntax.  The first six rotor QNs are XIAM's
+       canonical K-/K+ form and v0.44 derives tau from them when a fit line is
+       read.  Re-emitting both annotations can instead zero that derivation. */
     fprintf(fp, " = %.9f MHz Err 0.010\n", a->exp_freq);
 }
 
@@ -437,13 +439,24 @@ static void xiam_clamp_assignment_scroll(AppState *s, int rows) {
 
 static int xiam_write_input(AppState *s, const char *path, int fitting) {
     XiamState *x = &s->xiam; FILE *fp = fopen(path, "w"); if (!fp) return 0;
-    int wrote_fit_choices = 0;
+    int wrote_fit_choices = 0, source_block = 0;
     for (int i = 0; i < x->n_source_lines; i++) {
         char current[256], key[64] = "", *at;
         snprintf(current, sizeof(current), "%s", x->source_lines[i]); at = xiam_ltrim(current);
         char lower[256]; xiam_lower(lower, sizeof(lower), at);
-        if (fitting && !wrote_fit_choices && xiam_is_comment(at) && strstr(lower, "block v")) {
+        /* XIAM uses the blank line immediately after Block IV as the end of
+           its fitting-directive section.  Inserting just before the Block V
+           title would be one block too late and makes “dqu BJ” look like a
+           malformed torsional-symmetry/transition record. */
+        if (fitting && !wrote_fit_choices && source_block == 4 && !*at) {
             xiam_write_fit_choices(fp, x); wrote_fit_choices = 1;
+        }
+        if (xiam_is_comment(at)) {
+            if (strstr(lower, "block iv")) source_block = 4;
+            else if (strstr(lower, "block v")) {
+                if (fitting && !wrote_fit_choices) { xiam_write_fit_choices(fp, x); wrote_fit_choices = 1; }
+                source_block = 5;
+            }
         }
         if (!xiam_is_comment(at)) sscanf(at, "%63s", key);
         if (fitting && xiam_line_is_transition(current)) { fprintf(fp, "\\%s\n", current); continue; }
