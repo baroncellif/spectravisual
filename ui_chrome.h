@@ -25,6 +25,7 @@ typedef enum {
     UI_TOOL_JUMP,
     UI_TOOL_SPECTRA,
     UI_TOOL_PREDFIT,
+    UI_TOOL_XIAM,
     UI_TOOL_COUNT
 } UiTool;
 

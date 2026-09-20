@@ -1477,6 +1477,7 @@ int predfit_move_species(AppState *s, int index, int delta) {
 }
 
 static int assignment_belongs_to_active_hamiltonian(const AppState *s, const Assignment *a) {
+    if (a->pred.backend == PRED_BACKEND_XIAM) return 0;
     int active_id = predfit_active_hamiltonian_id(s);
     /* Pre-v2 assignment files have no owner. Their one-model semantics maps
        unambiguously to H1 and never to a later duplicated Hamiltonian. */

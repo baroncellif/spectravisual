@@ -60,9 +60,11 @@ void settings_restore_defaults(AppState *s) {
        makes a harmless visual reset destroy a working configuration. */
     char spcat_path[sizeof(d->spcat_path)];
     char spfit_path[sizeof(d->spfit_path)];
+    char xiam_path[sizeof(d->xiam_path)];
     char data_dir[sizeof(d->data_dir)];
     snprintf(spcat_path, sizeof(spcat_path), "%s", d->spcat_path);
     snprintf(spfit_path, sizeof(spfit_path), "%s", d->spfit_path);
+    snprintf(xiam_path, sizeof(xiam_path), "%s", d->xiam_path);
     snprintf(data_dir, sizeof(data_dir), "%s", d->data_dir);
     d->trace_width = 1;
     for (int i = 0; i < MAX_SPECTRA; i++) d->trace_color[i] = DEFAULT_TRACE[i];
@@ -100,6 +102,7 @@ void settings_restore_defaults(AppState *s) {
     d->edit_id = -1;
     snprintf(d->spcat_path, sizeof(d->spcat_path), "%s", spcat_path);
     snprintf(d->spfit_path, sizeof(d->spfit_path), "%s", spfit_path);
+    snprintf(d->xiam_path, sizeof(d->xiam_path), "%s", xiam_path);
     snprintf(d->data_dir, sizeof(d->data_dir), "%s", data_dir);
 }
 
@@ -167,6 +170,7 @@ int settings_save(AppState *s) {
 
     if (d->spcat_path[0]) fprintf(fp, "spcat_path %s\n", d->spcat_path);
     if (d->spfit_path[0]) fprintf(fp, "spfit_path %s\n", d->spfit_path);
+    if (d->xiam_path[0])  fprintf(fp, "xiam_path %s\n", d->xiam_path);
     if (d->data_dir[0])   fprintf(fp, "data_dir %s\n", d->data_dir);
     fclose(fp);
     snprintf(d->status, sizeof(d->status), "Saved as default in %s", g_path);
@@ -226,6 +230,7 @@ static void settings_load(AppState *s) {
         else if (!strcmp(key, "def_int_max"))          d->def_int_max = atof(value);
         else if (!strcmp(key, "spcat_path"))  snprintf(d->spcat_path, sizeof(d->spcat_path), "%s", value);
         else if (!strcmp(key, "spfit_path"))  snprintf(d->spfit_path, sizeof(d->spfit_path), "%s", value);
+        else if (!strcmp(key, "xiam_path"))   snprintf(d->xiam_path, sizeof(d->xiam_path), "%s", value);
         else if (!strcmp(key, "data_dir"))    snprintf(d->data_dir, sizeof(d->data_dir), "%s", value);
         else if (!strncmp(key, "trace_color", 11)) {
             int idx = atoi(key + 11);
@@ -427,7 +432,7 @@ typedef enum {
     ID_LORENTZ, ID_GAUSS, ID_KBETA, ID_KCEROS, ID_KINTR, ID_LINE_ERROR,
     ID_INT_MIN, ID_INT_MAX,
     /* paths */
-    ID_SPCAT, ID_SPFIT, ID_DATA_DIR,
+    ID_SPCAT, ID_SPFIT, ID_XIAM, ID_DATA_DIR,
     /* footer */
     ID_SAVE, ID_RESET
 } SCtlId;
@@ -546,6 +551,7 @@ static char *path_value(AppState *s, int id) {
     switch (id) {
         case ID_SPCAT:    return s->settings.spcat_path;
         case ID_SPFIT:    return s->settings.spfit_path;
+        case ID_XIAM:     return s->settings.xiam_path;
         case ID_DATA_DIR: return s->settings.data_dir;
         default:          return NULL;
     }
@@ -684,6 +690,11 @@ static int build_controls(AppState *s, SCtl *out, int max, int w, int h) {
         PUSH(SC_NOTE, 0, NULL,
              "Pred&Fit runs these two. Without them Calculate and Fit report what is\n"
              "missing instead of failing silently.", 0, 44);
+        HEAD("XIAM");
+        PUSH(SC_PATH, ID_XIAM, "XIAM-2NQ v0.44", NULL, 110, SETTINGS_ROW + 14);
+        PUSH(SC_NOTE, 0, NULL,
+             "The dedicated XIAM window uses this executable with native .xi/.xo files.\n"
+             "It is separate from the Pickett programs.", 0, 44);
         y += 6;
         HEAD("Working files");
         PUSH(SC_PATH, ID_DATA_DIR, "Data folder", NULL, 110, SETTINGS_ROW + 14);
@@ -965,6 +976,7 @@ int settings_handle_event(AppState *s, const SDL_Event *e) {
                 char picked[512];
                 const char *prompt = ctl[i].id == ID_SPCAT ? "Select the SPCAT program"
                                    : ctl[i].id == ID_SPFIT ? "Select the SPFIT program"
+                                   : ctl[i].id == ID_XIAM ? "Select XIAM-2NQ v0.44"
                                                            : "Select the data folder";
                 if (pick_path(prompt, ctl[i].id == ID_DATA_DIR, picked, sizeof(picked))) {
                     snprintf(p, 512, "%s", picked);

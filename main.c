@@ -15,6 +15,7 @@
 #include "intensity_fit.h"
 #include "predfit.h"
 #include "settings.h"
+#include "xiam.h"
 #include "plotgpu.h"
 
 static int add_spectrum(AppState *state, const char *path);
@@ -70,7 +71,9 @@ static void init_app_defaults(AppState *state) {
     state->win_dip  = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 620}, 0, "Intensity analysis"};
     state->win_spec = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 360}, 0, "Spectra"};
     state->win_predfit = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 430}, 0, "Pred&Fit"};
+    state->win_xiam = (DraggableWindow){{0, 0, UI_INSPECTOR_W, 100}, 0, "XIAM"};
     predfit_init(state);
+    xiam_init(state);
 
     state->n_spectra = 0;
     state->active_spec = -1;
@@ -306,7 +309,7 @@ static void drop_pending_plot_loads(AppState *state) {
     for (int i = 0; i < state->pending_load_count; i++) {
         int from = (state->pending_load_head + i) % MAX_PENDING_LOADS;
         PendingLoadKind kind = state->pending_loads[from].kind;
-        if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION) continue;
+        if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION || kind == PENDING_LOAD_XIAM_OUTPUT) continue;
         int to = (state->pending_load_head + kept) % MAX_PENDING_LOADS;
         if (to != from) state->pending_loads[to] = state->pending_loads[from];
         kept++;
@@ -317,7 +320,7 @@ static void drop_pending_plot_loads(AppState *state) {
 int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
                              const char *path, int generated_catalog) {
     if (!state || !path || !path[0]) return 0;
-    if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION)
+    if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION || kind == PENDING_LOAD_XIAM_OUTPUT)
         drop_pending_plot_loads(state);
     if (state->pending_load_count >= MAX_PENDING_LOADS) {
         snprintf(state->error_message, sizeof(state->error_message),
@@ -572,6 +575,12 @@ static void process_pending_loads(AppState *state) {
                 set_predictions(state, request.path);
                 if (request.generated_catalog) predfit_adopt_generated_catalog(state);
                 break;
+            case PENDING_LOAD_XIAM_INPUT:
+                xiam_load_input_file(state, request.path);
+                break;
+            case PENDING_LOAD_XIAM_OUTPUT:
+                xiam_load_output_file(state, request.path);
+                break;
             case PENDING_LOAD_SIMULATION:
                 set_predictions_simulated(state);
                 break;
@@ -648,6 +657,8 @@ int main(int argc, char *argv[])
     const char *spec_args[MAX_SPECTRA];
     int n_spec_args = 0;
     const char *pred_arg = NULL;
+    const char *xiam_input_arg = NULL;
+    const char *xiam_output_arg = NULL;
     const char *session_arg = NULL;
     for (int k = argi; k < argc; k++) {
         int len = (int)strlen(argv[k]);
@@ -657,6 +668,8 @@ int main(int argc, char *argv[])
            below, the way dropping it on the window opens it. */
         if (strcmp(base, "spectravisual.state") == 0) { session_arg = argv[k]; continue; }
         if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
+        else if (len >= 3 && strcmp(argv[k] + len - 3, ".xi") == 0) xiam_input_arg = argv[k];
+        else if (len >= 3 && strcmp(argv[k] + len - 3, ".xo") == 0) xiam_output_arg = argv[k];
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 
@@ -703,6 +716,8 @@ int main(int argc, char *argv[])
        means "this session, but that prediction". */
     if (session_arg) reopen_predfit_session(&state);
     if (pred_arg) app_enqueue_pending_load(&state, PENDING_LOAD_CATALOG, pred_arg, 0);
+    if (xiam_input_arg) app_enqueue_pending_load(&state, PENDING_LOAD_XIAM_INPUT, xiam_input_arg, 0);
+    if (xiam_output_arg) app_enqueue_pending_load(&state, PENDING_LOAD_XIAM_OUTPUT, xiam_output_arg, 0);
     for (int k = 0; k < n_spec_args; k++) add_spectrum(&state, spec_args[k]);
     /* Command-line files other than a session are a fresh task: they never
        cause a hidden restore or overwrite an existing Pred&Fit session. */
@@ -730,6 +745,7 @@ int main(int argc, char *argv[])
         process_pending_loads(&state);
         restore_session_view(&state);
         predfit_render_advanced(&state);
+        xiam_render(&state);
         intensity_analysis_poll(&state);
         intensity_analysis_render(&state);
         settings_render(&state);
@@ -757,6 +773,7 @@ int main(int argc, char *argv[])
     settings_dispose(&state);
     intensity_analysis_dispose(&state);
     predfit_dispose(&state);
+    xiam_dispose(&state);
     ui_fonts_close();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

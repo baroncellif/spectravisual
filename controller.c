@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "intensity_fit.h"
 #include "predfit.h"
+#include "xiam.h"
 #include "layout.h"
 #include "ui_chrome.h"
 #include "ui_panels.h"
@@ -29,6 +30,8 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
 static void clamp_assignment_scroll(AppState *s);
 static void commit_text_input(AppState *s);
 static int path_looks_like_cat(const char *path);
+static int path_looks_like_xiam_input(const char *path);
+static int path_looks_like_xiam_output(const char *path);
 static const PredLine *current_assignment_prediction(const AppState *s, const Assignment *a);
 int save_assignments(AppState *s);
 
@@ -41,7 +44,11 @@ static const PredLine *current_assignment_prediction(const AppState *s, const As
     const PredLine *q = &a->pred;
     for (int i = 0; i < s->n_pred; i++) {
         const PredLine *p = &s->pred_lines[i];
-        if (p->hamiltonian_id != a->hamiltonian_id) continue;
+        if (p->hamiltonian_id != a->hamiltonian_id || p->backend != q->backend) continue;
+        if (p->backend == PRED_BACKEND_XIAM) {
+            if (xiam_same_transition(p, q)) return p;
+            continue;
+        }
         if (p->n_qn != q->n_qn) continue;
         if (p->Ju == q->Ju && p->Kau == q->Kau && p->Kcu == q->Kcu &&
             p->M1u == q->M1u && p->M2u == q->M2u && p->M3u == q->M3u &&
@@ -102,7 +109,7 @@ int save_assignments(AppState *s) {
     /* The header names the layout and its version, so the reader never has
        to guess it from a row (a .lin has the same field count). */
     fprintf(fp, "# SpectraVisual assignments, format %d: upper QNs, lower QNs (SPFIT .lin order), "
-                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN HamiltonianID\n", ASSIGNMENT_FORMAT);
+                "ObsFreq(MHz) CalcFreq(MHz) CalcIntensity NQN HamiltonianID Backend CAT_LGINT XIAM-state\n", ASSIGNMENT_FORMAT);
     int written = 0, skipped = 0;
     for (int k = 0; k < s->n_assignments; k++) {
         PredLine p2 = *current_assignment_prediction(s, &s->assignments[k]);
@@ -117,9 +124,13 @@ int save_assignments(AppState *s) {
         for (int q = 0; q < nq; q++) fprintf(fp, "%3d", lower[q]);
         /* Match the .lin's fixed 12I3 quantum-number field. */
         for (int q = 2 * nq; q < 12; q++) fputs("   ", fp);
-        fprintf(fp, "%15.6f %15.6f %15.6E %d %d\n",
+        fprintf(fp, "%15.6f %15.6f %15.6E %d %d %d %.12g"
+                    " %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                 s->assignments[k].exp_freq, p2.freq_mhz,
-                p2.linear_int, nq, s->assignments[k].hamiltonian_id);
+                p2.linear_int, nq, s->assignments[k].hamiltonian_id, (int)p2.backend, p2.cat_lgint,
+                p2.xiam.f1u,p2.xiam.f1l,p2.xiam.fu,p2.xiam.fl,
+                p2.xiam.su,p2.xiam.sl,p2.xiam.vu,p2.xiam.vl,
+                p2.xiam.bu,p2.xiam.bl,p2.xiam.ku,p2.xiam.kl,p2.xiam.tu,p2.xiam.tl);
         written++;
     }
     int failed = ferror(fp);
@@ -240,6 +251,7 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         if (e.type == SDL_QUIT) { *running = 0; return; }
         if (intensity_analysis_handle_event(state, &e)) continue;
         if (predfit_handle_advanced_event(state, &e)) continue;
+        if (xiam_handle_event(state, &e)) continue;
         if (settings_handle_event(state, &e)) continue;
 
         Uint32 window_id = 0;
@@ -248,7 +260,8 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
         else if (e.type == SDL_WINDOWEVENT) window_id = e.window.windowID;
         int secondary = window_id != 0 &&
             (window_id == state->predfit.advanced_window_id || window_id == state->settings.window_id ||
-             window_id == state->intensity_window.window_id || window_id == state->intensity_window.preview_window_id);
+             window_id == state->intensity_window.window_id || window_id == state->intensity_window.preview_window_id ||
+             window_id == state->xiam.window_id);
         if (secondary && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
             state->input_state != INPUT_NONE) {
             state->input_last = (int)state->input_state;
@@ -326,6 +339,8 @@ void handle_app_events(AppState *state, Layout *l, int *running) {
             case SDL_DROPFILE: {
                 char *path = e.drop.file;
                 PendingLoadKind kind = path_looks_like_cat(path) ? PENDING_LOAD_CATALOG
+                    : path_looks_like_xiam_input(path) ? PENDING_LOAD_XIAM_INPUT
+                    : path_looks_like_xiam_output(path) ? PENDING_LOAD_XIAM_OUTPUT
                     : predfit_is_session_file(state, path) ? PENDING_LOAD_SESSION
                     : PENDING_LOAD_SPECTRUM;
                 app_enqueue_pending_load(state, kind, path, 0);
@@ -434,7 +449,7 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     if (!s->viewer_readonly) {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit, &s->win_xiam
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             DraggableWindow *p = panels[t];
@@ -730,13 +745,17 @@ static void handle_mouse_down(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
     if (b->button == SDL_BUTTON_LEFT) {
         DraggableWindow *panels[UI_TOOL_COUNT] = {
             &s->win_as, &s->win_pf, &s->win_avg, &s->win_br,
-            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit
+            &s->win_dip, &s->win_cut, &s->win_filt, &s->win_jump, &s->win_spec, &s->win_predfit, &s->win_xiam
         };
         for (int t = 0; t < UI_TOOL_COUNT; t++) {
             if (point_in_rect(mx, my, ui_rail_rect(t))) {
                 if (s->viewer_readonly) return;
                 if (t == UI_TOOL_DIP) {
                     intensity_analysis_open(s);
+                    return;
+                }
+                if (t == UI_TOOL_XIAM) {
+                    xiam_open(s);
                     return;
                 }
                 panels[t]->visible = !panels[t]->visible;
@@ -1188,6 +1207,14 @@ static int path_looks_like_cat(const char *path) {
     size_t len = strlen(path);
     return len >= 4 && strcmp(path + len - 4, ".cat") == 0;
 }
+static int path_looks_like_xiam_input(const char *path) {
+    size_t len = strlen(path);
+    return len >= 3 && strcmp(path + len - 3, ".xi") == 0;
+}
+static int path_looks_like_xiam_output(const char *path) {
+    size_t len = strlen(path);
+    return len >= 3 && strcmp(path + len - 3, ".xo") == 0;
+}
 
 // --- KEYBOARD ---
 static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
@@ -1217,6 +1244,7 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
         if (sym == SDLK_f) { predfit_fit(s); return; }            /* run SPFIT      */
         if (sym == SDLK_b) { predfit_undo_last_fit(s); return; }  /* undo that fit  */
         if (sym == SDLK_s) { save_predfit_session(s); return; }   /* save session   */
+        if (sym == SDLK_i) { xiam_open(s); return; }
     }
     if (sym == SDLK_COMMA) { settings_open(s); return; }
     if (sym == SDLK_h || sym == SDLK_SLASH) {

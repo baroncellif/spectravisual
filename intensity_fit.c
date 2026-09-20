@@ -114,6 +114,11 @@ int intensity_fit_integrate_area(const AppState *s, double center, double half_w
 static double line_model(const AppState *s, const PredLine *p, double temp_k) {
     double out = pow(10.0, p->cat_lgint);
     if (!(out > 0.0) || !isfinite(out)) return 0.0;
+    /* XIAM already printed the SPCAT intensity selected by the user.  Its
+       .xo record does not contain the CAT thermodynamic fields needed for a
+       Pickett-style extrapolation, so intensity analysis fits its native
+       values rather than silently inventing a temperature correction. */
+    if (p->intensity_native) return out;
     int c = dipole_component(p->mu);
     if (c >= 0 && s->dipole_cat[c] != 0.0 && s->dipole_red[c] != 0.0)
         out *= (s->dipole_red[c] * s->dipole_red[c]) /

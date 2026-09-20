@@ -379,6 +379,12 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
     double max_int = -1.0;
     for (int i = 0; i < n; i++) {
         PredLine *p = &lines[i];
+        if (p->intensity_native) {
+            p->lgint = p->cat_lgint;
+            p->linear_int = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+            if (p->linear_int > max_int) max_int = p->linear_int;
+            continue;
+        }
         if (!valid_temps) {
             p->lgint = p->cat_lgint;
             p->linear_int = pow(10.0, p->cat_lgint);
@@ -420,6 +426,11 @@ void rescale_predicted_intensities(PredLine *lines, int n, double cat_temp_k,
 static void rescale_line_by_species(PredLine *p, double cat_temp_k, double rot_temp_k,
                                     const PickettSpecies *species, int n_species)
 {
+    if (p->intensity_native) {
+        p->lgint = p->cat_lgint;
+        p->linear_int = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+        return;
+    }
     const double c2 = 1.438776877;
     const double mhz_per_cm = 29979.2458;
     /* In SPCAT's multistate rotational record the first three QNs are rotor
@@ -473,6 +484,12 @@ void rescale_predicted_intensities_multi(PredLine *lines, int n,
     double max_int = -1.0;
     for (int i = 0; i < n; i++) {
         PredLine *p = &lines[i];
+        if (p->intensity_native) {
+            p->lgint = p->cat_lgint;
+            p->linear_int = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+            if (p->linear_int > max_int) max_int = p->linear_int;
+            continue;
+        }
         const PredIntensityModel *m = NULL;
         for (int k = 0; k < n_models; k++)
             if (models[k].hamiltonian_id == p->hamiltonian_id) { m = &models[k]; break; }
@@ -605,6 +622,19 @@ int read_data_alloc(const char *fname, Point **pts,
 }
 
 static int same_assignment_transition(const PredLine *a, const PredLine *b) {
+    if (a->backend == PRED_BACKEND_XIAM || b->backend == PRED_BACKEND_XIAM) {
+        if (a->backend != PRED_BACKEND_XIAM || b->backend != PRED_BACKEND_XIAM ||
+            !a->xiam.present || !b->xiam.present) return 0;
+        return a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
+               a->Jl == b->Jl && a->Kal == b->Kal && a->Kcl == b->Kcl &&
+               a->xiam.f1u == b->xiam.f1u && a->xiam.f1l == b->xiam.f1l &&
+               a->xiam.fu == b->xiam.fu && a->xiam.fl == b->xiam.fl &&
+               a->xiam.su == b->xiam.su && a->xiam.sl == b->xiam.sl &&
+               a->xiam.vu == b->xiam.vu && a->xiam.vl == b->xiam.vl &&
+               a->xiam.bu == b->xiam.bu && a->xiam.bl == b->xiam.bl &&
+               a->xiam.ku == b->xiam.ku && a->xiam.kl == b->xiam.kl &&
+               a->xiam.tu == b->xiam.tu && a->xiam.tl == b->xiam.tl;
+    }
     return a->n_qn == b->n_qn &&
            a->Ju  == b->Ju  && a->Kau == b->Kau && a->Kcu == b->Kcu &&
            a->M1u == b->M1u && a->M2u == b->M2u && a->M3u == b->M3u &&
@@ -682,7 +712,7 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
    CalcFreq and CalcIntensity are.  A file without that header is read only in
    the two layouts written before the header existed. */
 
-typedef struct { double v[32]; int integer[32]; int n; } NumberRow;
+typedef struct { double v[48]; int integer[48]; int n; } NumberRow;
 
 static int number_separator(char c) {
     return c == ' ' || c == '\t' || c == '|' || c == ',' || c == '\r' || c == '\n';
@@ -696,7 +726,7 @@ static int split_numbers(const char *line, NumberRow *row) {
     for (;;) {
         while (*q && number_separator(*q)) q++;
         if (!*q) break;
-        if (row->n >= 32) return -1;
+        if (row->n >= 48) return -1;
         char *end = NULL;
         double x = strtod(q, &end);
         if (end == q || (*end && !number_separator(*end))) return -1;
@@ -721,10 +751,11 @@ static void set_row_qn(PredLine *p, const double *upper, const double *lower, in
     for (int i = 0; i < nq; i++) { *u[i] = (int)lround(upper[i]); *l[i] = (int)lround(lower[i]); }
 }
 
-/* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity, NQN. */
+/* A row of the current layout: 2 NQN QN, ObsFreq, CalcFreq, CalcIntensity,
+ * NQN, owner and (from format 3) backend/native XIAM identity. */
 static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
                                 double *exp_freq, int *hamiltonian_id) {
-    int tail = format >= 2 ? 2 : 1;
+    int tail = format >= 3 ? 18 : format >= 2 ? 2 : 1;
     if (r->n < 5 + tail || !r->integer[r->n - tail]) return 0;
     int nq = (int)lround(r->v[r->n - tail]);
     if (nq < 1 || nq > 6 || r->n != 2 * nq + 3 + tail || !all_integers(r, 0, 2 * nq)) return 0;
@@ -736,8 +767,26 @@ static int parse_assignment_row(const NumberRow *r, int format, PredLine *p,
     p->n_qn = nq;
     *hamiltonian_id = 0;
     if (format >= 2) {
-        if (!r->integer[r->n - 1] || r->v[r->n - 1] < 0.0 || r->v[r->n - 1] > INT_MAX) return 0;
-        *hamiltonian_id = (int)lround(r->v[r->n - 1]);
+        int at = r->n - tail + 1;
+        if (!r->integer[at] || r->v[at] < INT_MIN || r->v[at] > INT_MAX) return 0;
+        *hamiltonian_id = (int)lround(r->v[at]);
+    }
+    if (format >= 3) {
+        int at = r->n - tail + 2;
+        if (!r->integer[at] || r->v[at] < PRED_BACKEND_EXTERNAL || r->v[at] > PRED_BACKEND_XIAM) return 0;
+        p->backend = (PredictionBackend)lround(r->v[at]);
+        p->cat_lgint = r->v[at + 1];
+        const double *m = &r->v[at + 2];
+        int *dst[] = {&p->xiam.f1u,&p->xiam.f1l,&p->xiam.fu,&p->xiam.fl,
+                      &p->xiam.su,&p->xiam.sl,&p->xiam.vu,&p->xiam.vl,
+                      &p->xiam.bu,&p->xiam.bl,&p->xiam.ku,&p->xiam.kl,
+                      &p->xiam.tu,&p->xiam.tl};
+        for (int i = 0; i < 14; i++) {
+            if (!r->integer[at + 2 + i] || m[i] < INT_MIN || m[i] > INT_MAX) return 0;
+            *dst[i] = (int)lround(m[i]);
+        }
+        p->xiam.present = p->backend == PRED_BACKEND_XIAM;
+        p->intensity_native = p->xiam.present;
     }
     return 1;
 }

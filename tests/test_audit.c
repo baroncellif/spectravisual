@@ -1164,6 +1164,43 @@ static int test_roundtrip_every_qnfmt(void) {
     DONE();
 }
 
+/* XIAM stays native: the parser must read the .xo MHz conversion, precisely
+ * the printed SPCAT intensity, and all state labels which a CAT would lose. */
+static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "input XIAM 2N letto");
+    CHECK_INT("spin primo N", s->xiam.spin, 2);
+    CHECK_INT("spin secondo N", s->xiam.spin2, 2);
+    int chi = -1;
+    for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "chi_z")) { chi = i; break; }
+    CHECK(chi >= 0, "chi_z presente fra i parametri XIAM");
+    if (chi >= 0) CHECK_DBL("chi_z GUI applica la convenzione /2", s->xiam.params[chi].value_ghz * 500.0, 1.1333335, 1e-7);
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "output XIAM 2N letto");
+    const PredLine *picked = NULL;
+    for (int i = 0; i < s->n_pred; i++) if (fabs(s->pred_lines[i].freq_mhz - 85557.690) < 0.001) { picked = &s->pred_lines[i]; break; }
+    CHECK(picked != NULL, "riga 2N/F1/F individuata");
+    if (picked) {
+        CHECK_INT("backend XIAM", picked->backend, PRED_BACKEND_XIAM);
+        CHECK_DBL("GHz -> MHz", picked->freq_mhz, 85557.690, 1e-6);
+        CHECK_DBL("SPCAT intensity nativa", picked->cat_lgint, -5.0756, 1e-9);
+        CHECK_INT("NQN interfaccia", picked->n_qn, 6);
+        CHECK_INT("F1 upper", picked->xiam.f1u, 4); CHECK_INT("F1 lower", picked->xiam.f1l, 2);
+        CHECK_INT("F upper", picked->xiam.fu, 6); CHECK_INT("F lower", picked->xiam.fl, 4);
+        CHECK_INT("S", picked->xiam.su, 1); CHECK_INT("V", picked->xiam.vu, 1);
+        add_or_update_assignment(s->assignments, &s->n_assignments, *picked, 85557.700, 0.0, -1);
+        CHECK(save_assignments(s), "assegnazione XIAM salvata");
+        Assignment restored[MAX_ASSIGNMENTS]; int n = 0; AssignmentFileReport report;
+        char assignments[700]; settings_data_file(s, "assignments.txt", assignments, sizeof(assignments));
+        load_assignments_file(assignments, restored, &n, &report);
+        CHECK_INT("assegnazione XIAM ripristinata", n, 1);
+        if (n) {
+            CHECK(xiam_same_transition(&restored[0].pred, picked), "identita XIAM completa persistita");
+            CHECK_DBL("intensita XIAM persistita", restored[0].pred.cat_lgint, -5.0756, 1e-9);
+        }
+    }
+    DONE();
+}
+
 /* T-09: the blended pair at 392.7959 MHz of pred.cat, assigned with one click to
    one peak, comes back as two assignments. */
 static int test_blend_pair_survives_reload(void) {
@@ -3354,6 +3391,7 @@ static const Test TESTS[] = {
     {"test_selection_cleared_on_catalog_change", test_selection_cleared_on_catalog_change},
     {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
     {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
+    {"test_xiam_native_prediction_and_assignment_roundtrip", test_xiam_native_prediction_and_assignment_roundtrip},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
     {"test_reload_reports_collisions",         test_reload_reports_collisions},

@@ -1086,7 +1086,7 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 
     const DraggableWindow *panels[UI_TOOL_COUNT] = {
         &state->win_as, &state->win_pf, &state->win_avg, &state->win_br,
-        &state->win_dip, &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec, &state->win_predfit
+        &state->win_dip, &state->win_cut, &state->win_filt, &state->win_jump, &state->win_spec, &state->win_predfit, &state->win_xiam
     };
 
     int tip_tool = -1;
@@ -1094,7 +1094,7 @@ static void draw_rail(SDL_Renderer *ren, AppState *state, Layout *l) {
 
     for (int t = 0; t < UI_TOOL_COUNT; t++) {
         SDL_Rect r = ui_rail_rect(t);
-        int on = t == UI_TOOL_DIP ? state->intensity_window.open : panels[t]->visible;
+        int on = t == UI_TOOL_DIP ? state->intensity_window.open : t == UI_TOOL_XIAM ? state->xiam.open : panels[t]->visible;
         int hover = ui_button(ren, r, "", ui_tool_icon(t), UI_BTN_QUIET, on, mx, my, mdown);
         if (on) {
             SDL_Rect mark = {0, r.y + 6, 2, r.h - 12};

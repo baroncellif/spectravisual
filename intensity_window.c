@@ -124,6 +124,22 @@ static int collect_predfit_species(const AppState *s, IntensityFitSpecies *out, 
             }
         }
     }
+    /* XIAM has exactly one model per .xi, not a Pickett multi-species tree.
+       Still expose its assigned native predictions to the common intensity
+       analysis so concentration/scale work remains available. */
+    int have_xiam = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].pred.backend == PRED_BACKEND_XIAM) { have_xiam = 1; break; }
+    if (have_xiam && n < cap) {
+        IntensityFitSpecies *dst = &out[n++];
+        memset(dst, 0, sizeof(*dst));
+        dst->hamiltonian_id = -1; dst->state_index = -1;
+        snprintf(dst->name, sizeof(dst->name), "XIAM");
+        snprintf(dst->backend_name, sizeof(dst->backend_name), "XIAM");
+        dst->included = 1; dst->temperature_group = 1; dst->concentration = 1.0;
+        dst->temperature_k = dst->cat_temperature_k = s->xiam.temperature_k > 0.0 ? s->xiam.temperature_k : 1.0;
+        dst->fitted_concentration = 1.0; dst->fitted_temperature_k = dst->temperature_k;
+    }
     return n;
 }
 
@@ -197,6 +213,11 @@ static int extract_observation(const AppState *s, double center, int mode, doubl
 }
 
 static int find_species(const IntensityFitWindow *w, const Assignment *a) {
+    if (a->pred.backend == PRED_BACKEND_XIAM) {
+        for (int i = 0; i < w->n_species; i++)
+            if (w->species[i].hamiltonian_id == -1 && w->species[i].state_index == -1) return i;
+        return -1;
+    }
     int state = a->pred.n_qn >= 4 ? a->pred.M1l : 0;
     for (int i=0;i<w->n_species;i++)
         if (w->species[i].hamiltonian_id == a->hamiltonian_id && w->species[i].state_index == state) return i;
@@ -222,6 +243,7 @@ static int collect_observations(const AppState *s, IfObservation **out) {
 }
 
 static double temperature_factor(const PredLine *p, double tcat, double tret) {
+    if (p->intensity_native) return 1.0;
     if (!(tcat>0.0) || !(tret>0.0)) return 1.0;
     double nu=p->freq_mhz/IF_MHZ_PER_CM;
     double stim_r=-expm1(-IF_C2*nu/tret), stim_c=-expm1(-IF_C2*nu/tcat);
@@ -375,6 +397,15 @@ static int if_temp_qn(const Assignment *a, const IntensityFitSpecies *species,
 
 static int if_same_temp_transition(const Assignment *a, const IntensityFitSpecies *a_species,
                                    const Assignment *b, const IntensityFitSpecies *b_species) {
+    if (a->pred.backend == PRED_BACKEND_XIAM || b->pred.backend == PRED_BACKEND_XIAM) {
+        if (a->pred.backend != PRED_BACKEND_XIAM || b->pred.backend != PRED_BACKEND_XIAM) return 0;
+        const XiamTransitionMeta *x=&a->pred.xiam, *y=&b->pred.xiam;
+        return a->pred.Ju==b->pred.Ju && a->pred.Kau==b->pred.Kau && a->pred.Kcu==b->pred.Kcu &&
+               a->pred.Jl==b->pred.Jl && a->pred.Kal==b->pred.Kal && a->pred.Kcl==b->pred.Kcl &&
+               x->f1u==y->f1u && x->f1l==y->f1l && x->fu==y->fu && x->fl==y->fl &&
+               x->su==y->su && x->sl==y->sl && x->vu==y->vu && x->vl==y->vl &&
+               x->bu==y->bu && x->bl==y->bl && x->ku==y->ku && x->kl==y->kl && x->tu==y->tu && x->tl==y->tl;
+    }
     int aqn[12], bqn[12];
     int an = if_temp_qn(a, a_species, aqn);
     int bn = if_temp_qn(b, b_species, bqn);

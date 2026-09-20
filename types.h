@@ -18,6 +18,27 @@
 #define MAX_PICKETT_HAMILTONIANS 16
 #define MAX_INTFIT_SPECIES (MAX_PICKETT_SPECIES * MAX_PICKETT_HAMILTONIANS)
 #define MAX_INTFIT_GROUPS MAX_INTFIT_SPECIES
+#define MAX_XIAM_PARAMS 512
+#define MAX_XIAM_SOURCE_LINES 4096
+
+/* A prediction can be a normal Pickett catalogue, an externally supplied
+ * catalogue, or XIAM's native .xo output.  XIAM is deliberately not another
+ * Pickett species: one .xi is one Hamiltonian/model. */
+typedef enum {
+    PRED_BACKEND_EXTERNAL = 0,
+    PRED_BACKEND_PICKETT,
+    PRED_BACKEND_XIAM
+} PredictionBackend;
+
+/* XIAM can print more state labels than a CAT QNFMT can carry.  The familiar
+ * fields in PredLine retain J/Ka/Kc/(F1,F)/S for the common UI, while this
+ * complete identity prevents two tunnelling/hyperfine components from being
+ * merged just because their displayed six QNs happen to agree. */
+typedef struct {
+    int present;
+    int f1u, f1l, fu, fl;
+    int su, sl, vu, vl, bu, bl, ku, kl, tu, tl;
+} XiamTransitionMeta;
 
 // --- DATA STRUCTURES ---
 
@@ -61,6 +82,8 @@ typedef struct {
 typedef enum {
     PENDING_LOAD_SPECTRUM,
     PENDING_LOAD_CATALOG,
+    PENDING_LOAD_XIAM_INPUT,
+    PENDING_LOAD_XIAM_OUTPUT,
     PENDING_LOAD_SESSION,
     PENDING_LOAD_SIMULATION   /* merge the catalogues listed in predfit.simulated */
 } PendingLoadKind;
@@ -86,6 +109,9 @@ typedef struct {
     char branch;       
     char mu;           
     int hamiltonian_id; /* 0 = external/legacy; >0 = generated model owner */
+    PredictionBackend backend;
+    int intensity_native; /* XIAM's printed SPCAT intensity: never re-scaled */
+    XiamTransitionMeta xiam;
 } PredLine;
 
 typedef struct {
@@ -362,6 +388,47 @@ typedef struct {
     char status[160];
 } PredFitState;
 
+typedef struct {
+    char name[48];             /* spelling preserved from the active .xi line */
+    double value_ghz;
+    double error_ghz;
+    int source_line;           /* line in source_lines; -1 for a derived value */
+    int fit_method;            /* XIAM fit/dqu/dqx selector; 0 means not fitted */
+    int is_quadrupole;         /* UI MHz = XIAM GHz * 1000 / 2 */
+    int is_frequency;
+} XiamParameter;
+
+/* A separate, one-Hamiltonian XIAM workspace.  It retains the input text so
+ * directives XIAM knows but SpectraVisual does not are never discarded. */
+typedef struct {
+    int open;
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    Uint32 window_id;
+    int loaded;
+    int running;
+    int params_scroll;
+    int lines_scroll;
+    int edit_param;            /* -1 while no parameter value is edited */
+    int edit_caret, edit_anchor, edit_replace;
+    char edit_buf[96];
+    char input_path[512];
+    char output_path[512];
+    char work_dir[512];
+    char source_lines[MAX_XIAM_SOURCE_LINES][256];
+    int n_source_lines;
+    XiamParameter params[MAX_XIAM_PARAMS];
+    int n_params;
+    int spin, spin2;
+    int max_j;
+    double fmin_mhz, fmax_mhz;
+    double temperature_k;
+    int has_freq, has_ints, has_j;
+    int axis_convention;       /* 0=not declared, 1=prolate, 2=oblate */
+    char status[256];
+    char diagnostics[8192];
+} XiamState;
+
 /* How the spectra are drawn.  Saved next to the executable, so the choices
  * follow the program instead of the directory it happens to be launched from.
  * Everything here is presentation only: no setting changes a measurement. */
@@ -414,6 +481,7 @@ typedef struct {
     /* --- where things are --------------------------------------------- */
     char spcat_path[512];         /* Pickett SPCAT executable               */
     char spfit_path[512];         /* Pickett SPFIT executable               */
+    char xiam_path[512];          /* XIAM-2NQ v0.44 executable              */
     char data_dir[512];           /* working files; empty = launch directory */
 
     int  page;                    /* which settings page is shown           */
@@ -630,8 +698,10 @@ struct AppState {
     DraggableWindow win_dip;
     DraggableWindow win_spec;
     DraggableWindow win_predfit;
+    DraggableWindow win_xiam;
 
     PredFitState predfit;
+    XiamState xiam;
     IntensityFitWindow intensity_window;
 
     DraggableWindow *drag_target;
