@@ -1021,6 +1021,29 @@ static double xiam_assignment_calculated(const AppState *s, const Assignment *a)
 
 static void xiam_delete_assignment(AppState *s, int index) {
     if (!s || index < 0 || index >= s->n_assignments) return;
+    /* Keep the editable native project coherent too.  The imported source is
+       never overwritten on disk, but a subsequently saved/generated .xi must
+       not resurrect a row that the user deleted in Lines. */
+    XiamState *x = &s->xiam;
+    const Assignment *victim = &s->assignments[index];
+    int block = 0;
+    for (int line_no = 0; line_no < x->n_source_lines; line_no++) {
+        char work[256], lower[256];
+        snprintf(work, sizeof(work), "%s", x->source_lines[line_no]);
+        char *at = xiam_ltrim(work); xiam_lower(lower, sizeof(lower), at);
+        if (xiam_is_comment(at)) {
+            if (strstr(lower, "block viii")) block = 8;
+            else if (strstr(lower, "block vii")) block = 7;
+            continue;
+        }
+        if (block != 8) continue;
+        PredLine source;
+        if (!xiam_parse_input_transition_line(at, &source, NULL, NULL) ||
+            !xiam_same_input_transition(&source, &victim->pred)) continue;
+        char commented[256]; snprintf(commented, sizeof(commented), "\\%s", x->source_lines[line_no]);
+        snprintf(x->source_lines[line_no], sizeof(x->source_lines[line_no]), "%s", commented);
+        break;
+    }
     for (int i = index; i + 1 < s->n_assignments; i++) s->assignments[i] = s->assignments[i + 1];
     s->n_assignments--; save_assignments(s);
 }
