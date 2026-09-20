@@ -393,6 +393,7 @@ typedef struct {
     double value_ghz;
     double error_ghz;
     int source_line;           /* line in source_lines; -1 for a derived value */
+    int fit_source_line;       /* simple fit/dqu/dqx line, -1 when absent */
     int fit_method;            /* XIAM fit/dqu/dqx selector; 0 means not fitted */
     int is_quadrupole;         /* UI MHz = XIAM GHz * 1000 / 2 */
     int is_frequency;

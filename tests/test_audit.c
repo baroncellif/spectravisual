@@ -1201,6 +1201,25 @@ static int test_xiam_native_prediction_and_assignment_roundtrip(void) {
     DONE();
 }
 
+/* The exact v0.44 binary is an optional local integration check.  CI and
+ * other machines run the parser fixture above; the maintainer can enable this
+ * one without hard-coding a personal XIAM installation into the test suite. */
+static int test_xiam_v044_runner_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "input XIAM letto");
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    CHECK(xiam_calculate(s), "previsione con XIAM v0.44");
+    CHECK(s->n_pred > 100, "previsione XIAM contiene righe native");
+    if (s->n_pred) {
+        CHECK_INT("backend run XIAM", s->pred_lines[0].backend, PRED_BACKEND_XIAM);
+        CHECK(s->pred_lines[0].hamiltonian_id == s->xiam.model_id, "righe del run possedute dal .xi");
+        CHECK(s->pred_lines[0].intensity_native, "intensita native conservate");
+    }
+    DONE();
+}
+
 /* T-09: the blended pair at 392.7959 MHz of pred.cat, assigned with one click to
    one peak, comes back as two assignments. */
 static int test_blend_pair_survives_reload(void) {
@@ -3392,6 +3411,7 @@ static const Test TESTS[] = {
     {"test_selection_indices_in_bounds",       test_selection_indices_in_bounds},
     {"test_roundtrip_every_qnfmt",             test_roundtrip_every_qnfmt},
     {"test_xiam_native_prediction_and_assignment_roundtrip", test_xiam_native_prediction_and_assignment_roundtrip},
+    {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
     {"test_reload_reports_collisions",         test_reload_reports_collisions},
