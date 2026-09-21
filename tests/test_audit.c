@@ -1388,6 +1388,60 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Pred&Fit's Hamiltonians page saves the session, restores it, and imports
+ * every model from .fit/load.  XIAM's page had only open/reload/remove, all
+ * three of which now live in the sidebar, and xiam_import_load_dir could not
+ * be reached from the window at all. */
+static int test_xiam_hamiltonians_tab_saves_and_imports(void) {
+    AppState *s = new_state();
+
+    /* The two paths the page acts on are the project's, shared with Pred&Fit. */
+    char session[600], folder[600], expect[700];
+    xiam_session_file(s, session, sizeof(session));
+    xiam_load_folder(s, folder, sizeof(folder));
+    snprintf(expect, sizeof(expect), "%s/spectravisual.state", s->predfit.work_dir);
+    CHECK(!strcmp(session, expect), "la sessione e' quella di Pred&Fit: %s", session);
+    snprintf(expect, sizeof(expect), "%s/load", s->predfit.work_dir);
+    CHECK(!strcmp(folder, expect), "la cartella di import e' .fit/load: %s", folder);
+
+    /* Import reaches every native pair in that folder. */
+    CHECK_INT("crea .fit", mkdir(work_path(".fit"), 0700), 0);
+    CHECK_INT("crea load", mkdir(work_path(".fit/load"), 0700), 0);
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi",
+                    work_path(".fit/load/alpha.xi")), "copia alpha.xi");
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo",
+                    work_path(".fit/load/alpha.xo")), "copia alpha.xo");
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/v6_pred.xi",
+                    work_path(".fit/load/beta.xi")), "copia beta.xi");
+    CHECK_INT("import dalla cartella della pagina", xiam_import_load_dir(s, folder), 2);
+    CHECK_INT("due Hamiltoniani XIAM importati", s->xiam.n_hamiltonians, 2);
+    int rows = 0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) rows++;
+    CHECK(rows > 0, "il .xo accanto al sorgente ha popolato la previsione");
+
+    /* Save session writes that file and clears the page's dirty marker. */
+    s->xiam.session_dirty = 1;
+    predfit_save_session(s);
+    CHECK_INT("la sessione di Pred&Fit e' scritta", s->predfit.session_dirty, 0);
+    CHECK(access(session, F_OK) == 0, "il file di sessione esiste: %s", session);
+
+    /* And it carries the XIAM project, so Restore session brings it back. */
+    FILE *fp = fopen(session, "rb");
+    int has_project = 0, has_paths = 0;
+    if (fp) {
+        char line[1024];
+        while (fgets(line, sizeof(line), fp)) {
+            if (!strncmp(line, "xiamproject ", 12)) has_project = 1;
+            if (strstr(line, "alpha.xi")) has_paths = 1;
+        }
+        fclose(fp);
+    }
+    CHECK_INT("la sessione contiene il progetto XIAM", has_project, 1);
+    CHECK_INT("e i sorgenti dei suoi Hamiltoniani", has_paths, 1);
+    DONE();
+}
+
 /* Pred&Fit's sidebar manages the project: reorder, rename, duplicate and
  * delete.  XIAM's offered only "open" and "reload", so a native model could
  * not be renamed, reordered, or copied into a variant to try. */
@@ -4495,6 +4549,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_hamiltonians_tab_saves_and_imports", test_xiam_hamiltonians_tab_saves_and_imports},
     {"test_xiam_navigator_manages_the_project", test_xiam_navigator_manages_the_project},
     {"test_xiam_field_editor_matches_predfit", test_xiam_field_editor_matches_predfit},
     {"test_xiam_parameter_added_and_removed_reaches_the_input", test_xiam_parameter_added_and_removed_reaches_the_input},

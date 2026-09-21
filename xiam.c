@@ -3,6 +3,7 @@
 #include "controller.h"
 #include "layout.h"
 #include "loader.h"
+#include "predfit.h"
 #include "settings.h"
 #include "ui_chrome.h"
 #include "ui_theme.h"
@@ -1043,6 +1044,18 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
 
 static void xiam_work_file(const XiamState *x, const char *name, char *out, size_t size) {
     snprintf(out, size, "%s/%s", x->work_dir, name);
+}
+
+/* The session and the import folder are the project's, not one backend's:
+ * Pred&Fit's Hamiltonians page reads and writes exactly these two paths. */
+static void xiam_session_file(const AppState *s, char *out, size_t size) {
+    if (s->predfit.work_dir[0]) snprintf(out, size, "%s/spectravisual.state", s->predfit.work_dir);
+    else snprintf(out, size, ".fit/spectravisual.state");
+}
+
+static void xiam_load_folder(const AppState *s, char *out, size_t size) {
+    if (s->predfit.work_dir[0]) snprintf(out, size, "%s/load", s->predfit.work_dir);
+    else snprintf(out, size, ".fit/load");
 }
 
 static int xiam_prepare_work_dir(AppState *s) {
@@ -2281,9 +2294,15 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
         snprintf(b, sizeof(b), "%.6g", h->concentration); ui_text_right(r, UI_FONT_MONO_SM, b, conc_right, y + 6, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, h->simulate_excluded ? "[ ]" : "[x]", u->table.x + u->table.w * 87 / 100, y + 6, h->simulate_excluded ? UI_FAINT : UI_OK);
     }
-    ui_button(r, u->btn_a, "+ Open .xi", -1, UI_BTN_PRIMARY, 0, mx, my, down);
-    ui_button(r, u->btn_b, "Reload active .xi", -1, UI_BTN_QUIET, 0, mx, my, down);
-    ui_button(r, u->btn_c, x->delete_hamiltonian_id == x->model_id ? "Confirm remove H" : "Remove active H", -1, x->delete_hamiltonian_id == x->model_id ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_a, x->session_dirty ? "Save session *" : "Save session", -1,
+              x->session_dirty ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_b, "Restore session", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_c, "Import .xi/.xo", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_text(r, UI_FONT_SANS_SM,
+            x->session_dirty
+                ? "Unsaved changes: nothing is written to .fit until Save session."
+                : "Import reads every name.xi (and its name.xo) from .fit/load; open, reorder and remove are in the sidebar.",
+            u->btn_d.x, u->footer.y + 19, x->session_dirty ? UI_ACCENT_TEXT : UI_FAINT);
 }
 
 static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *u,
@@ -2516,10 +2535,32 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_b)) { xiam_calculate(s); return 1; }
         if (point_in_rect(px, py, u.btn_c)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
     } else if (x->active_tab == 3) {
-        if (point_in_rect(px, py, u.rows)) { int i = x->hamiltonians_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) xiam_select_hamiltonian(x, i); return 1; }
-        if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_input(path, sizeof(path))) xiam_load_input_file(s, path); return 1; }
-        if (point_in_rect(px, py, u.btn_b)) { xiam_reload_active_input(s); return 1; }
-        if (point_in_rect(px, py, u.btn_c) && x->active_hamiltonian >= 0) { if (x->delete_hamiltonian_id == x->model_id) xiam_remove_active_hamiltonian(s); else { x->delete_hamiltonian_id = x->model_id; snprintf(x->status, sizeof(x->status), "Click Confirm remove H to remove this XIAM Hamiltonian and its assignments."); } return 1; }
+        if (point_in_rect(px, py, u.rows)) { int i = x->hamiltonians_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { xiam_select_hamiltonian(x, i); x->delete_hamiltonian_id = 0; } return 1; }
+        if (point_in_rect(px, py, u.btn_a)) {
+            int was_dirty = x->session_dirty;
+            predfit_save_session(s);
+            if (s->predfit.session_dirty)
+                snprintf(x->status, sizeof(x->status), "Cannot write spectravisual.state in .fit.");
+            else {
+                x->session_dirty = 0;
+                snprintf(x->status, sizeof(x->status), "Session saved%s.",
+                         was_dirty ? "" : " (nothing had changed)");
+            }
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_b)) {
+            char state_path[600];
+            xiam_session_file(s, state_path, sizeof(state_path));
+            app_enqueue_pending_load(s, PENDING_LOAD_SESSION, state_path, 0);
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_c)) {
+            char folder[600];
+            xiam_load_folder(s, folder, sizeof(folder));
+            if (xiam_import_load_dir(s, folder) > 0)
+                x->hamiltonians_scroll = xiam_scroll_limit(x->n_hamiltonians, u.rows_visible);
+            return 1;
+        }
     } else if (x->active_tab == 4) {
         if (point_in_rect(px, py, u.rows)) { int i = x->simulation_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded; else x->hamiltonian[i].simulate_excluded = !x->hamiltonian[i].simulate_excluded; xiam_store_active(x); xiam_mark_session_dirty(s); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { xiam_simulate_checked(s); return 1; }
