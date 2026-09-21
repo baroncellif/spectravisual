@@ -703,8 +703,19 @@ static int xiam_runtime_control(const char *key) {
     return xiam_equal(key, "ncyc") || xiam_equal(key, "nzyk") || xiam_equal(key, "ncycl") ||
            xiam_equal(key, "ints") || xiam_equal(key, "freq") ||
            xiam_equal(key, "freq_l") || xiam_equal(key, "freq_h") ||
-           xiam_equal(key, "temp") || xiam_equal(key, "eval") ||
-           xiam_equal(key, "limit");
+           xiam_equal(key, "temp") || xiam_equal(key, "eval");
+}
+
+static int xiam_source_has_active_control(const XiamState *x, const char *wanted) {
+    if (!x || !wanted) return 0;
+    for (int i = 0; i < x->n_source_lines; i++) {
+        char line[256], key[64] = "";
+        snprintf(line, sizeof(line), "%s", x->source_lines[i]);
+        char *at = xiam_ltrim(line);
+        if (xiam_is_comment(at)) continue;
+        if (sscanf(at, "%63s", key) == 1 && xiam_equal(key, wanted)) return 1;
+    }
+    return 0;
 }
 
 static void xiam_write_runtime_controls(FILE *fp, const XiamState *x, int fitting) {
@@ -719,11 +730,12 @@ static void xiam_write_runtime_controls(FILE *fp, const XiamState *x, int fittin
     fprintf(fp, " temp %.12g\n", x->temperature_k);
     if (!fitting) {
         /* A fitting template often has `eval 0` (or no card at all).  A
-           post-fit prediction must explicitly ask XIAM to enumerate lines;
-           -10 retains weak native-SPCAT transitions just like the supplied
-           prediction examples instead of silently applying XIAM's 0.1 cut. */
+           post-fit prediction must explicitly ask XIAM to enumerate lines.
+           An active native `limit` remains authoritative; an all-fit input
+           commonly has no limit card, for which -10 avoids XIAM's 0.1
+           default silently producing an empty updated catalogue. */
         fprintf(fp, " eval 1\n");
-        fprintf(fp, " limit -10\n");
+        if (!xiam_source_has_active_control(x, "limit")) fprintf(fp, " limit -10\n");
     }
 }
 

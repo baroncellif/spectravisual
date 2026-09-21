@@ -1377,9 +1377,12 @@ static int test_xiam_v044_runner_when_configured(void) {
     if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
     AppState *s = new_state();
     CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "input XIAM letto");
+    /* Keep this integration check genuinely quick while still exercising the
+       two-nitrogen / F1,F state machinery in the executable. */
+    s->xiam.fmin_mhz = 2000.0; s->xiam.fmax_mhz = 10000.0; s->xiam.max_j = 4;
     snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
     CHECK(xiam_calculate(s), "previsione con XIAM v0.44");
-    CHECK(s->n_pred > 100, "previsione XIAM contiene righe native");
+    CHECK(s->n_pred > 0, "previsione XIAM contiene righe native");
     if (s->n_pred) {
         CHECK_INT("backend run XIAM", s->pred_lines[0].backend, PRED_BACKEND_XIAM);
         CHECK(s->pred_lines[0].hamiltonian_id == s->xiam.model_id, "righe del run possedute dal .xi");
@@ -1406,10 +1409,103 @@ static int test_xiam_v044_fit_when_configured(void) {
     for (int i = 0; i < 2 && i < s->n_pred; i++)
         add_or_update_assignment(s->assignments, &s->n_assignments, s->pred_lines[i],
                                  s->pred_lines[i].freq_mhz, 0.0, s->xiam.model_id);
+    s->xiam.fmin_mhz = 2000.0; s->xiam.fmax_mhz = 10000.0; s->xiam.max_j = 4;
     snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
     CHECK(xiam_fit(s), "fit e previsione aggiornati con XIAM v0.44");
-    CHECK(s->n_pred > 100, "fit XIAM rigenera la previsione nativa");
+    CHECK(s->n_pred > 0, "fit XIAM rigenera la previsione nativa");
     if (bj >= 0) CHECK(s->xiam.params[bj].error_ghz >= 0.0, "report XIAM aggiorna errore BJ");
+    DONE();
+}
+
+/* Inventory every supplied native model without opening an SDL window.  This
+ * catches a parser/writer asymmetry before an external XIAM calculation is
+ * involved: source parameters, selected fit cards and every Block VIII datum
+ * must survive a save/reload cycle for both one- and two-nitrogen examples. */
+static int test_xiam_examples_parse_and_roundtrip(void) {
+    struct Example {
+        const char *stem;
+        int source_assignments;
+        int min_parameters;
+        int min_fit_parameters;
+        int has_prediction;
+    } examples[] = {
+        {"2n_2v3_pred", 0,   16, 0, 1},
+        /* Despite its name, this fixture has ints=2 and its .xo is a
+           native catalogue rather than a final covariance report. */
+        {"2n_2v3_fit",  68,  13, 6, 1},
+        {"2n_v3_fit",   671, 27, 15, 0},
+        {"v6_pred",     0,   15, 0, 1},
+        {"v6_fit",      622, 15, 15, 0},
+    };
+    for (size_t e = 0; e < sizeof(examples) / sizeof(examples[0]); e++) {
+        char xi[900], xo[900], saved[900];
+        snprintf(xi, sizeof(xi), "%s/../xiam_examples/%s.xi", SV_TESTS_DIR, examples[e].stem);
+        snprintf(xo, sizeof(xo), "%s/../xiam_examples/%s.xo", SV_TESTS_DIR, examples[e].stem);
+        snprintf(saved, sizeof(saved), "%s/roundtrip_%s.xi", g_work, examples[e].stem);
+        AppState *s = new_state();
+        CHECK(xiam_load_input_file(s, xi), "%s: input leggibile", examples[e].stem);
+        CHECK_INT("Block VIII importato senza perdite", s->n_assignments, examples[e].source_assignments);
+        CHECK(s->xiam.n_params >= examples[e].min_parameters,
+              "%s: parametri molecolari letti (%d)", examples[e].stem, s->xiam.n_params);
+        int n_fit = 0;
+        for (int i = 0; i < s->xiam.n_params; i++) if (s->xiam.params[i].fit_method) n_fit++;
+        CHECK(n_fit >= examples[e].min_fit_parameters,
+              "%s: direttive di fit lette (%d)", examples[e].stem, n_fit);
+        CHECK(xiam_load_output_file(s, xo), "%s: output nativo leggibile", examples[e].stem);
+        if (examples[e].has_prediction)
+            CHECK(s->n_pred > 100, "%s: catalogo nativo importato (%d righe)", examples[e].stem, s->n_pred);
+        else {
+            int with_error = 0;
+            for (int i = 0; i < s->xiam.n_params; i++)
+                if (s->xiam.params[i].fit_method && s->xiam.params[i].error_ghz > 0.0) with_error++;
+            CHECK(with_error >= examples[e].min_fit_parameters,
+                  "%s: errori del report di fit letti (%d)", examples[e].stem, with_error);
+        }
+        CHECK(xiam_save_fit_file(s, saved), "%s: .xi generato", examples[e].stem);
+        AppState *roundtrip = new_state();
+        CHECK(xiam_load_input_file(roundtrip, saved), "%s: .xi generato riletto", examples[e].stem);
+        CHECK_INT("Block VIII preservato nel roundtrip", roundtrip->n_assignments, examples[e].source_assignments);
+        CHECK(roundtrip->xiam.n_params >= examples[e].min_parameters,
+              "%s: parametri preservati nel roundtrip", examples[e].stem);
+    }
+    DONE();
+}
+
+/* Numerical oracle for the fast v6 prediction.  The program must reproduce
+ * the supplied native catalogue with the configured XIAM v0.44 executable;
+ * both frequencies and the untouched SPCAT log-intensities are compared by
+ * complete XIAM state identity, not merely by displayed J/Ka/Kc. */
+static int test_xiam_v6_prediction_matches_native_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xi"), "input v6 pred letto");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xo"), "catalogo v6 di riferimento letto");
+    int n_reference = s->n_pred;
+    PredLine *reference = malloc((size_t)n_reference * sizeof(*reference));
+    CHECK(reference != NULL, "memoria per il catalogo v6 di riferimento");
+    if (!reference) DONE();
+    memcpy(reference, s->pred_lines, (size_t)n_reference * sizeof(*reference));
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    CHECK(xiam_calculate(s), "previsione v6 eseguita dal backend dell'app");
+    CHECK_INT("limite nativo preservato: numero righe del catalogo v6", s->n_pred, n_reference);
+    int missing = 0; double max_freq = 0.0, max_lgint = 0.0;
+    for (int i = 0; i < n_reference; i++) {
+        const PredLine *got = NULL;
+        for (int j = 0; j < s->n_pred; j++)
+            if (xiam_same_transition(&reference[i], &s->pred_lines[j])) { got = &s->pred_lines[j]; break; }
+        if (!got) { missing++; continue; }
+        double df = fabs(got->freq_mhz - reference[i].freq_mhz);
+        double di = fabs(got->cat_lgint - reference[i].cat_lgint);
+        if (df > max_freq) max_freq = df;
+        if (di > max_lgint) max_lgint = di;
+    }
+    fprintf(g_tlog, "    v6 prediction: reference=%d regenerated=%d missing=%d max_df=%.9g MHz max_dlgI=%.9g\n",
+            n_reference, s->n_pred, missing, max_freq, max_lgint);
+    CHECK_INT("tutte le identita XIAM del catalogo v6", missing, 0);
+    CHECK(max_freq <= 2e-6, "frequenze v6 riprodotte entro 2 Hz? ottenuto %.9g MHz", max_freq);
+    CHECK(max_lgint <= 2e-5, "intensita SPCAT v6 riprodotte ottenuto %.9g", max_lgint);
+    free(reference);
     DONE();
 }
 
@@ -3652,6 +3748,8 @@ static const Test TESTS[] = {
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
+    {"test_xiam_examples_parse_and_roundtrip", test_xiam_examples_parse_and_roundtrip},
+    {"test_xiam_v6_prediction_matches_native_when_configured", test_xiam_v6_prediction_matches_native_when_configured},
     {"test_xiam_v6_consecutive_fit_when_configured", test_xiam_v6_consecutive_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
