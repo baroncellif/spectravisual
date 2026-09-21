@@ -1388,6 +1388,104 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Pred&Fit can add and remove Pickett parameters (`+ parameter` and the row
+ * ×).  XIAM could only ever show the constants its .xi happened to declare.
+ * A constant added in the workspace has to become a real block III
+ * declaration, or it would never reach XIAM; a removed one has to disappear
+ * from the generated input together with its fit directive. */
+static int test_xiam_parameter_added_and_removed_reaches_the_input(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "modello XIAM caricato");
+    XiamState *x = &s->xiam;
+    int before = x->n_params, source_before = x->n_source_lines;
+
+    int row = xiam_add_parameter(s);
+    CHECK(row >= 0, "un parametro nuovo viene aggiunto");
+    CHECK_INT("la tabella ha una riga in piu'", x->n_params, before + 1);
+    CHECK_INT("il sorgente ha una dichiarazione in piu'", x->n_source_lines, source_before + 1);
+    CHECK(x->params[row].source_line >= 0 && x->params[row].source_line < x->n_source_lines,
+          "il parametro nuovo ha la sua riga di blocco III");
+
+    /* The new declaration must be inside block III, not appended after the
+       transitions of block VIII. */
+    int at = x->params[row].source_line, block = 0;
+    for (int i = 0; i <= at; i++) {
+        char low[256]; for (int k = 0; k < 255; k++) low[k] = 0;
+        snprintf(low, sizeof(low), "%s", x->source_lines[i]);
+        for (char *c = low; *c; c++) *c = (char)tolower((unsigned char)*c);
+        if (strstr(low, "block iv")) block = 4;
+        else if (strstr(low, "block iii")) block = 3;
+    }
+    CHECK_INT("la dichiarazione nuova sta nel blocco III", block, 3);
+
+    /* Renaming through the editor rewrites the native keyword in place. */
+    x->edit_name_row = row;
+    xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME);
+    snprintf(x->edit_buf, sizeof(x->edit_buf), "Dc3J");
+    x->edit_caret = x->edit_anchor = (int)strlen(x->edit_buf);
+    xiam_edit_commit(s);
+    row = xiam_find_parameter(x, "Dc3J");
+    CHECK(row >= 0, "il parametro rinominato si trova col nome nativo");
+    if (row < 0) DONE();
+    xiam_edit_begin(x, row);
+    snprintf(x->edit_buf, sizeof(x->edit_buf), "0.25");
+    x->edit_caret = x->edit_anchor = (int)strlen(x->edit_buf);
+    xiam_edit_commit(s);
+    x->params[row].fit_method = 1;
+
+    char saved[900]; snprintf(saved, sizeof(saved), "%s", work_path("xiam_added.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "input di fit scritto");
+    FILE *fp = fopen(saved, "rb");
+    CHECK(fp != NULL, "input di fit rileggibile");
+    int declared = 0, directive = 0;
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            char key[64] = "", rest[64] = "";
+            if (line[0] == '\\' || line[0] == '!') continue;
+            if (sscanf(line, "%63s %63s", key, rest) < 1) continue;
+            if (!strcmp(key, "Dc3J")) declared++;
+            if (!strcmp(key, "fit") && !strcmp(rest, "Dc3J")) directive++;
+        }
+        fclose(fp);
+    }
+    CHECK_INT("la costante nuova e' dichiarata una sola volta", declared, 1);
+    CHECK_INT("la sua direttiva fit e' presente una sola volta", directive, 1);
+
+    /* A rename must not leave the previous keyword behind. */
+    CHECK_INT("il nome segnaposto non resta nel modello", xiam_find_parameter(x, "NEW"), -1);
+
+    /* Removal: the row disappears and the declaration is commented out, so
+       the generated input no longer defines the constant. */
+    int params_now = x->n_params;
+    CHECK(xiam_delete_parameter(s, row), "il parametro viene rimosso");
+    CHECK_INT("la tabella torna a una riga in meno", x->n_params, params_now - 1);
+    CHECK_INT("il nome non e' piu' dichiarato", xiam_find_parameter(x, "Dc3J"), -1);
+    snprintf(saved, sizeof(saved), "%s", work_path("xiam_removed.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "input di fit riscritto dopo la rimozione");
+    fp = fopen(saved, "rb");
+    declared = directive = 0;
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            char key[64] = "", rest[64] = "";
+            if (line[0] == '\\' || line[0] == '!') continue;
+            if (sscanf(line, "%63s %63s", key, rest) < 1) continue;
+            if (!strcmp(key, "Dc3J")) declared++;
+            if (!strcmp(key, "fit") && !strcmp(rest, "Dc3J")) directive++;
+        }
+        fclose(fp);
+    }
+    CHECK_INT("dopo la rimozione la costante non e' dichiarata", declared, 0);
+    CHECK_INT("dopo la rimozione non resta la direttiva fit", directive, 0);
+
+    /* Every constant the .xi already declared is untouched by all of this. */
+    int bj = xiam_find_parameter(x, "BJ");
+    CHECK(bj >= 0, "BJ e' ancora presente");
+    if (bj >= 0) CHECK_DBL("BJ non e' stato toccato", x->params[bj].value_ghz, 0.215050444, 1e-12);
+    DONE();
+}
+
 /* Every list of the XIAM workspace is clamped on the geometry the renderer
  * actually draws.  Before this, the parameter limit was computed on a row
  * count 64 pixels taller than the drawn table, the Hamiltonians and Simulation
@@ -4193,6 +4291,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_parameter_added_and_removed_reaches_the_input", test_xiam_parameter_added_and_removed_reaches_the_input},
     {"test_xiam_scroll_limits_follow_the_rendered_rows", test_xiam_scroll_limits_follow_the_rendered_rows},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_hamiltonians_keep_independent_concentrations", test_xiam_hamiltonians_keep_independent_concentrations},

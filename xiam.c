@@ -30,7 +30,7 @@
 enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_TEMP = -4, XIAM_EDIT_JMAX = -5,
        XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7,
-       XIAM_EDIT_CONCENTRATION = -8 };
+       XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
 
@@ -575,6 +575,58 @@ static void xiam_replace_number(char *out, size_t size, const char *line, double
     snprintf(out, size, "%.*s%.12g%s", (int)prefix, line, value, end);
 }
 
+/* Rewriting only the leading keyword keeps the native spacing and any
+ * trailing `!` comment of a declaration the user renames. */
+static void xiam_replace_keyword(char *out, size_t size, const char *line, const char *name) {
+    const char *at = line; while (*at && isspace((unsigned char)*at)) at++;
+    size_t indent = (size_t)(at - line);
+    const char *tail = at; while (*tail && !isspace((unsigned char)*tail)) tail++;
+    snprintf(out, size, "%.*s%s%s", (int)indent, line, name, tail);
+}
+
+/* Insert a native declaration into the retained source text.  Every stored
+ * line index has to move with it: xiam_write_input finds a parameter's
+ * declaration by its source_line, so a stale index would rewrite the wrong
+ * line of the generated .xi. */
+static int xiam_source_insert_line(XiamState *x, int at, const char *text) {
+    if (!x || at < 0 || at > x->n_source_lines ||
+        x->n_source_lines >= MAX_XIAM_SOURCE_LINES) return -1;
+    for (int i = x->n_source_lines; i > at; i--)
+        memcpy(x->source_lines[i], x->source_lines[i - 1], sizeof(x->source_lines[0]));
+    snprintf(x->source_lines[at], sizeof(x->source_lines[0]), "%s", text);
+    x->n_source_lines++;
+    for (int i = 0; i < x->n_params; i++) {
+        if (x->params[i].source_line >= at) x->params[i].source_line++;
+        if (x->params[i].fit_source_line >= at) x->params[i].fit_source_line++;
+    }
+    return at;
+}
+
+/* Where a new molecular constant belongs: after the last declaration of
+ * block III.  Appending at the end of the file would land in block VIII and
+ * XIAM would read the constant as a malformed transition record. */
+static int xiam_block_iii_end(const XiamState *x) {
+    int block = 0, tail = -1;
+    for (int i = 0; x && i < x->n_source_lines; i++) {
+        char work[256], lower[256];
+        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
+        char *at = xiam_ltrim(work);
+        xiam_lower(lower, sizeof(lower), at);
+        if (xiam_is_comment(at)) {
+            if (strstr(lower, "block viii")) block = 8;
+            else if (strstr(lower, "block vii")) block = 7;
+            else if (strstr(lower, "block vi")) block = 6;
+            else if (strstr(lower, "block v")) block = 5;
+            else if (strstr(lower, "block iv")) block = 4;
+            else if (strstr(lower, "block iii")) { block = 3; tail = i; }
+            else if (block == 3 && *at) tail = i;
+            continue;
+        }
+        if (block == 3) tail = i;
+    }
+    return tail < 0 ? -1 : tail + 1;
+}
+
 static int xiam_line_is_transition(const char *line) {
     if (xiam_is_comment(line)) return 0;
     const char *at = line; int v = 0;
@@ -1061,6 +1113,7 @@ void xiam_init(AppState *s) {
     if (!s) return;
     s->xiam.edit_param = XIAM_EDIT_NONE;
     s->xiam.edit_assignment = -1;
+    s->xiam.edit_name_row = -1;
     s->xiam.active_hamiltonian = -1;
     s->xiam.active_tab = 0;
     s->xiam.max_j = 30;
@@ -1416,9 +1469,91 @@ static void xiam_delete_assignment(AppState *s, int index) {
     xiam_mark_session_dirty(s);
 }
 
+/* Pred&Fit can add and remove Pickett parameters; XIAM could only ever show
+ * the constants its .xi happened to declare.  A new constant is a new block
+ * III declaration in the retained source: that is the only place XIAM reads
+ * a molecular parameter from, and the only place a value edit can reach. */
+static int xiam_add_parameter(AppState *s) {
+    if (!s) return -1;
+    XiamState *x = &s->xiam;
+    if (!x->loaded) {
+        snprintf(x->status, sizeof(x->status), "Open a .xi input before adding a constant.");
+        return -1;
+    }
+    if (x->n_params >= MAX_XIAM_PARAMS) {
+        snprintf(x->status, sizeof(x->status), "A XIAM model supports at most %d constants.", MAX_XIAM_PARAMS);
+        return -1;
+    }
+    int at = xiam_block_iii_end(x);
+    if (at < 0) {
+        snprintf(x->status, sizeof(x->status),
+                 "This .xi has no block III: add a `\\ block III` heading before declaring constants.");
+        return -1;
+    }
+    /* A name XIAM does not know is refused by XIAM, not silently kept: the
+       placeholder therefore stays obviously unfinished until it is renamed. */
+    char name[48] = "NEW";
+    for (int n = 2; xiam_find_parameter(x, name) >= 0 && n < 1000; n++)
+        snprintf(name, sizeof(name), "NEW%d", n);
+    char line[256];
+    snprintf(line, sizeof(line), " %-12s 0.0", name);
+    int inserted = xiam_source_insert_line(x, at, line);
+    if (inserted < 0) {
+        snprintf(x->status, sizeof(x->status), "The retained .xi source is full; cannot add a constant.");
+        return -1;
+    }
+    XiamParameter *p = &x->params[x->n_params++];
+    memset(p, 0, sizeof(*p));
+    snprintf(p->name, sizeof(p->name), "%s", name);
+    p->source_line = inserted;
+    p->fit_source_line = -1;
+    p->is_quadrupole = xiam_is_quadrupole(name);
+    p->is_frequency = xiam_is_frequency(name);
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    snprintf(x->status, sizeof(x->status),
+             "Added a block III constant; rename it to a native XIAM keyword (BJ, DJ, chi_z, V1n, mu_z, ...).");
+    return x->n_params - 1;
+}
+
+/* Removing a constant comments its native declaration out instead of
+ * deleting the line: the historical value stays readable in the generated
+ * .xi, exactly like a transition removed in Lines. */
+static int xiam_delete_parameter(AppState *s, int row) {
+    if (!s) return 0;
+    XiamState *x = &s->xiam;
+    if (row < 0 || row >= x->n_params) return 0;
+    const XiamParameter *victim = &x->params[row];
+    int lines[2] = {victim->source_line, victim->fit_source_line};
+    for (int k = 0; k < 2; k++) {
+        int at = lines[k];
+        if (at < 0 || at >= x->n_source_lines) continue;
+        char work[256];
+        snprintf(work, sizeof(work), "%s", x->source_lines[at]);
+        if (xiam_is_comment(work)) continue;
+        snprintf(x->source_lines[at], sizeof(x->source_lines[0]), "\\%s", work);
+    }
+    char gone[48]; snprintf(gone, sizeof(gone), "%s", victim->name);
+    for (int i = row; i + 1 < x->n_params; i++) x->params[i] = x->params[i + 1];
+    x->n_params--;
+    if (x->edit_param == row) { x->edit_param = XIAM_EDIT_NONE; SDL_StopTextInput(); }
+    else if (x->edit_param > row) x->edit_param--;
+    if (x->edit_name_row == row) { x->edit_name_row = -1; if (x->edit_param == XIAM_EDIT_PARAM_NAME) { x->edit_param = XIAM_EDIT_NONE; SDL_StopTextInput(); } }
+    else if (x->edit_name_row > row) x->edit_name_row--;
+    if (x->params_scroll > 0 && x->params_scroll >= x->n_params) x->params_scroll--;
+    xiam_update_axis_convention(x);
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    snprintf(x->status, sizeof(x->status), "Removed %s; its native declaration is kept commented out.", gone);
+    return 1;
+}
+
 static void xiam_edit_begin(XiamState *x, int what) {
     x->edit_param=what; x->edit_replace=1;
     if (what >= 0) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",xiam_display_value(&x->params[what]));
+    else if (what==XIAM_EDIT_PARAM_NAME)
+        snprintf(x->edit_buf,sizeof(x->edit_buf),"%s",
+                 x->edit_name_row >= 0 && x->edit_name_row < x->n_params ? x->params[x->edit_name_row].name : "");
     else if (what==XIAM_EDIT_FMIN) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->fmin_mhz);
     else if (what==XIAM_EDIT_FMAX) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->fmax_mhz);
     else if (what==XIAM_EDIT_TEMP) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->temperature_k);
@@ -1453,6 +1588,40 @@ static void xiam_edit_commit(AppState *s) {
         xiam_store_active(x);
         xiam_apply_concentrations(s);
         s->intensity_window.species_sync_pending = 1;
+    }
+    else if (x->edit_param == XIAM_EDIT_PARAM_NAME) {
+        int row = x->edit_name_row;
+        char wanted[48]; snprintf(wanted, sizeof(wanted), "%s", xiam_ltrim(x->edit_buf));
+        for (int i = (int)strlen(wanted) - 1; i >= 0 && isspace((unsigned char)wanted[i]); i--) wanted[i] = '\0';
+        int clash = xiam_find_parameter(x, wanted);
+        if (row < 0 || row >= x->n_params) {
+            /* nothing to rename */
+        } else if (!wanted[0] || strchr(wanted, ' ') || strchr(wanted, '\t')) {
+            snprintf(x->status, sizeof(x->status), "A XIAM parameter name is a single native keyword.");
+        } else if (clash >= 0 && clash != row) {
+            snprintf(x->status, sizeof(x->status), "%s is already declared in this model.", wanted);
+        } else {
+            XiamParameter *p = &x->params[row];
+            snprintf(p->name, sizeof(p->name), "%s", wanted);
+            p->is_quadrupole = xiam_is_quadrupole(wanted);
+            p->is_frequency = xiam_is_frequency(wanted);
+            if (p->source_line >= 0 && p->source_line < x->n_source_lines) {
+                char changed[256];
+                xiam_replace_keyword(changed, sizeof(changed), x->source_lines[p->source_line], wanted);
+                snprintf(x->source_lines[p->source_line], sizeof(x->source_lines[0]), "%s", changed);
+            }
+            /* The fit directive is regenerated from the name on every run, so
+               an old `fit <previous name>` card must not survive. */
+            if (p->fit_source_line >= 0 && p->fit_source_line < x->n_source_lines) {
+                char changed[256];
+                snprintf(changed, sizeof(changed), " %s %s",
+                         p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "fit", wanted);
+                snprintf(x->source_lines[p->fit_source_line], sizeof(x->source_lines[0]), "%s", changed);
+            }
+            xiam_update_axis_convention(x);
+            snprintf(x->status, sizeof(x->status), "Renamed the constant to %s.", wanted);
+        }
+        x->edit_name_row = -1;
     }
     else if ((x->edit_param == XIAM_EDIT_LINE_OBS || x->edit_param == XIAM_EDIT_LINE_ERR) &&
              x->edit_assignment >= 0 && x->edit_assignment < s->n_assignments) {
@@ -1619,6 +1788,37 @@ static void xiam_text_decimal(SDL_Renderer *r, int role, const char *text,
     ui_text(r, role, text, decimal_x - ui_text_w(role, prefix), y, color);
 }
 
+static int xiam_prefix_w(int font, const char *text, int n) {
+    char prefix[sizeof(((XiamState *)0)->edit_buf)];
+    if (n < 0) n = 0;
+    if (n > (int)sizeof(prefix) - 1) n = (int)sizeof(prefix) - 1;
+    memcpy(prefix, text, (size_t)n);
+    prefix[n] = '\0';
+    return ui_text_w(font, prefix);
+}
+
+/* An edited cell always shows its selection and its caret, like Pred&Fit's
+ * tables: a field whose cursor cannot be seen cannot be aimed at. */
+static void xiam_edit_text(SDL_Renderer *r, int font, const XiamState *x,
+                           int px, int py, SDL_Color c) {
+    const char *text = x->edit_buf;
+    int h = ui_text_h(font);
+    int lo = x->edit_caret < x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    int hi = x->edit_caret > x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    if (hi > lo) {
+        int x0 = px + xiam_prefix_w(font, text, lo), x1 = px + xiam_prefix_w(font, text, hi);
+        ui_fill(r, (SDL_Rect){x0, py - 1, x1 - x0, h + 2}, UI_ACCENT_SOFT);
+    }
+    ui_text(r, font, text, px, py, c);
+    ui_fill(r, (SDL_Rect){px + xiam_prefix_w(font, text, x->edit_caret), py - 1, 2, h + 2}, UI_ACCENT);
+}
+
+static void xiam_cell_text(SDL_Renderer *r, int font, const XiamState *x, int editing,
+                           const char *text, int px, int py, SDL_Color c) {
+    if (editing) xiam_edit_text(r, font, x, px, py, c);
+    else ui_text(r, font, text, px, py, c);
+}
+
 /* Kept intentionally identical to the SPFIT residual scale. */
 static SDL_Color xiam_residual_color(double z) {
     double a = fabs(z);
@@ -1683,28 +1883,49 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     int value_right = table.x + table.w * 52 / 100;
     int error_right = table.x + table.w * 71 / 100;
     int error_decimal = table.x + table.w * 66 / 100;
+    int name_edge = table.x + table.w * 30 / 100;
+    int fit_x = table.x + table.w * 73 / 100;
     ui_text(r, UI_FONT_MONO_SM, "PARAMETER", table.x + 12, table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "VALUE / MHz", value_right, table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "FIT ERROR", error_right, table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "FIT (click cycles)", table.x + table.w * 73 / 100, table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "FIT (click cycles)", fit_x, table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "DEL", table.x + table.w - 10, table.y + 9, UI_DIM);
     ui_hline(r, table.x + 2, table.x + table.w - 2, rows.y - 3, UI_LINE);
     SDL_RenderSetClipRect(r, &rows);
     for (int visible = 0; visible < u->param_rows_visible; visible++) {
         int i = x->params_scroll + visible; if (i >= x->n_params) break;
         int y = rows.y + visible * u->row_h; SDL_Rect row = {rows.x, y, rows.w, u->row_h - 2};
-        if (visible & 1) ui_fill(r, row, UI_CHROME);
+        int editing_name = x->edit_param == XIAM_EDIT_PARAM_NAME && x->edit_name_row == i;
+        int editing_value = x->edit_param == i;
+        if (editing_name || editing_value) ui_fill(r, row, UI_ACCENT_SOFT);
+        else if (visible & 1) ui_fill(r, row, UI_CHROME);
         XiamParameter *p = &x->params[i]; char label[96]; xiam_parameter_label(x, p, label, sizeof(label));
-        ui_text(r, UI_FONT_MONO_SM, label, row.x + 10, y + 6, UI_TEXT);
+        xiam_cell_text(r, UI_FONT_MONO_SM, x, editing_name, label, row.x + 10, y + 6,
+                       editing_name ? UI_ACCENT_TEXT : UI_TEXT);
         snprintf(b, sizeof(b), "%.12g", xiam_display_value(p));
-        if (x->edit_param == i) snprintf(b, sizeof(b), "%s", x->edit_buf);
-        ui_text_right(r, UI_FONT_MONO_SM, b, value_right, y + 6, x->edit_param == i ? UI_ACCENT_TEXT : UI_TEXT);
+        if (editing_value) {
+            /* Right-aligned while stored, left-aligned from the column start
+               while edited, so the caret does not travel with the digits. */
+            int at = value_right - ui_text_w(UI_FONT_MONO_SM, b);
+            if (at < name_edge + 8) at = name_edge + 8;
+            xiam_edit_text(r, UI_FONT_MONO_SM, x, at, y + 6, UI_ACCENT_TEXT);
+        } else ui_text_right(r, UI_FONT_MONO_SM, b, value_right, y + 6, UI_TEXT);
         if (p->error_ghz != 0.0) { snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, error_decimal, y + 6, UI_DIM); }
-        ui_text(r, UI_FONT_MONO_SM, p->fit_method == 1 ? "fit" : p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "—", table.x + table.w * 73 / 100, y + 6, p->fit_method ? UI_ACCENT_TEXT : UI_FAINT);
+        ui_text(r, UI_FONT_MONO_SM, p->fit_method == 1 ? "fit" : p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "—", fit_x, y + 6, p->fit_method ? UI_ACCENT_TEXT : UI_FAINT);
+        ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){table.x + table.w - 26, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DANGER_TEXT);
     }
     SDL_RenderSetClipRect(r, NULL);
-    ui_button(r, u->btn_a, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_a, "+ parameter", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_b, "Predict", -1, UI_BTN_PRIMARY, 0, mx, my, down);
-    ui_text(r, UI_FONT_SANS_SM, x->axis_convention == 1 ? "Prolate mapping: x/y/z = b/c/a; chi_z = aa; chi_- = bb-cc." : x->axis_convention == 2 ? "Oblate mapping: x/y/z = a/b/c; chi_z = cc; chi_- = aa-bb." : "Axis mapping unresolved: choose prolate or oblate before interpreting x/y/z labels.", u->btn_c.x, u->footer.y + 19, x->axis_convention ? UI_DIM : UI_WARN);
+    ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_text(r, UI_FONT_SANS_SM,
+            x->edit_param == XIAM_EDIT_PARAM_NAME
+                ? "Enter applies the native keyword · Esc cancels · × comments the declaration out"
+                : x->axis_convention == 1 ? "Prolate mapping: x/y/z = b/c/a; chi_z = aa; chi_- = bb-cc."
+                : x->axis_convention == 2 ? "Oblate mapping: x/y/z = a/b/c; chi_z = cc; chi_- = aa-bb."
+                : "Axis mapping unresolved: choose prolate or oblate before interpreting x/y/z labels.",
+            u->btn_d.x, u->footer.y + 19,
+            x->edit_param == XIAM_EDIT_PARAM_NAME ? UI_ACCENT_TEXT : x->axis_convention ? UI_DIM : UI_WARN);
     (void)s;
 }
 
@@ -1897,7 +2118,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
     if (x->edit_param != XIAM_EDIT_NONE && e->type == SDL_KEYDOWN && e->key.windowID == id) {
         SDL_Keycode k = e->key.keysym.sym;
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_TAB) { xiam_edit_commit(s); return 1; }
-        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; SDL_StopTextInput(); return 1; }
         if (k == SDLK_BACKSPACE && x->edit_caret > 0) { memmove(x->edit_buf + x->edit_caret - 1, x->edit_buf + x->edit_caret, strlen(x->edit_buf + x->edit_caret) + 1); x->edit_caret--; x->edit_anchor = x->edit_caret; }
         else if (k == SDLK_LEFT && x->edit_caret > 0) x->edit_caret--;
         else if (k == SDLK_RIGHT && x->edit_caret < (int)strlen(x->edit_buf)) x->edit_caret++;
@@ -1943,9 +2164,37 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, jmax)) { xiam_edit_begin(x, XIAM_EDIT_JMAX); return 1; }
         if (point_in_rect(px, py, axis)) { x->axis_override = (x->axis_override + 1) % 3; xiam_update_axis_convention(x); xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
         SDL_Rect rows = u.param_rows;
-        if (point_in_rect(px, py, rows)) { int i = x->params_scroll + (py - rows.y) / u.row_h; if (i >= 0 && i < x->n_params) { if (px >= u.table.x + u.table.w * 72 / 100) { x->params[i].fit_method = (x->params[i].fit_method + 1) % 4; xiam_mark_session_dirty(s); } else xiam_edit_begin(x, i); xiam_store_active(x); } return 1; }
-        if (point_in_rect(px, py, u.btn_a)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
+        if (point_in_rect(px, py, rows)) {
+            int i = x->params_scroll + (py - rows.y) / u.row_h;
+            if (i >= 0 && i < x->n_params) {
+                int del_x = u.param_table.x + u.param_table.w - 30;
+                int name_edge = u.param_table.x + u.param_table.w * 30 / 100;
+                if (px >= del_x) xiam_delete_parameter(s, i);
+                else if (px >= u.param_table.x + u.param_table.w * 72 / 100) {
+                    x->params[i].fit_method = (x->params[i].fit_method + 1) % 4;
+                    xiam_mark_session_dirty(s);
+                }
+                /* The name is the XIAM identity of a constant, so it is a
+                   cell of its own: Pickett edits the .par id in the same
+                   place for exactly the same reason. */
+                else if (px < name_edge) { x->edit_name_row = i; xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME); }
+                else xiam_edit_begin(x, i);
+                xiam_store_active(x);
+            }
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_a)) {
+            xiam_edit_commit(s);
+            int row = xiam_add_parameter(s);
+            if (row >= 0) {
+                x->params_scroll = xiam_scroll_limit(x->n_params, u.param_rows_visible);
+                x->edit_name_row = row;
+                xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME);
+            }
+            return 1;
+        }
         if (point_in_rect(px, py, u.btn_b)) { xiam_edit_commit(s); xiam_calculate(s); return 1; }
+        if (point_in_rect(px, py, u.btn_c)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
     } else if (x->active_tab == 1) {
         if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
