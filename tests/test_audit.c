@@ -1593,7 +1593,7 @@ static int test_xiam_v6_consecutive_fit_when_configured(void) {
     CHECK_INT("tutte le osservazioni Block VIII v6 restano distinte", s->n_assignments, 622);
     CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xo"), "risultato v6 di riferimento letto");
     snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
-    double reference[MAX_XIAM_PARAMS], first[MAX_XIAM_PARAMS];
+    double reference[MAX_XIAM_PARAMS], first[MAX_XIAM_PARAMS], second[MAX_XIAM_PARAMS];
     int active[MAX_XIAM_PARAMS], n_active = 0;
     for (int i = 0; i < s->xiam.n_params; i++) {
         if (!s->xiam.params[i].fit_method) continue;
@@ -1609,16 +1609,21 @@ static int test_xiam_v6_consecutive_fit_when_configured(void) {
           "previsione MHz aggiornata e mantenuta dopo il fit");
     for (int k = 0; k < n_active; k++) first[k] = s->xiam.params[active[k]].value_ghz;
     CHECK(xiam_fit(s), "secondo fit v6 consecutivo");
+    for (int k = 0; k < n_active; k++) second[k] = s->xiam.params[active[k]].value_ghz;
+    CHECK(xiam_fit(s), "terzo fit v6 consecutivo");
     for (int k = 0; k < n_active; k++) {
         const XiamParameter *p = &s->xiam.params[active[k]];
         double scale = fabs(reference[k]) > 1e-12 ? fabs(reference[k]) : 1e-12;
         double recovered = fabs(first[k] - reference[k]) / scale;
-        double sequential = fabs(p->value_ghz - first[k]) / scale;
-        fprintf(g_tlog, "    v6 %-8s ref=% .12g fit1=% .12g fit2=% .12g recover=%.4g repeat=%.4g\n",
-                p->name, reference[k], first[k], p->value_ghz, recovered, sequential);
-        CHECK(isfinite(p->value_ghz), "v6 %s: il secondo fit deve restare finito", p->name);
+        double second_step = fabs(second[k] - first[k]) / scale;
+        double third_step = fabs(p->value_ghz - second[k]) / scale;
+        fprintf(g_tlog, "    v6 %-8s ref=% .12g fit1=% .12g fit2=% .12g fit3=% .12g recover=%.4g step2=%.4g step3=%.4g\n",
+                p->name, reference[k], first[k], second[k], p->value_ghz,
+                recovered, second_step, third_step);
+        CHECK(isfinite(p->value_ghz), "v6 %s: il terzo fit deve restare finito", p->name);
         CHECK(recovered < 0.002, "v6 %s: il primo fit deve recuperare il riferimento (%.4g)", p->name, recovered);
-        CHECK(sequential < 0.002, "v6 %s: un secondo fit non deve divergere (%.4g)", p->name, sequential);
+        CHECK(second_step < 0.002, "v6 %s: il secondo fit non deve divergere (%.4g)", p->name, second_step);
+        CHECK(third_step < 0.002, "v6 %s: il terzo fit non deve divergere (%.4g)", p->name, third_step);
     }
     DONE();
 }
