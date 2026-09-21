@@ -183,6 +183,18 @@ static const char *xiam_basename(const char *path) {
     return slash ? slash + 1 : (path && path[0] ? path : "XIAM model");
 }
 
+/* Releases before the per-Hamiltonian workspace used `.xiam/model.xi` as a
+ * mutable scratch input.  It was overwritten after calculations and could
+ * retain an aborted fit's constants; it is therefore not a model a user can
+ * safely reopen as a source .xi. */
+static int xiam_is_legacy_workspace_input(const char *path) {
+    static const char suffix[] = "/.xiam/model.xi";
+    if (!path) return 0;
+    if (!strcmp(path, ".xiam/model.xi")) return 1;
+    size_t n = strlen(path), m = sizeof(suffix) - 1;
+    return n >= m && !strcmp(path + n - m, suffix);
+}
+
 /* The UI edits an active projection, exactly like the Pickett project does.
  * Keeping the native source beside every projection is what lets two .xi
  * models retain different control cards, fit directives and Block VIII data. */
@@ -1002,6 +1014,11 @@ void xiam_open(AppState *s) {
 
 int xiam_load_input_file(AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0; XiamState *x=&s->xiam;
+    if (xiam_is_legacy_workspace_input(path)) {
+        snprintf(x->status, sizeof(x->status),
+                 "Refusing legacy .xiam/model.xi workspace: it may contain overwritten fit constants. Open the original source .xi instead.");
+        return 0;
+    }
     int existing = xiam_find_hamiltonian_path(x, path);
     if (existing >= 0) {
         xiam_select_hamiltonian(x, existing);

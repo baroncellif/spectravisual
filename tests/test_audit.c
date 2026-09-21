@@ -1336,6 +1336,19 @@ static int test_xiam_fit_report_updates_parameters(void) {
     DONE();
 }
 
+/* `.xiam/model.xi` was a mutable scratch file in the first XIAM workspace.
+ * Reopening it resurrects whatever constants an interrupted old fit left
+ * behind, instead of the user’s source Hamiltonian. */
+static int test_xiam_rejects_legacy_workspace_input(void) {
+    AppState *s = new_state();
+    CHECK(!xiam_load_input_file(s, ".xiam/model.xi"), "workspace XIAM legacy rifiutato");
+    CHECK(strstr(s->xiam.status, "legacy .xiam/model.xi") != NULL,
+          "diagnostica esplicita per workspace legacy: %s", s->xiam.status);
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"),
+          "un .xi sorgente normale resta caricabile");
+    DONE();
+}
+
 /* Some XIAM modes write a catalogue below the fit report in one .xo.  The
  * prediction belongs in the viewer, but the Fitting tab must retain that
  * same file as its report source rather than treating it as prediction-only. */
@@ -1624,6 +1637,44 @@ static int test_xiam_v6_consecutive_fit_when_configured(void) {
         CHECK(recovered < 0.002, "v6 %s: il primo fit deve recuperare il riferimento (%.4g)", p->name, recovered);
         CHECK(second_step < 0.002, "v6 %s: il secondo fit non deve divergere (%.4g)", p->name, second_step);
         CHECK(third_step < 0.002, "v6 %s: il terzo fit non deve divergere (%.4g)", p->name, third_step);
+    }
+    DONE();
+}
+
+/* This is the literal first-use path of the XIAM window: the user opens only
+ * a .xi, offsets every selected card, and presses Fit repeatedly.  It must
+ * not rely on having imported a final .xo report beforehand. */
+static int test_xiam_v6_source_only_consecutive_fit_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    const char *input = getenv("SV_XIAM_INPUT");
+    if (!input || !input[0]) input = SV_TESTS_DIR "/../xiam_examples/v6_fit.xi";
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, input), "solo input XIAM letto: %s", input);
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    double source[MAX_XIAM_PARAMS], initial[MAX_XIAM_PARAMS], first[MAX_XIAM_PARAMS], second[MAX_XIAM_PARAMS];
+    int active[MAX_XIAM_PARAMS], n_active = 0;
+    for (int i = 0; i < s->xiam.n_params; i++) {
+        if (!s->xiam.params[i].fit_method) continue;
+        active[n_active] = i;
+        source[n_active] = s->xiam.params[i].value_ghz;
+        s->xiam.params[i].value_ghz *= 1.01;
+        initial[n_active] = s->xiam.params[i].value_ghz;
+        n_active++;
+    }
+    CHECK(n_active == 15, "v6 .xi espone i 15 parametri selezionati (%d)", n_active);
+    CHECK(xiam_fit(s), "primo fit v6 dal solo .xi perturbato");
+    for (int k = 0; k < n_active; k++) first[k] = s->xiam.params[active[k]].value_ghz;
+    CHECK(xiam_fit(s), "secondo fit v6 dal risultato del primo");
+    for (int k = 0; k < n_active; k++) second[k] = s->xiam.params[active[k]].value_ghz;
+    CHECK(xiam_fit(s), "terzo fit v6 dal risultato del secondo");
+    for (int k = 0; k < n_active; k++) {
+        const XiamParameter *p = &s->xiam.params[active[k]];
+        double scale = fabs(source[k]) > 1e-12 ? fabs(source[k]) : 1e-12;
+        fprintf(g_tlog, "    v6 source-only %-8s source=% .12g +1%%=% .12g fit1=% .12g fit2=% .12g fit3=% .12g step12=%.4g step23=%.4g\n",
+                p->name, source[k], initial[k], first[k], second[k], p->value_ghz,
+                fabs(second[k] - first[k]) / scale, fabs(p->value_ghz - second[k]) / scale);
+        CHECK(isfinite(p->value_ghz), "v6 source-only %s: il terzo fit resta finito", p->name);
     }
     DONE();
 }
@@ -3822,6 +3873,7 @@ static const Test TESTS[] = {
     {"test_xiam_imports_block_viii_and_saves_fit_input", test_xiam_imports_block_viii_and_saves_fit_input},
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
+    {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
@@ -3830,6 +3882,7 @@ static const Test TESTS[] = {
     {"test_xiam_v6_prediction_matches_native_when_configured", test_xiam_v6_prediction_matches_native_when_configured},
     {"test_xiam_2n_reduced_prediction_matches_native_when_configured", test_xiam_2n_reduced_prediction_matches_native_when_configured},
     {"test_xiam_v6_consecutive_fit_when_configured", test_xiam_v6_consecutive_fit_when_configured},
+    {"test_xiam_v6_source_only_consecutive_fit_when_configured", test_xiam_v6_source_only_consecutive_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
     {"test_reload_reports_collisions",         test_reload_reports_collisions},
