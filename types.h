@@ -427,6 +427,7 @@ typedef struct {
     double fmin_mhz, fmax_mhz;
     double temperature_k;
     double concentration;       /* native XIAM model scale in the shared plot */
+    double line_error_mhz;      /* default uncertainty of a written .xi datum */
     int has_freq, has_ints, has_j;
     int axis_convention;
     int axis_auto_convention;
@@ -465,6 +466,7 @@ typedef struct {
     int assignments_scroll;
     int fitting_scroll;
     int fit_params_scroll;
+    int states_scroll;
     int hamiltonians_scroll;
     int simulation_scroll;
     int nav_scroll;            /* the always-present Hamiltonian sidebar */
@@ -473,6 +475,8 @@ typedef struct {
     int edit_name_row;         /* parameter whose native name is edited, or -1 */
     int edit_hamiltonian_row;  /* Hamiltonian renamed in the sidebar, or -1 */
     int hover_line;            /* assignment under the pointer, or -1 */
+    int edit_control;          /* block II control cell being edited, or -1 */
+    int edit_state_line;       /* block V/VI record being edited, or -1 */
     XiamFitSnapshot *history;  /* pre-fit constants, newest last */
     int history_count, history_capacity;
     int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
@@ -496,6 +500,7 @@ typedef struct {
     double fmin_mhz, fmax_mhz;
     double temperature_k;
     double concentration;       /* active Hamiltonian projection */
+    double line_error_mhz;      /* active Hamiltonian projection */
     int has_freq, has_ints, has_j;
     int axis_convention;       /* effective: 0=not declared, 1=prolate, 2=oblate */
     int axis_auto_convention;  /* convention inferred from BJ/BK/B- */

@@ -26,13 +26,17 @@
 #define XIAM_DIR_NAME ".xiam"
 #define XIAM_SOURCE_MAX 255
 /* The workspace mirrors Pred&Fit Advanced page for page. */
-#define XIAM_TAB_COUNT 5
+#define XIAM_TAB_COUNT 6
+/* Block V symmetries plus block VI states: a generous bound on what one
+ * native input declares, active records and commented-out ones together. */
+#define MAX_XIAM_STATE_ROWS 128
 
 enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_TEMP = -4, XIAM_EDIT_JMAX = -5,
        XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7,
        XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9,
-       XIAM_EDIT_H_NAME = -10 };
+       XIAM_EDIT_H_NAME = -10, XIAM_EDIT_CONTROL = -11,
+       XIAM_EDIT_STATE_ROW = -12, XIAM_EDIT_LINE_DEFAULT = -13 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
 static int xiam_prefix_w(int font, const char *text, int n);
@@ -218,6 +222,7 @@ static void xiam_store_active(XiamState *x) {
     h->spin = x->spin; h->spin2 = x->spin2; h->model_id = x->model_id; h->max_j = x->max_j;
     h->fmin_mhz = x->fmin_mhz; h->fmax_mhz = x->fmax_mhz; h->temperature_k = x->temperature_k;
     h->concentration = x->concentration;
+    h->line_error_mhz = x->line_error_mhz;
     h->has_freq = x->has_freq; h->has_ints = x->has_ints; h->has_j = x->has_j;
     h->axis_convention = x->axis_convention; h->axis_auto_convention = x->axis_auto_convention;
     h->axis_override = x->axis_override;
@@ -238,6 +243,7 @@ static void xiam_restore_active(XiamState *x, int index) {
     x->spin = h->spin; x->spin2 = h->spin2; x->model_id = h->model_id; x->max_j = h->max_j;
     x->fmin_mhz = h->fmin_mhz; x->fmax_mhz = h->fmax_mhz; x->temperature_k = h->temperature_k;
     x->concentration = h->concentration;
+    x->line_error_mhz = h->line_error_mhz > 0.0 ? h->line_error_mhz : 0.010;
     x->has_freq = h->has_freq; x->has_ints = h->has_ints; x->has_j = h->has_j;
     x->axis_convention = h->axis_convention; x->axis_auto_convention = h->axis_auto_convention;
     x->axis_override = h->axis_override;
@@ -252,7 +258,7 @@ static void xiam_clear_active(XiamState *x) {
     x->input_path[0] = x->output_path[0] = x->fit_output_path[0] = x->work_dir[0] = '\0';
     x->n_source_lines = x->n_params = 0; x->spin = x->spin2 = 0; x->model_id = 0;
     x->max_j = 30; x->fmin_mhz = 0.0; x->fmax_mhz = 10000.0; x->temperature_k = 1.0;
-    x->concentration = 1.0;
+    x->concentration = 1.0; x->line_error_mhz = 0.010;
     x->has_freq = x->has_ints = x->has_j = 0;
     x->axis_convention = x->axis_auto_convention = x->axis_override = 0;
     x->status[0] = x->diagnostics[0] = '\0';
@@ -605,10 +611,10 @@ static int xiam_source_insert_line(XiamState *x, int at, const char *text) {
     return at;
 }
 
-/* Where a new molecular constant belongs: after the last declaration of
- * block III.  Appending at the end of the file would land in block VIII and
- * XIAM would read the constant as a malformed transition record. */
-static int xiam_block_iii_end(const XiamState *x) {
+/* Where a new record of a native block belongs: after the last line that
+ * block already holds.  Appending at the end of the file would land in block
+ * VIII, and XIAM would read a constant there as a malformed transition. */
+static int xiam_block_end(const XiamState *x, int wanted) {
     int block = 0, tail = -1;
     for (int i = 0; x && i < x->n_source_lines; i++) {
         char work[256], lower[256];
@@ -616,18 +622,255 @@ static int xiam_block_iii_end(const XiamState *x) {
         char *at = xiam_ltrim(work);
         xiam_lower(lower, sizeof(lower), at);
         if (xiam_is_comment(at)) {
-            if (strstr(lower, "block viii")) block = 8;
-            else if (strstr(lower, "block vii")) block = 7;
-            else if (strstr(lower, "block vi")) block = 6;
-            else if (strstr(lower, "block v")) block = 5;
-            else if (strstr(lower, "block iv")) block = 4;
-            else if (strstr(lower, "block iii")) { block = 3; tail = i; }
-            else if (block == 3 && *at) tail = i;
+            /* Longest Roman numeral first: II is a prefix of III, VII of VIII. */
+            int heading = strstr(lower, "block viii") ? 8 : strstr(lower, "block vii") ? 7 :
+                          strstr(lower, "block vi") ? 6 : strstr(lower, "block v") ? 5 :
+                          strstr(lower, "block iv") ? 4 : strstr(lower, "block iii") ? 3 :
+                          strstr(lower, "block ii") ? 2 : strstr(lower, "block i") ? 1 : 0;
+            if (heading) {
+                block = heading;
+                if (block == wanted) tail = i;
+                else if (tail >= 0) break;     /* the wanted block has ended */
+                continue;
+            }
+            if (block == wanted && *at) tail = i;
             continue;
         }
-        if (block == 3) tail = i;
+        if (block == wanted) tail = i;
     }
     return tail < 0 ? -1 : tail + 1;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Blocks II, V and VI: the calculation controls and the torsional states.
+ *
+ *  Pred&Fit's States page owns the .int control record and one row per
+ *  Pickett state.  XIAM's equivalents are its block II control cards, its
+ *  block V torsional symmetries and its block VI torsional states, and they
+ *  live only in the retained source text.  Everything below reads and edits
+ *  them there, which is also what makes them survive a session save.
+ * ------------------------------------------------------------------------- */
+
+/* The uncertainty a row carries, or the model's default for a row that has
+ * none.  Pred&Fit keeps the same field for its .lin; both windows show it in
+ * the corner of the Parameters page. */
+static double xiam_line_error(const XiamState *x, const Assignment *a) {
+    if (a && a->line_error_mhz > 0.0) return a->line_error_mhz;
+    return x && x->line_error_mhz > 0.0 ? x->line_error_mhz : 0.010;
+}
+
+/* One row of the States table: a block V torsional symmetry or a block VI
+ * torsional state, active or commented out.  A commented record is still a
+ * row, because turning it back on is the whole point of the page. */
+typedef struct {
+    int line;       /* index in source_lines                       */
+    int block;      /* 5 = torsional symmetry, 6 = torsional state */
+    int enabled;    /* 0 when the record is commented out          */
+} XiamStateRow;
+
+/* The controls XIAM calls block II.  `ints`, like Pred&Fit's QROT, is not a
+ * choice: it is 1 for a fit and 2 for a prediction and is regenerated on
+ * every run, so it is shown and not edited. */
+static const char *const XIAM_CONTROL_KEY[10] = {
+    "ints", "ntop", "nfold", "reduc", "spin", "spin2", "maxm", "maxvm", "ndata", "convg"
+};
+static const char *const XIAM_CONTROL_LABEL[10] = {
+    "ints (auto)", "ntop", "nfold", "reduc", "spin", "spin2", "maxm", "maxvm", "ndata", "convg"
+};
+static const double XIAM_CONTROL_DEFAULT[10] = {2, 1, 3, 1, 0, 0, 10, 3, 10000, 0.99999};
+static const char *const XIAM_CONTROL_FORMAT[10] = {
+    "%.0f", "%.0f", "%.0f", "%.0f", "%.0f", "%.0f", "%.0f", "%.0f", "%.0f", "%.12g"
+};
+
+static void xiam_state_row_text(const XiamState *x, const XiamStateRow *row,
+                                char *out, size_t size) {
+    char work[256];
+    snprintf(work, sizeof(work), "%s", x->source_lines[row->line]);
+    char *at = xiam_ltrim(work);
+    if (*at == '\\' || *at == '!') { at++; while (*at == ' ') at++; }
+    snprintf(out, size, "%s", at);
+}
+
+/* Which native block a source line belongs to, by walking the headings. */
+static int xiam_line_block(const XiamState *x, int upto) {
+    int block = 0;
+    for (int i = 0; i <= upto && i < x->n_source_lines; i++) {
+        char work[256], lower[256];
+        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
+        char *at = xiam_ltrim(work);
+        if (!xiam_is_comment(at)) continue;
+        xiam_lower(lower, sizeof(lower), at);
+        if (strstr(lower, "block viii")) block = 8;
+        else if (strstr(lower, "block vii")) block = 7;
+        else if (strstr(lower, "block vi")) block = 6;
+        else if (strstr(lower, "block v")) block = 5;
+        else if (strstr(lower, "block iv")) block = 4;
+        else if (strstr(lower, "block iii")) block = 3;
+        else if (strstr(lower, "block ii")) block = 2;
+    }
+    return block;
+}
+
+/* The active declaration of a control card, or -1 when the .xi leaves it to
+ * XIAM's own default. */
+static int xiam_control_line(const XiamState *x, const char *key) {
+    for (int i = 0; x && i < x->n_source_lines; i++) {
+        char work[256], name[64] = "";
+        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
+        char *at = xiam_ltrim(work);
+        if (xiam_is_comment(at)) continue;
+        if (sscanf(at, "%63s", name) == 1 && xiam_equal(name, key)) return i;
+    }
+    return -1;
+}
+
+static int xiam_control_value(const XiamState *x, const char *key, double fallback, double *out) {
+    int at = xiam_control_line(x, key);
+    if (at < 0) { if (out) *out = fallback; return 0; }
+    char work[256];
+    snprintf(work, sizeof(work), "%s", x->source_lines[at]);
+    char *tail = xiam_ltrim(work);
+    while (*tail && !isspace((unsigned char)*tail)) tail++;
+    char *end = NULL;
+    double v = xiam_number(xiam_ltrim(tail), &end);
+    if (end == tail || !isfinite(v)) { if (out) *out = fallback; return 0; }
+    if (out) *out = v;
+    return 1;
+}
+
+/* Set a control card, rewriting the existing declaration in place so its
+ * trailing `!` comment is preserved, or adding one to block II. */
+static int xiam_set_control(AppState *s, const char *key, double value, const char *format) {
+    XiamState *x = &s->xiam;
+    int at = xiam_control_line(x, key);
+    if (at >= 0) {
+        char changed[512];
+        xiam_replace_number(changed, sizeof(changed), x->source_lines[at], value);
+        snprintf(x->source_lines[at], sizeof(x->source_lines[0]), "%s", changed);
+    } else {
+        int insert = xiam_block_end(x, 2);
+        if (insert < 0) {
+            snprintf(x->status, sizeof(x->status),
+                     "This .xi has no block II: add a `\\ block II` heading before declaring controls.");
+            return 0;
+        }
+        char line[256], number[64];
+        snprintf(number, sizeof(number), format ? format : "%.12g", value);
+        snprintf(line, sizeof(line), " %-7s %s", key, number);
+        if (xiam_source_insert_line(x, insert, line) < 0) {
+            snprintf(x->status, sizeof(x->status), "The retained .xi source is full; cannot add a control.");
+            return 0;
+        }
+    }
+    /* spin/spin2 are also cached on the workspace, because the assignment
+       identity depends on how many hyperfine nuclei the model has. */
+    if (xiam_equal(key, "spin")) x->spin = (int)lround(value);
+    if (xiam_equal(key, "spin2")) x->spin2 = (int)lround(value);
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    return 1;
+}
+
+/* `\/E2 S 1` is a disabled record; `\ E1 species: sigma = +1` is prose.
+ * Tell them apart by parsing what follows the comment marker. */
+static int xiam_state_record_kind(const char *line) {
+    char work[256];
+    snprintf(work, sizeof(work), "%s", line);
+    char *at = xiam_ltrim(work);
+    if (*at == '\\' || *at == '!') at = xiam_ltrim(at + 1);
+    if (*at == '/') {
+        /* /label S <sigma> [<sigma2>] */
+        char label[64] = "", key[16] = "";
+        int sigma = 0;
+        if (sscanf(at, "%63s %15s %d", label, key, &sigma) == 3 && xiam_equal(key, "S")) return 5;
+        return 0;
+    }
+    char key[16] = "";
+    int v = 0;
+    if (sscanf(at, "%15s %d", key, &v) == 2 && xiam_equal(key, "V")) return 6;
+    return 0;
+}
+
+static int xiam_state_rows(const XiamState *x, XiamStateRow *out, int max) {
+    int n = 0;
+    for (int i = 0; x && i < x->n_source_lines && n < max; i++) {
+        int block = 0;
+        char work[256];
+        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
+        char *at = xiam_ltrim(work);
+        if (!*at) continue;
+        int kind = xiam_state_record_kind(x->source_lines[i]);
+        if (!kind) continue;
+        block = xiam_line_block(x, i);
+        /* A record only counts in the block that defines it: block VIII
+           transitions and block III constants never look like one. */
+        if (block != kind) continue;
+        out[n].line = i;
+        out[n].block = kind;
+        out[n].enabled = !xiam_is_comment(at);
+        n++;
+    }
+    return n;
+}
+
+/* Pred&Fit's States page can add a state; XIAM's equivalent is a block VI
+ * torsional state record. */
+static int xiam_add_state_row(AppState *s) {
+    XiamState *x = &s->xiam;
+    if (!x->loaded) {
+        snprintf(x->status, sizeof(x->status), "Open a .xi input before adding a torsional state.");
+        return -1;
+    }
+    int at = xiam_block_end(x, 6);
+    if (at < 0) {
+        snprintf(x->status, sizeof(x->status),
+                 "This .xi has no block VI: add a `\\ block VI` heading before declaring states.");
+        return -1;
+    }
+    /* The next unused v, so the new record is not a duplicate of an existing
+       torsional state that XIAM would then solve twice. */
+    int next = 0;
+    for (int i = 0; i < x->n_source_lines; i++) {
+        if (xiam_state_record_kind(x->source_lines[i]) != 6) continue;
+        if (xiam_line_block(x, i) != 6) continue;
+        char work[256], key[16] = "";
+        int v = 0;
+        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
+        char *p = xiam_ltrim(work);
+        if (*p == '\\' || *p == '!') p = xiam_ltrim(p + 1);
+        if (sscanf(p, "%15s %d", key, &v) == 2 && v >= next) next = v + 1;
+    }
+    char line[256];
+    snprintf(line, sizeof(line), " V  %d", next);
+    int inserted = xiam_source_insert_line(x, at, line);
+    if (inserted < 0) {
+        snprintf(x->status, sizeof(x->status), "The retained .xi source is full; cannot add a state.");
+        return -1;
+    }
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    snprintf(x->status, sizeof(x->status), "Added the block VI torsional state V %d.", next);
+    return inserted;
+}
+
+/* USE: commenting a record out is how XIAM drops a symmetry species or a
+ * torsional state, so that is exactly what the checkbox does. */
+static int xiam_toggle_state_row(AppState *s, int line) {
+    XiamState *x = &s->xiam;
+    if (line < 0 || line >= x->n_source_lines) return 0;
+    char work[256];
+    snprintf(work, sizeof(work), "%s", x->source_lines[line]);
+    char *at = xiam_ltrim(work);
+    if (xiam_is_comment(at)) {
+        char *body = at + 1;
+        while (*body == ' ') body++;
+        snprintf(x->source_lines[line], sizeof(x->source_lines[0]), " %s", body);
+    } else {
+        snprintf(x->source_lines[line], sizeof(x->source_lines[0]), "\\%s", work);
+    }
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    return 1;
 }
 
 static int xiam_line_is_transition(const char *line) {
@@ -721,7 +964,7 @@ static int xiam_parse_input_transition_line(const char *line, PredLine *out,
     }
     xiam_branch_mu(out);
     if (observed_mhz) *observed_mhz = value;
-    if (error_mhz) *error_mhz = got_error ? uncertainty : 0.010;
+    if (error_mhz) *error_mhz = got_error ? uncertainty : 0.0;
     return 1;
 }
 
@@ -776,7 +1019,7 @@ static int xiam_import_source_assignments(AppState *s) {
             if (matched[i] || a->hamiltonian_id != x->model_id ||
                 !xiam_same_input_transition(&a->pred, &p)) continue;
             if (fabs(a->exp_freq - observed) < 1e-7 &&
-                fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10) {
+                fabs(a->line_error_mhz - uncertainty) < 1e-10) {
                 found = i;
                 break;
             }
@@ -814,7 +1057,7 @@ static int xiam_import_source_assignments(AppState *s) {
     return imported;
 }
 
-static void xiam_write_assignment(FILE *fp, const Assignment *a) {
+static void xiam_write_assignment(FILE *fp, const XiamState *x, const Assignment *a) {
     const PredLine *p = &a->pred;
     fprintf(fp, " %d %d %d  %d %d %d", p->Ju,p->Kau,p->Kcu,p->Jl,p->Kal,p->Kcl);
     if (p->xiam.f1u || p->xiam.f1l) fprintf(fp, " F1 %d %d", p->xiam.f1u,p->xiam.f1l);
@@ -827,7 +1070,7 @@ static void xiam_write_assignment(FILE *fp, const Assignment *a) {
        canonical K-/K+ form and v0.44 derives tau from them when a fit line is
        read.  Re-emitting both annotations can instead zero that derivation. */
     fprintf(fp, " = %.9f MHz Err %.9g\n", a->exp_freq,
-            a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010);
+            xiam_line_error(x, a));
 }
 
 static void xiam_write_fit_choices(FILE *fp, const XiamState *x) {
@@ -946,7 +1189,7 @@ static int xiam_find_source_assignment(const AppState *s, const XiamState *x,
             a->hamiltonian_id != x->model_id ||
             !xiam_same_input_transition(&a->pred, source)) continue;
         if (fabs(a->exp_freq - observed) < 1e-7 &&
-            fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10)
+            fabs(a->line_error_mhz - uncertainty) < 1e-10)
             return i;
         if (fallback < 0) fallback = i;
     }
@@ -1007,9 +1250,9 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
                         /* Exact match: native spelling/order survives.  The
                            fallback represents a user-edited datum. */
                         if (fabs(a->exp_freq - observed) < 1e-7 &&
-                            fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10)
+                            fabs(a->line_error_mhz - uncertainty) < 1e-10)
                             fprintf(fp, "%s\n", x->source_lines[i]);
-                        else xiam_write_assignment(fp, a);
+                        else xiam_write_assignment(fp, x, a);
                     } else fprintf(fp, "\\%s\n", current);
                     continue;
                 }
@@ -1037,7 +1280,7 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
             if (!source_assignment_used[i] && s->assignments[i].fit_enabled &&
                 s->assignments[i].pred.backend == PRED_BACKEND_XIAM &&
                 s->assignments[i].hamiltonian_id == x->model_id)
-                xiam_write_assignment(fp, &s->assignments[i]);
+                xiam_write_assignment(fp, x, &s->assignments[i]);
     }
     int bad = ferror(fp) || fclose(fp) != 0; return !bad;
 }
@@ -1131,6 +1374,9 @@ void xiam_init(AppState *s) {
     s->xiam.edit_name_row = -1;
     s->xiam.edit_hamiltonian_row = -1;
     s->xiam.hover_line = -1;
+    s->xiam.edit_control = -1;
+    s->xiam.edit_state_line = -1;
+    s->xiam.line_error_mhz = 0.010;
     s->xiam.active_hamiltonian = -1;
     s->xiam.active_tab = 0;
     s->xiam.max_j = 30;
@@ -1634,7 +1880,7 @@ static int xiam_add_parameter(AppState *s) {
         snprintf(x->status, sizeof(x->status), "A XIAM model supports at most %d constants.", MAX_XIAM_PARAMS);
         return -1;
     }
-    int at = xiam_block_iii_end(x);
+    int at = xiam_block_end(x, 3);
     if (at < 0) {
         snprintf(x->status, sizeof(x->status),
                  "This .xi has no block III: add a `\\ block III` heading before declaring constants.");
@@ -1701,6 +1947,22 @@ static int xiam_delete_parameter(AppState *s, int row) {
 static void xiam_edit_begin(XiamState *x, int what) {
     x->edit_param=what; x->edit_replace=1;
     if (what >= 0) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",xiam_display_value(&x->params[what]));
+    else if (what==XIAM_EDIT_CONTROL) {
+        double v = 0.0; int i = x->edit_control;
+        if (i >= 0 && i < 10) {
+            xiam_control_value(x, XIAM_CONTROL_KEY[i], XIAM_CONTROL_DEFAULT[i], &v);
+            snprintf(x->edit_buf,sizeof(x->edit_buf),XIAM_CONTROL_FORMAT[i],v);
+        } else x->edit_buf[0]='\0';
+    }
+    else if (what==XIAM_EDIT_STATE_ROW) {
+        x->edit_buf[0]='\0';
+        if (x->edit_state_line >= 0 && x->edit_state_line < x->n_source_lines) {
+            XiamStateRow row = {x->edit_state_line, 0, 0};
+            xiam_state_row_text(x, &row, x->edit_buf, sizeof(x->edit_buf));
+        }
+    }
+    else if (what==XIAM_EDIT_LINE_DEFAULT)
+        snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->line_error_mhz > 0.0 ? x->line_error_mhz : 0.010);
     else if (what==XIAM_EDIT_H_NAME)
         snprintf(x->edit_buf,sizeof(x->edit_buf),"%s",
                  x->edit_hamiltonian_row >= 0 && x->edit_hamiltonian_row < x->n_hamiltonians
@@ -1723,7 +1985,7 @@ static void xiam_edit_assignment_begin(AppState *s, int index, int field) {
     xiam_edit_begin(x, field == 0 ? XIAM_EDIT_LINE_OBS : XIAM_EDIT_LINE_ERR);
     snprintf(x->edit_buf, sizeof(x->edit_buf), "%.12g", field == 0 ?
              s->assignments[index].exp_freq :
-             (s->assignments[index].line_error_mhz > 0.0 ? s->assignments[index].line_error_mhz : 0.010));
+             xiam_line_error(x, &s->assignments[index]));
     x->edit_caret = x->edit_anchor = (int)strlen(x->edit_buf);
 }
 
@@ -1742,6 +2004,30 @@ static void xiam_edit_commit(AppState *s) {
         xiam_store_active(x);
         xiam_apply_concentrations(s);
         s->intensity_window.species_sync_pending = 1;
+    }
+    else if (x->edit_param == XIAM_EDIT_CONTROL) {
+        int i = x->edit_control;
+        if (i > 0 && i < 10 && isfinite(v))
+            xiam_set_control(s, XIAM_CONTROL_KEY[i], v, XIAM_CONTROL_FORMAT[i]);
+        x->edit_control = -1;
+    }
+    else if (x->edit_param == XIAM_EDIT_STATE_ROW) {
+        int at = x->edit_state_line;
+        char wanted[256]; snprintf(wanted, sizeof(wanted), "%s", xiam_ltrim(x->edit_buf));
+        for (int i = (int)strlen(wanted) - 1; i >= 0 && isspace((unsigned char)wanted[i]); i--) wanted[i] = '\0';
+        if (at >= 0 && at < x->n_source_lines && wanted[0] &&
+            xiam_state_record_kind(wanted) == xiam_state_record_kind(x->source_lines[at])) {
+            int enabled = !xiam_is_comment(x->source_lines[at]);
+            snprintf(x->source_lines[at], sizeof(x->source_lines[0]),
+                     enabled ? " %s" : "\\ %s", wanted);
+        } else if (at >= 0) {
+            snprintf(x->status, sizeof(x->status),
+                     "A block V record is `/label S sigma` and a block VI record is `V n`.");
+        }
+        x->edit_state_line = -1;
+    }
+    else if (x->edit_param == XIAM_EDIT_LINE_DEFAULT) {
+        if (isfinite(v) && v > 0.0) x->line_error_mhz = v;
     }
     else if (x->edit_param == XIAM_EDIT_H_NAME) {
         int row = x->edit_hamiltonian_row;
@@ -1923,6 +2209,9 @@ typedef struct {
     /* Parameters: the run-control strip pushes its own table down. */
     SDL_Rect param_table, param_rows;
     int param_rows_visible;
+    /* States: the block II control record above its own table. */
+    SDL_Rect state_cell[10], state_table, state_rows;
+    int state_rows_visible;
     /* Fitting: fitted constants above, residuals below. */
     int split;
     SDL_Rect fit_param_rows, fit_obs_rows;
@@ -1935,7 +2224,7 @@ static XiamUI xiam_ui(XiamState *x) {
     if (u.w < 900) u.w = 900;
     if (u.h < 560) u.h = 560;
     const int tab_y = 52, tab_h = 30;
-    const int widths[XIAM_TAB_COUNT] = {130, 92, 100, 138, 124};
+    const int widths[XIAM_TAB_COUNT] = {124, 84, 92, 88, 130, 116};
     int tx = 18;
     for (int i = 0; i < XIAM_TAB_COUNT; i++) { u.tab[i] = (SDL_Rect){tx, tab_y, widths[i], tab_h}; tx += widths[i] + 10; }
     u.footer = (SDL_Rect){0, u.h - 60, u.w, 60};
@@ -1961,6 +2250,18 @@ static XiamUI xiam_ui(XiamState *x) {
                                u.param_table.w - 2, u.param_table.h - 33};
     u.param_rows_visible = u.param_rows.h / u.row_h;
     if (u.param_rows_visible < 1) u.param_rows_visible = 1;
+
+    {
+        int gap = 6, cw = (u.table.w - 4 * gap) / 5;
+        for (int i = 0; i < 10; i++)
+            u.state_cell[i] = (SDL_Rect){u.table.x + (i % 5) * (cw + gap),
+                                        u.table.y + 22 + (i / 5) * 33, cw, 29};
+    }
+    u.state_table = (SDL_Rect){u.table.x, u.table.y + 96, u.table.w, u.table.h - 96};
+    u.state_rows = (SDL_Rect){u.state_table.x + 1, u.state_table.y + 31,
+                              u.state_table.w - 2, u.state_table.h - 33};
+    u.state_rows_visible = u.state_rows.h / u.row_h;
+    if (u.state_rows_visible < 1) u.state_rows_visible = 1;
 
     u.split = u.table.y + (u.table.h * 38) / 100;
     u.fit_param_rows = (SDL_Rect){u.table.x + 1, u.table.y + 33,
@@ -1990,14 +2291,17 @@ static int xiam_scroll_limit(int total, int visible) {
 static void xiam_clamp_scrolls(AppState *s, const XiamUI *u) {
     XiamState *x = &s->xiam;
     int assignments = xiam_assignment_count(s, NULL);
+    XiamStateRow probe[MAX_XIAM_STATE_ROWS];
+    int states = xiam_state_rows(x, probe, MAX_XIAM_STATE_ROWS);
     int *scroll[] = {&x->nav_scroll, &x->params_scroll, &x->lines_scroll,
-                     &x->fit_params_scroll, &x->fitting_scroll,
+                     &x->fit_params_scroll, &x->fitting_scroll, &x->states_scroll,
                      &x->hamiltonians_scroll, &x->simulation_scroll};
     int limit[] = {xiam_scroll_limit(x->n_hamiltonians, u->nav_rows_visible),
                    xiam_scroll_limit(x->n_params, u->param_rows_visible),
                    xiam_scroll_limit(assignments, u->rows_visible),
                    xiam_scroll_limit(xiam_fitted_parameter_count(x), u->fit_param_rows_visible),
                    xiam_scroll_limit(assignments, u->fit_obs_rows_visible),
+                   xiam_scroll_limit(states, u->state_rows_visible),
                    xiam_scroll_limit(x->n_hamiltonians, u->rows_visible),
                    xiam_scroll_limit(x->n_hamiltonians, u->rows_visible)};
     for (size_t i = 0; i < sizeof(scroll) / sizeof(scroll[0]); i++) {
@@ -2095,9 +2399,9 @@ static int xiam_line_obs_text_x(const XiamUI *u, const Assignment *a) {
     return at < left ? left : at;
 }
 
-static int xiam_line_unc_text_x(const XiamUI *u, const Assignment *a) {
+static int xiam_line_unc_text_x(const XiamUI *u, const XiamState *x, const Assignment *a) {
     char b[64];
-    double unc = a && a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010;
+    double unc = xiam_line_error(x, a);
     snprintf(b, sizeof(b), "%.6g", unc);
     const char *pivot = strchr(b, '.');
     if (!pivot) pivot = b + strlen(b);
@@ -2205,6 +2509,14 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_button(r, u->btn_a, "+ parameter", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_b, "Predict", -1, UI_BTN_PRIMARY, 0, mx, my, down);
     ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    {
+        char unc[96];
+        snprintf(unc, sizeof(unc), ".xi uncertainty: %.8g MHz", x->line_error_mhz > 0.0 ? x->line_error_mhz : 0.010);
+        ui_text(r, UI_FONT_SANS_SM,
+                x->edit_param == XIAM_EDIT_LINE_DEFAULT ? x->edit_buf : unc,
+                u->w - 18 - 290, u->footer.y + 19,
+                x->edit_param == XIAM_EDIT_LINE_DEFAULT ? UI_ACCENT_TEXT : UI_DIM);
+    }
     ui_text(r, UI_FONT_SANS_SM,
             x->edit_param == XIAM_EDIT_PARAM_NAME
                 ? "Enter applies the native keyword · Esc cancels · × comments the declaration out"
@@ -2249,8 +2561,8 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         else { snprintf(b, sizeof(b), "%.6f", a->exp_freq); ui_text_right(r, UI_FONT_MONO_SM, b, obs_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
         double calc = xiam_assignment_calculated(s, a); snprintf(b, sizeof(b), calc ? "%.6f" : "—", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, y + 6, calc ? UI_DIM : UI_FAINT);
         if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai)
-            xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, a), y + 6, UI_ACCENT_TEXT);
-        else { snprintf(b, sizeof(b), "%.6g", a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
+            xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, x, a), y + 6, UI_ACCENT_TEXT);
+        else { snprintf(b, sizeof(b), "%.6g", xiam_line_error(x, a)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
         ui_text_right(r, UI_FONT_MONO_SM, "×", row.x + row.w - 12, y + 6, UI_WARN);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -2308,7 +2620,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         double calc = xiam_assignment_calculated(s, a);
         int have_report = x->fit_output_path[0] != '\0';
         int have_residual = have_report && a->fit_enabled && calc != 0.0;
-        double uncertainty = a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010;
+        double uncertainty = xiam_line_error(x, a);
         double z = have_residual ? (a->exp_freq - calc) / uncertainty : 0.0;
         SDL_Color c = !a->fit_enabled ? UI_FAINT : have_residual ? xiam_residual_color(z) : have_report ? UI_DIM : UI_FAINT;
         if (have_residual) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, 3, u->row_h - 2}, c);
@@ -2345,6 +2657,67 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         ui_text(r, UI_FONT_SANS_SM, band[i], lx + 13, ly, UI_FAINT);
         lx += 13 + ui_text_w(UI_FONT_SANS_SM, band[i]) + 14;
     }
+}
+
+static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
+                               const XiamUI *u, int mx, int my, int down) {
+    char b[256];
+    ui_text(r, UI_FONT_SANS, "States — block II controls, block V symmetries and block VI torsional states",
+            u->table.x, 112, UI_ACCENT_TEXT);
+    ui_text(r, UI_FONT_SANS_SM,
+            "Tunnelling and hyperfine states stay inside their XIAM Hamiltonian; USE comments the native record out.",
+            u->table.x, 128, UI_DIM);
+    for (int i = 0; i < 10; i++) {
+        SDL_Rect cell = u->state_cell[i];
+        int editing = x->edit_param == XIAM_EDIT_CONTROL && x->edit_control == i;
+        int declared = xiam_control_line(x, XIAM_CONTROL_KEY[i]) >= 0;
+        double value = 0.0;
+        xiam_control_value(x, XIAM_CONTROL_KEY[i], XIAM_CONTROL_DEFAULT[i], &value);
+        ui_fill(r, cell, i == 0 ? UI_PANEL : UI_INPUT);
+        ui_frame(r, cell, editing ? UI_ACCENT : UI_LINE);
+        ui_text(r, UI_FONT_SANS_SM, XIAM_CONTROL_LABEL[i], cell.x + 6, cell.y + 3,
+                i == 0 ? UI_FAINT : UI_DIM);
+        snprintf(b, sizeof(b), XIAM_CONTROL_FORMAT[i], value);
+        xiam_cell_text(r, UI_FONT_MONO_SM, x, editing, b, cell.x + 6, cell.y + 15,
+                       editing ? UI_ACCENT_TEXT : declared ? UI_TEXT : UI_FAINT);
+    }
+    ui_fill(r, u->state_table, UI_INPUT); ui_frame(r, u->state_table, UI_LINE);
+    int kind_x = u->state_table.x + u->state_table.w * 10 / 100;
+    int record_x = u->state_table.x + u->state_table.w * 34 / 100;
+    ui_text(r, UI_FONT_MONO_SM, "USE", u->state_table.x + 12, u->state_table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "KIND", kind_x, u->state_table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "NATIVE RECORD", record_x, u->state_table.y + 9, UI_DIM);
+    ui_hline(r, u->state_table.x + 2, u->state_table.x + u->state_table.w - 2, u->state_rows.y - 3, UI_LINE);
+    XiamStateRow rows[MAX_XIAM_STATE_ROWS];
+    int total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
+    SDL_RenderSetClipRect(r, &u->state_rows);
+    for (int visible = 0; visible < u->state_rows_visible; visible++) {
+        int i = x->states_scroll + visible;
+        if (i >= total) break;
+        int y = u->state_rows.y + visible * u->row_h;
+        SDL_Rect row = {u->state_rows.x, y, u->state_rows.w, u->row_h - 2};
+        int editing = x->edit_param == XIAM_EDIT_STATE_ROW && x->edit_state_line == rows[i].line;
+        if (editing) ui_fill(r, row, UI_ACCENT_SOFT);
+        else if (visible & 1) ui_fill(r, row, UI_CHROME);
+        ui_text(r, UI_FONT_MONO_SM, rows[i].enabled ? "[x]" : "[ ]", row.x + 11, y + 6,
+                rows[i].enabled ? UI_OK : UI_FAINT);
+        ui_text(r, UI_FONT_SANS_SM, rows[i].block == 5 ? "symmetry" : "torsional state",
+                kind_x, y + 6, rows[i].enabled ? UI_DIM : UI_FAINT);
+        xiam_state_row_text(x, &rows[i], b, sizeof(b));
+        xiam_cell_text(r, UI_FONT_MONO_SM, x, editing, b, record_x, y + 6,
+                       editing ? UI_ACCENT_TEXT : rows[i].enabled ? UI_TEXT : UI_FAINT);
+    }
+    SDL_RenderSetClipRect(r, NULL);
+    if (!total)
+        ui_text(r, UI_FONT_SANS_SM, "This .xi declares no block V symmetry and no block VI state.",
+                u->state_table.x + 12, u->state_rows.y + 6, UI_FAINT);
+    ui_button(r, u->btn_a, "+ torsional state", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_b, "Predict", -1, UI_BTN_PRIMARY, 0, mx, my, down);
+    ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_text(r, UI_FONT_SANS_SM,
+            "ints is the run mode and is regenerated on every run · a value shown dim follows XIAM's own default",
+            u->btn_d.x, u->footer.y + 19, UI_FAINT);
+    (void)s;
 }
 
 static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI *u,
@@ -2430,7 +2803,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (cmd && k == SDLK_x) { xiam_edit_copy(x, 1); return 1; }
         if (cmd && k == SDLK_v) { xiam_edit_paste(x); return 1; }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_TAB) { xiam_edit_commit(s); return 1; }
-        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; x->edit_hamiltonian_row = -1; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; x->edit_hamiltonian_row = -1; x->edit_control = -1; x->edit_state_line = -1; SDL_StopTextInput(); return 1; }
         if (k == SDLK_BACKSPACE) {
             x->edit_replace = 0;
             if (!xiam_edit_delete_selection(x) && x->edit_caret > 0) {
@@ -2488,7 +2861,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
                 const Assignment *a = &s->assignments[ai];
                 xiam_place_caret(x, UI_FONT_MONO_SM,
                                  x->edit_param == XIAM_EDIT_LINE_OBS ? xiam_line_obs_text_x(&hit, a)
-                                                                     : xiam_line_unc_text_x(&hit, a),
+                                                                     : xiam_line_unc_text_x(&hit, x, a),
                                  e->button.x);
                 return 1;
             }
@@ -2519,7 +2892,8 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
             if (my < u.split) x->fit_params_scroll += delta;
             else x->fitting_scroll += delta;
         }
-        else if (x->active_tab == 3) x->hamiltonians_scroll += delta;
+        else if (x->active_tab == 3) x->states_scroll += delta;
+        else if (x->active_tab == 4) x->hamiltonians_scroll += delta;
         else x->simulation_scroll += delta;
         xiam_clamp_scrolls(s, &u);
         return 1;
@@ -2611,6 +2985,10 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         }
         if (point_in_rect(px, py, u.btn_b)) { xiam_edit_commit(s); xiam_calculate(s); return 1; }
         if (point_in_rect(px, py, u.btn_c)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
+        /* The uncertainty a newly written .xi datum is given, in the same
+           corner Pred&Fit keeps the .lin one. */
+        SDL_Rect unc = {u.w - 18 - 300, u.footer.y + 10, 300, 34};
+        if (point_in_rect(px, py, unc)) { xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
     } else if (x->active_tab == 1) {
         if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
@@ -2636,6 +3014,36 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_c)) { xiam_calculate(s); return 1; }
         if (point_in_rect(px, py, u.btn_d)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
     } else if (x->active_tab == 3) {
+        for (int i = 0; i < 10; i++) if (point_in_rect(px, py, u.state_cell[i])) {
+            /* Cell 0 is `ints`, the run mode: regenerated, never chosen. */
+            if (i > 0) { x->edit_control = i; xiam_edit_begin(x, XIAM_EDIT_CONTROL); }
+            return 1;
+        }
+        if (point_in_rect(px, py, u.state_rows)) {
+            XiamStateRow rows[MAX_XIAM_STATE_ROWS];
+            int total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
+            int i = x->states_scroll + (py - u.state_rows.y) / u.row_h;
+            if (i >= 0 && i < total) {
+                if (px < u.state_table.x + u.state_table.w * 10 / 100)
+                    xiam_toggle_state_row(s, rows[i].line);
+                else if (px >= u.state_table.x + u.state_table.w * 34 / 100) {
+                    x->edit_state_line = rows[i].line;
+                    xiam_edit_begin(x, XIAM_EDIT_STATE_ROW);
+                }
+            }
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_a)) {
+            if (xiam_add_state_row(s) >= 0) {
+                XiamStateRow rows[MAX_XIAM_STATE_ROWS];
+                int total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
+                x->states_scroll = xiam_scroll_limit(total, u.state_rows_visible);
+            }
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_b)) { xiam_calculate(s); return 1; }
+        if (point_in_rect(px, py, u.btn_c)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
+    } else if (x->active_tab == 4) {
         if (point_in_rect(px, py, u.rows)) { int i = x->hamiltonians_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { xiam_select_hamiltonian(x, i); x->delete_hamiltonian_id = 0; } return 1; }
         if (point_in_rect(px, py, u.btn_a)) {
             int was_dirty = x->session_dirty;
@@ -2662,7 +3070,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
                 x->hamiltonians_scroll = xiam_scroll_limit(x->n_hamiltonians, u.rows_visible);
             return 1;
         }
-    } else if (x->active_tab == 4) {
+    } else if (x->active_tab == 5) {
         if (point_in_rect(px, py, u.rows)) { int i = x->simulation_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded; else x->hamiltonian[i].simulate_excluded = !x->hamiltonian[i].simulate_excluded; xiam_store_active(x); xiam_mark_session_dirty(s); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { xiam_simulate_checked(s); return 1; }
         if (point_in_rect(px, py, u.btn_b) || point_in_rect(px, py, u.btn_c)) { int excluded = point_in_rect(px, py, u.btn_c); x->simulate_excluded = excluded; for (int i = 0; i < x->n_hamiltonians; i++) x->hamiltonian[i].simulate_excluded = excluded; xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
@@ -2683,6 +3091,7 @@ void xiam_write_session(AppState *s, FILE *fp) {
                 h->fmin_mhz, h->fmax_mhz, h->temperature_k, h->concentration,
                 h->has_freq != 0, h->has_ints != 0, h->has_j != 0,
                 h->axis_convention, h->axis_auto_convention, h->axis_override);
+        fprintf(fp, "xiamline %.17g\n", h->line_error_mhz);
         fprintf(fp, "xiampath %s\n", h->input_path);
         fprintf(fp, "xiamoutput %s\n", h->output_path);
         fprintf(fp, "xiamfitoutput %s\n", h->fit_output_path);
@@ -2731,6 +3140,7 @@ int xiam_read_session_line(AppState *s, const char *line) {
             memset(h, 0, sizeof(*h));
             h->model_id = id; h->max_j = 30; h->fmax_mhz = 10000.0;
             h->temperature_k = h->concentration = 1.0;
+            h->line_error_mhz = 0.010;
             const char *name = line + 10 + used;
             while (*name == ' ' || *name == '\t') name++;
             snprintf(h->name, sizeof(h->name), "%s", *name ? name : "XIAM model");
@@ -2765,6 +3175,12 @@ int xiam_read_session_line(AppState *s, const char *line) {
     }
     if (strncmp(line, "xiamoutput ", 11) == 0) {
         snprintf(h->output_path, sizeof(h->output_path), "%s", line + 11);
+        return 1;
+    }
+    if (strncmp(line, "xiamline ", 9) == 0) {
+        double value = 0.0;
+        if (sscanf(line + 9, "%lf", &value) == 1 && isfinite(value) && value > 0.0)
+            h->line_error_mhz = value;
         return 1;
     }
     if (strncmp(line, "xiamfitoutput ", 14) == 0) {
@@ -2877,7 +3293,8 @@ void xiam_render(AppState *s) {
     SDL_SetRenderDrawColor(r, 19, 20, 22, 255); SDL_RenderClear(r);
     ui_fill(r, (SDL_Rect){0, 0, u.w, 42}, UI_TITLEBAR); ui_text(r, UI_FONT_TITLE, "XIAM — native Hamiltonian workspace", 18, 12, UI_TEXT);
     ui_hline(r, 0, u.w, 98, UI_LINE); ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
-    const char *tabs[XIAM_TAB_COUNT] = {"Parameters", "Lines", "Fitting", "Hamiltonians", "Simulation"};
+    /* Page for page the same workspace as Pred&Fit Advanced. */
+    const char *tabs[XIAM_TAB_COUNT] = {"Parameters", "Lines", "Fitting", "States", "Hamiltonians", "Simulation"};
     int mx = 0, my = 0, down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     if (SDL_GetMouseFocus() != x->window) mx = my = -999;
     for (int i = 0; i < XIAM_TAB_COUNT; i++) ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, x->active_tab == i, mx, my, down);
@@ -2885,7 +3302,8 @@ void xiam_render(AppState *s) {
     if (x->active_tab == 0) xiam_render_parameters(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 1) xiam_render_lines(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 2) xiam_render_fitting(r, s, x, &u, mx, my, down);
-    else if (x->active_tab == 3) xiam_render_hamiltonians(r, x, &u, mx, my, down);
+    else if (x->active_tab == 3) xiam_render_states(r, s, x, &u, mx, my, down);
+    else if (x->active_tab == 4) xiam_render_hamiltonians(r, x, &u, mx, my, down);
     else xiam_render_simulation(r, x, &u, mx, my, down);
     ui_text(r, UI_FONT_SANS_SM, x->status[0] ? x->status : "Open a .xi input to begin a native XIAM project.", 18, u.h - 24, UI_TEXT);
     SDL_RenderPresent(r);

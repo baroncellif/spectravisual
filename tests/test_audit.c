@@ -1388,6 +1388,168 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Count the active (uncommented) declarations of a keyword in a generated
+ * .xi, and the active records that begin with a given text. */
+static int xi_active_key(const char *path, const char *key) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+    char line[512]; int n = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        char name[64] = "";
+        const char *at = line;
+        while (*at == ' ' || *at == '\t') at++;
+        if (*at == '\\' || *at == '!') continue;
+        if (sscanf(at, "%63s", name) != 1) continue;
+        if (!strcmp(name, key)) n++;
+    }
+    fclose(fp);
+    return n;
+}
+static int xi_active_record(const char *path, const char *prefix) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+    char line[512]; int n = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        const char *at = line;
+        while (*at == ' ' || *at == '\t') at++;
+        if (*at == '\\' || *at == '!') continue;
+        if (!strncmp(at, prefix, strlen(prefix))) n++;
+    }
+    fclose(fp);
+    return n;
+}
+
+/* Pred&Fit has a States page: the .int control record above one row per
+ * Pickett state.  XIAM had no such page at all, so its block II controls, its
+ * block V torsional symmetries and its block VI torsional states — which is
+ * what a XIAM model has instead of Pickett states — could not be seen or
+ * changed anywhere in the program. */
+static int test_xiam_states_tab_edits_blocks_ii_v_vi(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "modello XIAM caricato");
+    XiamState *x = &s->xiam;
+
+    /* The page sits where Pred&Fit's States page sits. */
+    XiamUI u = xiam_ui(x);
+    CHECK_INT("la finestra ha sei schede come Pred&Fit", XIAM_TAB_COUNT, 6);
+    CHECK(u.state_rows_visible >= 1 && u.state_cell[9].w > 0, "la pagina States ha la sua geometria");
+
+    /* Block V and block VI records, active and commented out alike. */
+    XiamStateRow rows[MAX_XIAM_STATE_ROWS];
+    int total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
+    int symmetries = 0, states = 0, active_sym = 0, active_states = 0;
+    for (int i = 0; i < total; i++) {
+        if (rows[i].block == 5) { symmetries++; active_sym += rows[i].enabled != 0; }
+        if (rows[i].block == 6) { states++; active_states += rows[i].enabled != 0; }
+    }
+    CHECK(symmetries >= 6, "le simmetrie torsionali del blocco V sono elencate: %d", symmetries);
+    CHECK_INT("sei specie di simmetria sono attive", active_sym, 6);
+    CHECK(states >= 2, "gli stati torsionali del blocco VI sono elencati: %d", states);
+    CHECK_INT("uno stato torsionale e' attivo", active_states, 1);
+    /* A prose comment next to them is not a record. */
+    for (int i = 0; i < total; i++)
+        CHECK(xiam_state_record_kind(x->source_lines[rows[i].line]) == rows[i].block,
+              "riga %d classificata correttamente", rows[i].line);
+
+    /* USE turns a record off and a commented one back on, and that is what
+       reaches the generated input. */
+    int off = -1, on = -1;
+    for (int i = 0; i < total; i++) {
+        if (rows[i].block == 5 && rows[i].enabled && off < 0) off = i;
+        if (rows[i].block == 6 && !rows[i].enabled && on < 0) on = i;
+    }
+    CHECK(off >= 0 && on >= 0, "c'e' una simmetria attiva e uno stato spento");
+    if (off < 0 || on < 0) DONE();
+    CHECK(xiam_toggle_state_row(s, rows[off].line), "la simmetria viene spenta");
+    CHECK(xiam_toggle_state_row(s, rows[on].line), "lo stato torsionale viene acceso");
+    total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
+    active_sym = active_states = 0;
+    for (int i = 0; i < total; i++) {
+        if (rows[i].block == 5) active_sym += rows[i].enabled != 0;
+        if (rows[i].block == 6) active_states += rows[i].enabled != 0;
+    }
+    CHECK_INT("resta una simmetria in meno", active_sym, 5);
+    CHECK_INT("e uno stato torsionale in piu'", active_states, 2);
+
+    /* Block II controls: read from the source, written back into it. */
+    double nfold = 0.0, reduc = 0.0, maxvm = 0.0;
+    CHECK(xiam_control_value(x, "nfold", 0.0, &nfold), "nfold e' dichiarato nel .xi");
+    CHECK_DBL("nfold letto dal blocco II", nfold, 6.0, 1e-12);
+    CHECK(xiam_control_value(x, "reduc", 0.0, &reduc), "reduc e' dichiarato");
+    CHECK_DBL("reduc letto dal blocco II", reduc, 1.0, 1e-12);
+    CHECK(!xiam_control_value(x, "maxvm", 3.0, &maxvm), "maxvm e' commentato nel .xi");
+    CHECK_DBL("un controllo non dichiarato mostra il default", maxvm, 3.0, 1e-12);
+
+    CHECK(xiam_set_control(s, "nfold", 3, "%.0f"), "nfold viene cambiato");
+    CHECK(xiam_set_control(s, "maxvm", 5, "%.0f"), "maxvm viene aggiunto");
+    CHECK(xiam_set_control(s, "spin", 2, "%.0f"), "spin viene impostato");
+    CHECK_INT("spin e' anche nella cache del workspace", x->spin, 2);
+    xiam_control_value(x, "nfold", 0.0, &nfold);
+    CHECK_DBL("nfold rileggibile", nfold, 3.0, 1e-12);
+    xiam_control_value(x, "maxvm", 0.0, &maxvm);
+    CHECK_DBL("maxvm rileggibile", maxvm, 5.0, 1e-12);
+
+    /* A new torsional state takes the next unused v. */
+    int added = xiam_add_state_row(s);
+    CHECK(added >= 0, "uno stato torsionale viene aggiunto");
+    CHECK_INT("il nuovo record e' nel blocco VI", xiam_line_block(x, added), 6);
+    CHECK_INT("ed e' un record di stato", xiam_state_record_kind(x->source_lines[added]), 6);
+
+    /* All of it in the generated input, and exactly once each. */
+    char saved[900]; snprintf(saved, sizeof(saved), "%s", work_path("xiam_states.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "input di fit scritto");
+    CHECK_INT("nfold dichiarato una sola volta", xi_active_key(saved, "nfold"), 1);
+    CHECK_INT("maxvm dichiarato una sola volta", xi_active_key(saved, "maxvm"), 1);
+    CHECK_INT("spin dichiarato una sola volta", xi_active_key(saved, "spin"), 1);
+    CHECK_INT("cinque simmetrie restano attive", xi_active_record(saved, "/"), 5);
+    CHECK_INT("tre stati torsionali sono attivi", xi_active_key(saved, "V"), 3);
+    FILE *fp = fopen(saved, "rb");
+    int nfold_value = 0;
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            const char *at = line;
+            while (*at == ' ' || *at == '\t') at++;
+            if (*at == '\\' || *at == '!') continue;
+            char key[64] = ""; int v = 0;
+            if (sscanf(at, "%63s %d", key, &v) == 2 && !strcmp(key, "nfold")) nfold_value = v;
+        }
+        fclose(fp);
+    }
+    CHECK_INT("il nfold scritto e' quello scelto", nfold_value, 3);
+
+    /* The model's default uncertainty is what a datum without its own Err
+       gets, exactly as Pred&Fit's .lin uncertainty does. */
+    CHECK_DBL("il default parte da 0.01 MHz", x->line_error_mhz, 0.010, 1e-15);
+    x->line_error_mhz = 0.05;
+    int row = -1;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].hamiltonian_id == x->model_id) { row = i; break; }
+    CHECK(row >= 0, "il modello possiede almeno una transizione");
+    if (row >= 0) {
+        s->assignments[row].line_error_mhz = 0.0;   /* a record with no Err */
+        s->assignments[row].fit_enabled = 1;
+        CHECK_DBL("la riga senza Err segue il default del modello",
+                  xiam_line_error(x, &s->assignments[row]), 0.05, 1e-15);
+        snprintf(saved, sizeof(saved), "%s", work_path("xiam_states_unc.xi"));
+        CHECK(xiam_save_fit_file(s, saved), "input di fit riscritto");
+        fp = fopen(saved, "rb");
+        int wrote_default = 0;
+        if (fp) {
+            char line[512];
+            while (fgets(line, sizeof(line), fp)) {
+                const char *at = line;
+                while (*at == ' ' || *at == '\t') at++;
+                if (*at == '\\' || *at == '!') continue;
+                if (strstr(line, "Err") && strstr(line, "0.05")) wrote_default++;
+            }
+            fclose(fp);
+        }
+        CHECK(wrote_default >= 1, "il default compare come Err nella riga generata");
+    }
+    DONE();
+}
+
 /* Pred&Fit's Fitting page has "Undo fit"; XIAM's had no way back at all, and
  * XIAM rewrites its constants in place from the report.  The pre-fit set is
  * restored by native name, per Hamiltonian. */
@@ -4611,6 +4773,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_states_tab_edits_blocks_ii_v_vi", test_xiam_states_tab_edits_blocks_ii_v_vi},
     {"test_xiam_undo_fit_restores_the_parameters", test_xiam_undo_fit_restores_the_parameters},
     {"test_xiam_hamiltonians_tab_saves_and_imports", test_xiam_hamiltonians_tab_saves_and_imports},
     {"test_xiam_navigator_manages_the_project", test_xiam_navigator_manages_the_project},
