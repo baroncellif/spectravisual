@@ -1339,6 +1339,36 @@ static const char *xiam_axis_button_text(const XiamState *x) {
     return "Axes: automatic unknown";
 }
 
+/* Tables in the XIAM workspace use the same typography convention as the
+ * SPFIT report: ordinary numbers finish at the right edge of their column,
+ * while uncertainties share the decimal point.  The latter matters when a
+ * fit mixes e.g. 0.01 MHz experimental errors and much smaller fitted
+ * constant uncertainties. */
+static void xiam_text_decimal(SDL_Renderer *r, int role, const char *text,
+                              int decimal_x, int y, SDL_Color color) {
+    if (!text || !text[0]) return;
+    const char *pivot = strchr(text, '.');
+    if (!pivot) {
+        pivot = strchr(text, 'e');
+        if (!pivot) pivot = strchr(text, 'E');
+        if (!pivot) pivot = text + strlen(text);
+    }
+    char prefix[128];
+    size_t n = (size_t)(pivot - text);
+    if (n >= sizeof(prefix)) n = sizeof(prefix) - 1;
+    memcpy(prefix, text, n); prefix[n] = '\0';
+    ui_text(r, role, text, decimal_x - ui_text_w(role, prefix), y, color);
+}
+
+/* Kept intentionally identical to the SPFIT residual scale. */
+static SDL_Color xiam_residual_color(double z) {
+    double a = fabs(z);
+    if (a > 4.0) return (SDL_Color){229,  83,  75, 255};
+    if (a > 2.5) return (SDL_Color){232, 138, 58, 255};
+    if (a > 1.5) return (SDL_Color){226, 190,  70, 255};
+    return (SDL_Color){ 70, 196, 138, 255};
+}
+
 static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u,
                                   int mx, int my, int down) {
     ui_fill(r, u->nav, UI_INPUT); ui_frame(r, u->nav, UI_LINE);
@@ -1382,9 +1412,12 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     SDL_Rect table = {u->table.x, u->table.y + 64, u->table.w, u->table.h - 64};
     SDL_Rect rows = {table.x + 1, table.y + 31, table.w - 2, table.h - 33};
     ui_fill(r, table, UI_INPUT); ui_frame(r, table, UI_LINE);
+    int value_right = table.x + table.w * 52 / 100;
+    int error_right = table.x + table.w * 71 / 100;
+    int error_decimal = table.x + table.w * 66 / 100;
     ui_text(r, UI_FONT_MONO_SM, "PARAMETER", table.x + 12, table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "VALUE / MHz", table.x + table.w * 29 / 100, table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "FIT ERROR", table.x + table.w * 56 / 100, table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "VALUE / MHz", value_right, table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "FIT ERROR", error_right, table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "FIT (click cycles)", table.x + table.w * 73 / 100, table.y + 9, UI_DIM);
     ui_hline(r, table.x + 2, table.x + table.w - 2, rows.y - 3, UI_LINE);
     SDL_RenderSetClipRect(r, &rows);
@@ -1394,10 +1427,10 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
         if (visible & 1) ui_fill(r, row, UI_CHROME);
         XiamParameter *p = &x->params[i]; char label[96]; xiam_parameter_label(x, p, label, sizeof(label));
         ui_text(r, UI_FONT_MONO_SM, label, row.x + 10, y + 6, UI_TEXT);
-        snprintf(b, sizeof(b), "%.12g%s", xiam_display_value(p), p->is_frequency ? " MHz" : "");
+        snprintf(b, sizeof(b), "%.12g", xiam_display_value(p));
         if (x->edit_param == i) snprintf(b, sizeof(b), "%s", x->edit_buf);
-        ui_text(r, UI_FONT_MONO_SM, b, table.x + table.w * 29 / 100, y + 6, x->edit_param == i ? UI_ACCENT_TEXT : UI_TEXT);
-        if (p->error_ghz != 0.0) { snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); ui_text(r, UI_FONT_MONO_SM, b, table.x + table.w * 56 / 100, y + 6, UI_DIM); }
+        ui_text_right(r, UI_FONT_MONO_SM, b, value_right, y + 6, x->edit_param == i ? UI_ACCENT_TEXT : UI_TEXT);
+        if (p->error_ghz != 0.0) { snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, error_decimal, y + 6, UI_DIM); }
         ui_text(r, UI_FONT_MONO_SM, p->fit_method == 1 ? "fit" : p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "—", table.x + table.w * 73 / 100, y + 6, p->fit_method ? UI_ACCENT_TEXT : UI_FAINT);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -1414,11 +1447,16 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
     snprintf(b, sizeof(b), "%d / %d selected; observed frequency and uncertainty are editable in MHz.", enabled, total);
     ui_text(r, UI_FONT_SANS_SM, b, u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
+    int qns_right = u->table.x + u->table.w * 35 / 100;
+    int obs_right = u->table.x + u->table.w * 55 / 100;
+    int calc_right = u->table.x + u->table.w * 74 / 100;
+    int unc_right = u->table.x + u->table.w * 89 / 100;
+    int unc_decimal = u->table.x + u->table.w * 84 / 100;
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "UPPER  –  LOWER", u->table.x + u->table.w * 10 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "OBSERVED / MHz", u->table.x + u->table.w * 39 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "CALCULATED / MHz", u->table.x + u->table.w * 58 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "UNC / MHz", u->table.x + u->table.w * 79 / 100, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "UPPER  –  LOWER", qns_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz", obs_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED / MHz", calc_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "UNC / MHz", unc_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "DEL", u->table.x + u->table.w - 10, u->table.y + 9, UI_DIM);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, u->rows.y - 3, UI_LINE);
     SDL_RenderSetClipRect(r, &u->rows);
@@ -1428,10 +1466,10 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         SDL_Rect row = {u->rows.x, y, u->rows.w, u->row_h - 2};
         if (visible & 1) ui_fill(r, row, UI_CHROME);
         ui_text(r, UI_FONT_MONO_SM, a->fit_enabled ? "[x]" : "[ ]", row.x + 11, y + 6, a->fit_enabled ? UI_OK : UI_FAINT);
-        xiam_format_transition(&a->pred, b, sizeof(b)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 10 / 100, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
-        snprintf(b, sizeof(b), "%.6f", a->exp_freq); if (x->edit_param == XIAM_EDIT_LINE_OBS && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 39 / 100, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
-        double calc = xiam_assignment_calculated(s, a); snprintf(b, sizeof(b), calc ? "%.6f" : "—", calc); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 58 / 100, y + 6, calc ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%.6g", a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 79 / 100, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
+        xiam_format_transition(&a->pred, b, sizeof(b)); ui_text_right(r, UI_FONT_MONO_SM, b, qns_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
+        snprintf(b, sizeof(b), "%.6f", a->exp_freq); if (x->edit_param == XIAM_EDIT_LINE_OBS && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); ui_text_right(r, UI_FONT_MONO_SM, b, obs_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
+        double calc = xiam_assignment_calculated(s, a); snprintf(b, sizeof(b), calc ? "%.6f" : "—", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, y + 6, calc ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%.6g", a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "×", row.x + row.w - 12, y + 6, UI_WARN);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -1447,9 +1485,12 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text(r, UI_FONT_SANS_SM, x->fit_output_path[0] ? x->fit_output_path : "No XIAM fit report yet. Select assignments in Lines, then run Fit.", u->table.x, 128, x->fit_output_path[0] ? UI_DIM : UI_FAINT);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int split = u->table.y + (u->table.h * 38) / 100;
+    int param_value_right = u->table.x + u->table.w * 57 / 100;
+    int param_error_right = u->table.x + u->table.w * 82 / 100;
+    int param_error_decimal = u->table.x + u->table.w * 77 / 100;
     ui_text(r, UI_FONT_MONO_SM, "FITTED PARAMETERS", u->table.x + 12, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "VALUE / MHz", u->table.x + u->table.w * 36 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "EST. ERROR", u->table.x + u->table.w * 62 / 100, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "VALUE / MHz", param_value_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "EST. ERROR", param_error_right, u->table.y + 9, UI_DIM);
     int y = u->table.y + 33;
     int param_rows = (split - y - 2) / u->row_h;
     int param_total = xiam_fitted_parameter_count(x);
@@ -1458,34 +1499,63 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         XiamParameter *p = &x->params[pi];
         if ((x->fit_params_scroll + visible) & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, y, u->table.w - 2, u->row_h - 2}, UI_CHROME);
         ui_text(r, UI_FONT_MONO_SM, p->name, u->table.x + 12, y + 6, UI_TEXT);
-        snprintf(b, sizeof(b), "%.12g", xiam_display_value(p)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 36 / 100, y + 6, UI_TEXT);
-        snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 62 / 100, y + 6, p->error_ghz ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%.12g", xiam_display_value(p)); ui_text_right(r, UI_FONT_MONO_SM, b, param_value_right, y + 6, UI_TEXT);
+        snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, param_error_decimal, y + 6, p->error_ghz ? UI_DIM : UI_FAINT);
         y += u->row_h;
     }
     if (!param_total) ui_text(r, UI_FONT_SANS_SM, "No fitted parameter report yet.", u->table.x + 12, y + 6, UI_FAINT);
     else if (param_total > param_rows)
         ui_text_right(r, UI_FONT_SANS_SM, "scroll", u->table.x + u->table.w - 12, u->table.y + 9, UI_FAINT);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, split, UI_LINE);
+    int qns_right = u->table.x + u->table.w * 28 / 100;
+    int obs_right = u->table.x + u->table.w * 46 / 100;
+    int calc_right = u->table.x + u->table.w * 63 / 100;
+    int residual_right = u->table.x + u->table.w * 79 / 100;
+    int sigma_right = u->table.x + u->table.w * 93 / 100;
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, split + 10, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "QNS", u->table.x + u->table.w * 10 / 100, split + 10, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "OBSERVED", u->table.x + u->table.w * 40 / 100, split + 10, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "CALCULATED", u->table.x + u->table.w * 58 / 100, split + 10, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "OBS-CAL / UNC", u->table.x + u->table.w * 76 / 100, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "QNS", qns_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED", obs_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", calc_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "/UNC", sigma_right, split + 10, UI_DIM);
     int first = x->fitting_scroll, max_rows = (u->table.y + u->table.h - split - 34) / u->row_h;
     for (int visible = 0; visible < max_rows; visible++) {
         int ai = xiam_assignment_index(s, first + visible); if (ai < 0) break;
         Assignment *a = &s->assignments[ai]; int ry = split + 32 + visible * u->row_h;
         if (visible & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, u->table.w - 2, u->row_h - 2}, UI_CHROME);
-        ui_text(r, UI_FONT_MONO_SM, a->fit_enabled ? "[x]" : "[ ]", u->table.x + 12, ry + 6, a->fit_enabled ? UI_OK : UI_FAINT);
-        xiam_format_transition(&a->pred, b, sizeof(b)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 10 / 100, ry + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
-        snprintf(b, sizeof(b), "%.6f", a->exp_freq); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 40 / 100, ry + 6, UI_TEXT);
-        double calc = xiam_assignment_calculated(s, a); snprintf(b, sizeof(b), calc ? "%.6f" : "—", calc); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 58 / 100, ry + 6, calc ? UI_TEXT : UI_FAINT);
-        if (calc) snprintf(b, sizeof(b), "%+.6f / %.4g", a->exp_freq - calc, a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); else snprintf(b, sizeof(b), "—");
-        ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 76 / 100, ry + 6, calc ? UI_DIM : UI_FAINT);
+        double calc = xiam_assignment_calculated(s, a);
+        int have_report = x->fit_output_path[0] != '\0';
+        int have_residual = have_report && a->fit_enabled && calc != 0.0;
+        double uncertainty = a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010;
+        double z = have_residual ? (a->exp_freq - calc) / uncertainty : 0.0;
+        SDL_Color c = !a->fit_enabled ? UI_FAINT : have_residual ? xiam_residual_color(z) : have_report ? UI_DIM : UI_FAINT;
+        if (have_residual) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, 3, u->row_h - 2}, c);
+        ui_text(r, UI_FONT_MONO_SM, a->fit_enabled ? "[x]" : "[ ]", u->table.x + 12, ry + 6, c);
+        xiam_format_transition(&a->pred, b, sizeof(b)); ui_text_right(r, UI_FONT_MONO_SM, b, qns_right, ry + 6, c);
+        snprintf(b, sizeof(b), "%.6f", a->exp_freq); ui_text_right(r, UI_FONT_MONO_SM, b, obs_right, ry + 6, c);
+        if (have_residual) {
+            snprintf(b, sizeof(b), "%.6f", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, ry + 6, c);
+            snprintf(b, sizeof(b), "%+.6f", a->exp_freq - calc); ui_text_right(r, UI_FONT_MONO_SM, b, residual_right, ry + 6, c);
+            snprintf(b, sizeof(b), "%+.2f", z); ui_text_right(r, UI_FONT_MONO_SM, b, sigma_right, ry + 6, c);
+        } else if (!a->fit_enabled) {
+            ui_text(r, UI_FONT_MONO_SM, "excluded", obs_right + 16, ry + 6, UI_FAINT);
+        } else if (!have_report) {
+            ui_text(r, UI_FONT_MONO_SM, "not fitted yet", obs_right + 16, ry + 6, UI_FAINT);
+        } else {
+            ui_text(r, UI_FONT_MONO_SM, "not in refreshed catalogue", obs_right + 16, ry + 6, UI_DIM);
+        }
     }
     ui_button(r, u->btn_a, "Fit", -1, UI_BTN_PRIMARY, 0, mx, my, down);
     ui_button(r, u->btn_b, "Predict updated model", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    int lx = u->btn_c.x + u->btn_c.w + 24, ly = u->footer.y + 20;
+    const char *band[4] = {"0-1.5", "1.5-2.5", "2.5-4", ">4 sigma"};
+    double mid[4] = {0.5, 2.0, 3.2, 5.0};
+    for (int i = 0; i < 4; i++) {
+        ui_fill(r, (SDL_Rect){lx, ly + 3, 8, 8}, xiam_residual_color(mid[i]));
+        ui_text(r, UI_FONT_SANS_SM, band[i], lx + 13, ly, UI_FAINT);
+        lx += 13 + ui_text_w(UI_FONT_SANS_SM, band[i]) + 14;
+    }
 }
 
 static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI *u,
@@ -1494,9 +1564,10 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
     ui_text(r, UI_FONT_SANS, "Hamiltonians — each row is one independent native .xi model", u->table.x, 112, UI_ACCENT_TEXT);
     ui_text(r, UI_FONT_SANS_SM, "Tunnelling and hyperfine states remain inside their XIAM Hamiltonian; they are not Pickett-like species.", u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
+    int temp_right = u->table.x + u->table.w * 77 / 100;
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "SOURCE .xi", u->table.x + u->table.w * 30 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "T / K", u->table.x + u->table.w * 69 / 100, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "T / K", temp_right, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + u->table.w * 80 / 100, u->table.y + 9, UI_DIM);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int i = x->hamiltonians_scroll + visible; if (i >= x->n_hamiltonians) break;
@@ -1505,7 +1576,7 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
         if (i == x->active_hamiltonian) ui_fill(r, row, UI_ACCENT_SOFT); else if (visible & 1) ui_fill(r, row, UI_CHROME);
         snprintf(b, sizeof(b), "H%d  %s", i + 1, h->name); ui_text(r, UI_FONT_SANS_SM, b, row.x + 10, y + 6, i == x->active_hamiltonian ? UI_ACCENT_TEXT : UI_TEXT);
         ui_text(r, UI_FONT_MONO_SM, h->input_path[0] ? h->input_path : "—", u->table.x + u->table.w * 30 / 100, y + 6, UI_DIM);
-        snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 69 / 100, y + 6, UI_DIM);
+        snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text_right(r, UI_FONT_MONO_SM, b, temp_right, y + 6, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, h->simulate_excluded ? "[ ]" : "[x]", u->table.x + u->table.w * 80 / 100, y + 6, h->simulate_excluded ? UI_FAINT : UI_OK);
     }
     ui_button(r, u->btn_a, "+ Open .xi", -1, UI_BTN_PRIMARY, 0, mx, my, down);
@@ -1519,11 +1590,14 @@ static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *
     ui_text(r, UI_FONT_SANS, "Simulation — checked native XIAM Hamiltonians are calculated and overlaid together", u->table.x, 112, UI_ACCENT_TEXT);
     ui_text(r, UI_FONT_SANS_SM, "One XIAM run per .xi; the resulting catalogues retain native SPCAT intensities.", u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
+    int range_right = u->table.x + u->table.w * 64 / 100;
+    int temp_right = u->table.x + u->table.w * 80 / 100;
+    int jmax_right = u->table.x + u->table.w * 91 / 100;
     ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN", u->table.x + u->table.w * 10 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "FREQ. RANGE / MHz", u->table.x + u->table.w * 44 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "T / K", u->table.x + u->table.w * 68 / 100, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "JMAX", u->table.x + u->table.w * 80 / 100, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "FREQ. RANGE / MHz", range_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "T / K", temp_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "JMAX", jmax_right, u->table.y + 9, UI_DIM);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int i = x->simulation_scroll + visible; if (i >= x->n_hamiltonians) break;
         XiamHamiltonian *h = &x->hamiltonian[i]; int y = u->rows.y + visible * u->row_h;
@@ -1532,9 +1606,9 @@ static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *
         int on = !h->simulate_excluded; if (on) checked++;
         ui_text(r, UI_FONT_MONO_SM, on ? "[x]" : "[ ]", row.x + 11, y + 6, on ? UI_OK : UI_FAINT);
         snprintf(b, sizeof(b), "H%d  %s", i + 1, h->name); ui_text(r, UI_FONT_SANS_SM, b, u->table.x + u->table.w * 10 / 100, y + 6, on ? UI_TEXT : UI_DIM);
-        snprintf(b, sizeof(b), "%.8g – %.8g", h->fmin_mhz, h->fmax_mhz); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 44 / 100, y + 6, on ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 68 / 100, y + 6, on ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%d", h->max_j); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 80 / 100, y + 6, on ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%.8g – %.8g", h->fmin_mhz, h->fmax_mhz); ui_text_right(r, UI_FONT_MONO_SM, b, range_right, y + 6, on ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text_right(r, UI_FONT_MONO_SM, b, temp_right, y + 6, on ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%d", h->max_j); ui_text_right(r, UI_FONT_MONO_SM, b, jmax_right, y + 6, on ? UI_DIM : UI_FAINT);
     }
     snprintf(b, sizeof(b), "Simulate (%d H)", checked); ui_button(r, u->btn_a, b, -1, checked ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_b, "Check all", -1, UI_BTN_QUIET, 0, mx, my, down);
