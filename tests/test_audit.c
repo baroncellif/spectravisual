@@ -1388,6 +1388,123 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Helpers to drive the XIAM window's own event handler without a window:
+   every key and text event it reads while a field is being edited is handled
+   before any geometry is touched. */
+static void xiam_headless_window(AppState *s) {
+    s->xiam.open = 1;
+    s->xiam.window_id = 42;
+}
+static void xiam_key(AppState *s, SDL_Keycode k, SDL_Keymod mod) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_KEYDOWN; e.key.windowID = s->xiam.window_id;
+    e.key.keysym.sym = k; e.key.keysym.mod = mod;
+    xiam_handle_event(s, &e);
+}
+static void xiam_type(AppState *s, const char *text) {
+    SDL_Event e; memset(&e, 0, sizeof(e));
+    e.type = SDL_TEXTINPUT; e.text.windowID = s->xiam.window_id;
+    snprintf(e.text.text, sizeof(e.text.text), "%s", text);
+    xiam_handle_event(s, &e);
+}
+
+/* The XIAM fields understood only Backspace and the arrows, while Pred&Fit's
+ * understood Home/End/Delete, shift-selection and the clipboard.  Two windows
+ * of the same program must not edit text differently. */
+static int test_xiam_field_editor_matches_predfit(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "modello XIAM caricato");
+    XiamState *x = &s->xiam;
+    xiam_headless_window(s);
+    x->active_tab = 0;
+
+    /* An edit opens with the value selected: the first keystroke replaces it. */
+    x->edit_name_row = 0;
+    xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME);
+    CHECK(!strcmp(x->edit_buf, x->params[0].name), "l'editor apre col nome nativo: %s", x->edit_buf);
+    xiam_type(s, "D");
+    CHECK(!strcmp(x->edit_buf, "D"), "il primo carattere sostituisce la selezione iniziale: %s", x->edit_buf);
+    xiam_type(s, "J");
+    xiam_type(s, "K");
+    CHECK(!strcmp(x->edit_buf, "DJK"), "i caratteri successivi si inseriscono: %s", x->edit_buf);
+
+    /* Home / End */
+    xiam_key(s, SDLK_HOME, KMOD_NONE);
+    CHECK_INT("Home porta il caret a inizio campo", x->edit_caret, 0);
+    xiam_key(s, SDLK_END, KMOD_NONE);
+    CHECK_INT("End porta il caret a fine campo", x->edit_caret, 3);
+
+    /* Delete at the start removes forwards, Backspace at the end backwards. */
+    xiam_key(s, SDLK_BACKSPACE, KMOD_NONE);
+    CHECK(!strcmp(x->edit_buf, "DJ"), "Backspace cancella a sinistra: %s", x->edit_buf);
+    xiam_key(s, SDLK_HOME, KMOD_NONE);
+    xiam_key(s, SDLK_DELETE, KMOD_NONE);
+    CHECK(!strcmp(x->edit_buf, "J"), "Canc cancella a destra: %s", x->edit_buf);
+
+    /* Shift extends a selection; typing replaces it. */
+    xiam_type(s, "abcd");
+    CHECK(!strcmp(x->edit_buf, "abcdJ"), "testo inserito nel punto del caret: %s", x->edit_buf);
+    xiam_key(s, SDLK_HOME, KMOD_NONE);
+    xiam_key(s, SDLK_RIGHT, KMOD_SHIFT);
+    xiam_key(s, SDLK_RIGHT, KMOD_SHIFT);
+    CHECK_INT("shift+destra estende la selezione (caret)", x->edit_caret, 2);
+    CHECK_INT("shift+destra tiene fermo l'ancoraggio", x->edit_anchor, 0);
+    xiam_type(s, "Z");
+    CHECK(!strcmp(x->edit_buf, "ZcdJ"), "la selezione viene sostituita: %s", x->edit_buf);
+
+    /* Select all, then delete the selection in one keystroke. */
+    xiam_key(s, SDLK_a, KMOD_GUI);
+    CHECK_INT("cmd+A seleziona dall'inizio", x->edit_anchor, 0);
+    CHECK_INT("cmd+A seleziona fino alla fine", x->edit_caret, 4);
+    xiam_key(s, SDLK_BACKSPACE, KMOD_NONE);
+    CHECK_INT("Backspace su selezione svuota il campo", (int)strlen(x->edit_buf), 0);
+
+    /* Clipboard, when this machine has one available to SDL. */
+    xiam_type(s, "12.5");
+    xiam_key(s, SDLK_a, KMOD_GUI);
+    xiam_key(s, SDLK_c, KMOD_GUI);
+    char *clip = SDL_GetClipboardText();
+    int clipboard_works = clip && !strcmp(clip, "12.5");
+    if (clip) SDL_free(clip);
+    if (clipboard_works) {
+        xiam_key(s, SDLK_END, KMOD_NONE);
+        xiam_key(s, SDLK_v, KMOD_GUI);
+        CHECK(!strcmp(x->edit_buf, "12.512.5"), "cmd+V incolla nel punto del caret: %s", x->edit_buf);
+        xiam_key(s, SDLK_a, KMOD_GUI);
+        xiam_key(s, SDLK_x, KMOD_GUI);
+        CHECK_INT("cmd+X taglia la selezione", (int)strlen(x->edit_buf), 0);
+    }
+
+    /* Esc abandons the edit without renaming anything. */
+    char original[48]; snprintf(original, sizeof(original), "%s", x->params[0].name);
+    xiam_type(s, "GARBAGE");
+    xiam_key(s, SDLK_ESCAPE, KMOD_NONE);
+    CHECK_INT("Esc chiude l'editor", x->edit_param, XIAM_EDIT_NONE);
+    CHECK_INT("Esc dimentica la riga in modifica", x->edit_name_row, -1);
+    CHECK(!strcmp(x->params[0].name, original), "Esc non rinomina la costante: %s", x->params[0].name);
+
+    /* A caret aimed by a click lands between the nearest two characters.
+       Text metrics need real fonts, which the harness does not otherwise
+       load; without them every prefix measures zero and the question is
+       meaningless, so the positions are only checked when they are real. */
+    x->edit_name_row = 0;
+    xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME);
+    xiam_place_caret(x, UI_FONT_MONO_SM, 100, 100);
+    CHECK_INT("un click posiziona il caret senza riselezionare tutto", x->edit_replace, 0);
+    CHECK_INT("un click a sinistra del testo porta il caret a 0", x->edit_caret, 0);
+    if (TTF_Init() == 0 && ui_fonts_init(1.0f) &&
+        ui_text_w(UI_FONT_MONO_SM, x->edit_buf) > 0) {
+        int span = ui_text_w(UI_FONT_MONO_SM, x->edit_buf);
+        xiam_place_caret(x, UI_FONT_MONO_SM, 100, 100 + span + 500);
+        CHECK_INT("un click a destra del testo porta il caret alla fine",
+                  x->edit_caret, (int)strlen(x->edit_buf));
+        xiam_place_caret(x, UI_FONT_MONO_SM, 100, 100);
+        CHECK_INT("e uno a sinistra lo riporta all'inizio", x->edit_caret, 0);
+        ui_fonts_close();
+    }
+    DONE();
+}
+
 /* Pred&Fit can add and remove Pickett parameters (`+ parameter` and the row
  * ×).  XIAM could only ever show the constants its .xi happened to declare.
  * A constant added in the workspace has to become a real block III
@@ -4291,6 +4408,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_field_editor_matches_predfit", test_xiam_field_editor_matches_predfit},
     {"test_xiam_parameter_added_and_removed_reaches_the_input", test_xiam_parameter_added_and_removed_reaches_the_input},
     {"test_xiam_scroll_limits_follow_the_rendered_rows", test_xiam_scroll_limits_follow_the_rendered_rows},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},

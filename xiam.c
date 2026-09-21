@@ -33,6 +33,7 @@ enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
+static int xiam_prefix_w(int font, const char *text, int n);
 
 static int xiam_is_comment(const char *line) {
     while (line && isspace((unsigned char)*line)) line++;
@@ -1635,11 +1636,81 @@ static void xiam_edit_commit(AppState *s) {
     xiam_mark_session_dirty(s);
 }
 
+/* Field editing below is deliberately the same as Pred&Fit's: a workspace
+ * where Home, Delete, shift-selection or ⌘V do nothing is not the same
+ * program as the one next to it. */
+static void xiam_edit_clamp(XiamState *x) {
+    int n = (int)strlen(x->edit_buf);
+    if (x->edit_caret < 0) x->edit_caret = 0;
+    if (x->edit_caret > n) x->edit_caret = n;
+    if (x->edit_anchor < 0) x->edit_anchor = 0;
+    if (x->edit_anchor > n) x->edit_anchor = n;
+}
+
+static int xiam_edit_delete_selection(XiamState *x) {
+    xiam_edit_clamp(x);
+    int lo = x->edit_caret < x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    int hi = x->edit_caret > x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    if (lo == hi) return 0;
+    memmove(x->edit_buf + lo, x->edit_buf + hi, strlen(x->edit_buf + hi) + 1);
+    x->edit_anchor = x->edit_caret = lo;
+    return 1;
+}
+
 static void xiam_edit_insert(XiamState *x, const char *text) {
-    if (!text || !*text) return; int n=(int)strlen(x->edit_buf), add=(int)strlen(text);
-    if (x->edit_replace) { x->edit_buf[0]='\0'; n=0; x->edit_caret=x->edit_anchor=0; x->edit_replace=0; }
-    if (n+add >= (int)sizeof(x->edit_buf)) add=(int)sizeof(x->edit_buf)-n-1;
-    if (add<=0) return; memcpy(x->edit_buf+x->edit_caret+add,x->edit_buf+x->edit_caret,(size_t)(n-x->edit_caret+1)); memcpy(x->edit_buf+x->edit_caret,text,(size_t)add); x->edit_caret+=add; x->edit_anchor=x->edit_caret;
+    if (!text || !*text) return;
+    /* The whole value is selected when an edit opens, so the first keystroke
+       replaces it: keep that by turning the flag into a real selection. */
+    if (x->edit_replace) { x->edit_anchor = 0; x->edit_caret = (int)strlen(x->edit_buf); x->edit_replace = 0; }
+    xiam_edit_delete_selection(x);
+    int n = (int)strlen(x->edit_buf), add = (int)strlen(text);
+    int room = (int)sizeof(x->edit_buf) - 1 - n;
+    if (add > room) add = room;
+    if (add <= 0) return;
+    memmove(x->edit_buf + x->edit_caret + add, x->edit_buf + x->edit_caret,
+            (size_t)(n - x->edit_caret) + 1);
+    memcpy(x->edit_buf + x->edit_caret, text, (size_t)add);
+    x->edit_caret += add;
+    x->edit_anchor = x->edit_caret;
+}
+
+static void xiam_edit_copy(XiamState *x, int cut) {
+    xiam_edit_clamp(x);
+    int lo = x->edit_caret < x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    int hi = x->edit_caret > x->edit_anchor ? x->edit_caret : x->edit_anchor;
+    if (lo == hi) return;
+    char text[sizeof(x->edit_buf)];
+    int n = hi - lo;
+    memcpy(text, x->edit_buf + lo, (size_t)n);
+    text[n] = '\0';
+    SDL_SetClipboardText(text);
+    if (cut) { x->edit_replace = 0; xiam_edit_delete_selection(x); }
+}
+
+static void xiam_edit_paste(XiamState *x) {
+    char *clip = SDL_GetClipboardText();
+    if (!clip) return;
+    char clean[sizeof(x->edit_buf)];
+    int n = 0;
+    for (const char *q = clip; *q && n < (int)sizeof(clean) - 1; q++)
+        if (*q != '\r' && *q != '\n' && *q != '\t') clean[n++] = *q;
+    clean[n] = '\0';
+    SDL_free(clip);
+    xiam_edit_insert(x, clean);
+}
+
+/* Where a click lands inside an edited cell: the caret goes between the two
+ * characters the pointer is closest to. */
+static void xiam_place_caret(XiamState *x, int font, int text_x, int click_x) {
+    const char *text = x->edit_buf;
+    int n = (int)strlen(text), best = 0;
+    double best_d = 1e18;
+    for (int i = 0; i <= n; i++) {
+        double d = fabs((double)(text_x + xiam_prefix_w(font, text, i)) - (double)click_x);
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    x->edit_caret = x->edit_anchor = best;
+    x->edit_replace = 0;
 }
 
 /* Keep file selection in the dedicated XIAM workflow.  Drag-and-drop and the
@@ -1828,6 +1899,38 @@ static SDL_Color xiam_residual_color(double z) {
     return (SDL_Color){ 70, 196, 138, 255};
 }
 
+/* The stored value is right-aligned on its column; while it is edited the
+ * text is drawn from that same starting x so the caret does not travel with
+ * the digits.  The click handler needs the identical number to aim a caret. */
+static int xiam_param_value_text_x(const XiamUI *u, const XiamState *x, int row) {
+    char b[64];
+    snprintf(b, sizeof(b), "%.12g",
+             row >= 0 && row < x->n_params ? xiam_display_value(&x->params[row]) : 0.0);
+    int at = u->param_table.x + u->param_table.w * 52 / 100 - ui_text_w(UI_FONT_MONO_SM, b);
+    int left = u->param_table.x + u->param_table.w * 30 / 100 + 8;
+    return at < left ? left : at;
+}
+
+/* Same contract for the two editable cells of Lines. */
+static int xiam_line_obs_text_x(const XiamUI *u, const Assignment *a) {
+    char b[64]; snprintf(b, sizeof(b), "%.6f", a ? a->exp_freq : 0.0);
+    int at = u->table.x + u->table.w * 55 / 100 - ui_text_w(UI_FONT_MONO_SM, b);
+    int left = u->table.x + u->table.w * 38 / 100;
+    return at < left ? left : at;
+}
+
+static int xiam_line_unc_text_x(const XiamUI *u, const Assignment *a) {
+    char b[64];
+    double unc = a && a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010;
+    snprintf(b, sizeof(b), "%.6g", unc);
+    const char *pivot = strchr(b, '.');
+    if (!pivot) pivot = b + strlen(b);
+    char prefix[64]; size_t n = (size_t)(pivot - b);
+    if (n >= sizeof(prefix)) n = sizeof(prefix) - 1;
+    memcpy(prefix, b, n); prefix[n] = '\0';
+    return u->table.x + u->table.w * 84 / 100 - ui_text_w(UI_FONT_MONO_SM, prefix);
+}
+
 static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u,
                                   int mx, int my, int down) {
     ui_fill(r, u->nav, UI_INPUT); ui_frame(r, u->nav, UI_LINE);
@@ -1883,7 +1986,6 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     int value_right = table.x + table.w * 52 / 100;
     int error_right = table.x + table.w * 71 / 100;
     int error_decimal = table.x + table.w * 66 / 100;
-    int name_edge = table.x + table.w * 30 / 100;
     int fit_x = table.x + table.w * 73 / 100;
     ui_text(r, UI_FONT_MONO_SM, "PARAMETER", table.x + 12, table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "VALUE / MHz", value_right, table.y + 9, UI_DIM);
@@ -1903,13 +2005,9 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
         xiam_cell_text(r, UI_FONT_MONO_SM, x, editing_name, label, row.x + 10, y + 6,
                        editing_name ? UI_ACCENT_TEXT : UI_TEXT);
         snprintf(b, sizeof(b), "%.12g", xiam_display_value(p));
-        if (editing_value) {
-            /* Right-aligned while stored, left-aligned from the column start
-               while edited, so the caret does not travel with the digits. */
-            int at = value_right - ui_text_w(UI_FONT_MONO_SM, b);
-            if (at < name_edge + 8) at = name_edge + 8;
-            xiam_edit_text(r, UI_FONT_MONO_SM, x, at, y + 6, UI_ACCENT_TEXT);
-        } else ui_text_right(r, UI_FONT_MONO_SM, b, value_right, y + 6, UI_TEXT);
+        if (editing_value)
+            xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_param_value_text_x(u, x, i), y + 6, UI_ACCENT_TEXT);
+        else ui_text_right(r, UI_FONT_MONO_SM, b, value_right, y + 6, UI_TEXT);
         if (p->error_ghz != 0.0) { snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, error_decimal, y + 6, UI_DIM); }
         ui_text(r, UI_FONT_MONO_SM, p->fit_method == 1 ? "fit" : p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "—", fit_x, y + 6, p->fit_method ? UI_ACCENT_TEXT : UI_FAINT);
         ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){table.x + table.w - 26, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DANGER_TEXT);
@@ -1956,9 +2054,13 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         if (visible & 1) ui_fill(r, row, UI_CHROME);
         ui_text(r, UI_FONT_MONO_SM, a->fit_enabled ? "[x]" : "[ ]", row.x + 11, y + 6, a->fit_enabled ? UI_OK : UI_FAINT);
         xiam_format_transition(&a->pred, b, sizeof(b)); ui_text_right(r, UI_FONT_MONO_SM, b, qns_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
-        snprintf(b, sizeof(b), "%.6f", a->exp_freq); if (x->edit_param == XIAM_EDIT_LINE_OBS && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); ui_text_right(r, UI_FONT_MONO_SM, b, obs_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
+        if (x->edit_param == XIAM_EDIT_LINE_OBS && x->edit_assignment == ai)
+            xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_obs_text_x(u, a), y + 6, UI_ACCENT_TEXT);
+        else { snprintf(b, sizeof(b), "%.6f", a->exp_freq); ui_text_right(r, UI_FONT_MONO_SM, b, obs_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
         double calc = xiam_assignment_calculated(s, a); snprintf(b, sizeof(b), calc ? "%.6f" : "—", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, y + 6, calc ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%.6g", a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai) snprintf(b, sizeof(b), "%s", x->edit_buf); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
+        if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai)
+            xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, a), y + 6, UI_ACCENT_TEXT);
+        else { snprintf(b, sizeof(b), "%.6g", a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
         ui_text_right(r, UI_FONT_MONO_SM, "×", row.x + row.w - 12, y + 6, UI_WARN);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -2117,14 +2219,78 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
     if (x->edit_param != XIAM_EDIT_NONE && e->type == SDL_TEXTINPUT && e->text.windowID == id) { xiam_edit_insert(x, e->text.text); return 1; }
     if (x->edit_param != XIAM_EDIT_NONE && e->type == SDL_KEYDOWN && e->key.windowID == id) {
         SDL_Keycode k = e->key.keysym.sym;
+        SDL_Keymod mod = e->key.keysym.mod;
+        int cmd = (mod & (KMOD_GUI | KMOD_CTRL)) != 0, shift = (mod & KMOD_SHIFT) != 0;
+        if (cmd && k == SDLK_a) { x->edit_anchor = 0; x->edit_caret = (int)strlen(x->edit_buf); x->edit_replace = 0; return 1; }
+        if (cmd && k == SDLK_c) { xiam_edit_copy(x, 0); return 1; }
+        if (cmd && k == SDLK_x) { xiam_edit_copy(x, 1); return 1; }
+        if (cmd && k == SDLK_v) { xiam_edit_paste(x); return 1; }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_TAB) { xiam_edit_commit(s); return 1; }
         if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; SDL_StopTextInput(); return 1; }
-        if (k == SDLK_BACKSPACE && x->edit_caret > 0) { memmove(x->edit_buf + x->edit_caret - 1, x->edit_buf + x->edit_caret, strlen(x->edit_buf + x->edit_caret) + 1); x->edit_caret--; x->edit_anchor = x->edit_caret; }
-        else if (k == SDLK_LEFT && x->edit_caret > 0) x->edit_caret--;
-        else if (k == SDLK_RIGHT && x->edit_caret < (int)strlen(x->edit_buf)) x->edit_caret++;
+        if (k == SDLK_BACKSPACE) {
+            x->edit_replace = 0;
+            if (!xiam_edit_delete_selection(x) && x->edit_caret > 0) {
+                x->edit_anchor = x->edit_caret - 1;
+                xiam_edit_delete_selection(x);
+            }
+            return 1;
+        }
+        if (k == SDLK_DELETE) {
+            x->edit_replace = 0;
+            if (!xiam_edit_delete_selection(x) && x->edit_caret < (int)strlen(x->edit_buf)) {
+                x->edit_anchor = x->edit_caret + 1;
+                xiam_edit_delete_selection(x);
+            }
+            return 1;
+        }
+        if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_HOME || k == SDLK_END) {
+            int caret = x->edit_caret, length = (int)strlen(x->edit_buf);
+            if (k == SDLK_HOME || (cmd && k == SDLK_LEFT)) caret = 0;
+            else if (k == SDLK_END || (cmd && k == SDLK_RIGHT)) caret = length;
+            else if (k == SDLK_LEFT) caret--;
+            else caret++;
+            x->edit_caret = caret;
+            if (!shift) x->edit_anchor = caret;
+            x->edit_replace = 0;
+            xiam_edit_clamp(x);
+            return 1;
+        }
         return 1;
     }
     if (e->type == SDL_KEYDOWN && e->key.windowID == id && e->key.keysym.sym == SDLK_ESCAPE) { xiam_close(s); return 1; }
+    if (x->edit_param != XIAM_EDIT_NONE && e->type == SDL_MOUSEBUTTONDOWN &&
+        e->button.windowID == id) {
+        XiamUI hit = xiam_ui(x);
+        xiam_clamp_scrolls(s, &hit);
+        /* Clicking inside the cell that is being edited aims the caret.  It
+           must not commit and reopen the edit, which would select the whole
+           text again and leave the click with nothing to show for it. */
+        if (x->active_tab == 1 && point_in_rect(e->button.x, e->button.y, hit.rows) &&
+            x->edit_assignment >= 0 && x->edit_assignment < s->n_assignments &&
+            (x->edit_param == XIAM_EDIT_LINE_OBS || x->edit_param == XIAM_EDIT_LINE_ERR)) {
+            int ai = xiam_assignment_index(s, x->lines_scroll + (e->button.y - hit.rows.y) / hit.row_h);
+            if (ai == x->edit_assignment) {
+                const Assignment *a = &s->assignments[ai];
+                xiam_place_caret(x, UI_FONT_MONO_SM,
+                                 x->edit_param == XIAM_EDIT_LINE_OBS ? xiam_line_obs_text_x(&hit, a)
+                                                                     : xiam_line_unc_text_x(&hit, a),
+                                 e->button.x);
+                return 1;
+            }
+        }
+        if (x->active_tab == 0 && point_in_rect(e->button.x, e->button.y, hit.param_rows)) {
+            int row = x->params_scroll + (e->button.y - hit.param_rows.y) / hit.row_h;
+            if (x->edit_param == XIAM_EDIT_PARAM_NAME && row == x->edit_name_row) {
+                xiam_place_caret(x, UI_FONT_MONO_SM, hit.param_rows.x + 10, e->button.x);
+                return 1;
+            }
+            if (x->edit_param >= 0 && x->edit_param == row) {
+                xiam_place_caret(x, UI_FONT_MONO_SM, xiam_param_value_text_x(&hit, x, row), e->button.x);
+                return 1;
+            }
+        }
+        xiam_edit_commit(s);
+    }
     XiamUI u = xiam_ui(x);
     xiam_clamp_scrolls(s, &u);
     if (e->type == SDL_MOUSEWHEEL && e->wheel.windowID == id) {
