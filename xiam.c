@@ -281,11 +281,15 @@ static void xiam_parse_source(AppState *s) {
         char *at = xiam_ltrim(work);
         xiam_lower(lower, sizeof(lower), at);
         if (xiam_is_comment(at)) {
-            if (strstr(lower, "block iii")) block = 3;
-            else if (strstr(lower, "block iv")) block = 4;
-            else if (strstr(lower, "block v")) block = 5;
+            /* Roman numeral headings share prefixes: VIII starts with VII,
+               which starts with VI and V.  Test the longest strings first
+               so later Block VIII data can never be mistaken for Block V. */
+            if (strstr(lower, "block viii")) block = 8;
             else if (strstr(lower, "block vii")) block = 7;
-            else if (strstr(lower, "block viii")) block = 8;
+            else if (strstr(lower, "block vi")) block = 6;
+            else if (strstr(lower, "block v")) block = 5;
+            else if (strstr(lower, "block iv")) block = 4;
+            else if (strstr(lower, "block iii")) block = 3;
             continue;
         }
         char key[64] = "", *tail = at;
@@ -631,19 +635,26 @@ static int xiam_import_source_assignments(AppState *s) {
         double observed = 0.0, uncertainty = 0.010;
         if (!xiam_parse_input_transition_line(at, &p, &observed, &uncertainty)) continue;
         p.hamiltonian_id = x->model_id;
-        int found = -1;
+        int found = -1, fallback = -1;
         for (int i = 0; i < s->n_assignments; i++) {
             Assignment *a = &s->assignments[i];
             /* A Block VIII file can intentionally contain several measured
                occurrences of the same transition.  They are independent
                weighted observations in XIAM, not duplicate GUI rows. */
-            if (!matched[i] && a->hamiltonian_id == x->model_id && xiam_same_input_transition(&a->pred, &p) &&
-                fabs(a->exp_freq - observed) < 1e-7 &&
+            if (matched[i] || a->hamiltonian_id != x->model_id ||
+                !xiam_same_input_transition(&a->pred, &p)) continue;
+            if (fabs(a->exp_freq - observed) < 1e-7 &&
                 fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10) {
                 found = i;
                 break;
             }
+            /* Reloading the original .xi deliberately resets an edited
+               observation rather than adding a second copy of it.  Keep
+               this only as a fallback so repeated native observations still
+               receive one independent Assignment each. */
+            if (fallback < 0) fallback = i;
         }
+        if (found < 0) found = fallback;
         if (found >= 0) {
             matched[found] = 1;
             Assignment *a = &s->assignments[found];
@@ -1023,9 +1034,12 @@ int xiam_load_output_file(AppState *s, const char *path) {
     int model_id = s && s->xiam.loaded ? s->xiam.model_id : xiam_model_id_from_path(path);
     if (!s || !path) return 0;
     int fit_parameters = s->xiam.loaded ? xiam_parse_fit_parameters(&s->xiam,path) : 0;
+    /* XIAM can be asked to print a catalogue together with a fit report.
+       Preserve the report pathname even in that mixed form: otherwise the
+       Fitting page loses its provenance as soon as it displays the sticks. */
+    if (fit_parameters) snprintf(s->xiam.fit_output_path,sizeof(s->xiam.fit_output_path),"%s",path);
     if (!xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) {
         if (fit_parameters) {
-            snprintf(s->xiam.fit_output_path,sizeof(s->xiam.fit_output_path),"%s",path);
             snprintf(s->xiam.status,sizeof(s->xiam.status),"Loaded %d fitted XIAM parameters; this .xo contains no native prediction list.",fit_parameters);
             xiam_store_active(&s->xiam);
             return 1;

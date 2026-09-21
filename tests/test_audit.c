@@ -1336,6 +1336,34 @@ static int test_xiam_fit_report_updates_parameters(void) {
     DONE();
 }
 
+/* Some XIAM modes write a catalogue below the fit report in one .xo.  The
+ * prediction belongs in the viewer, but the Fitting tab must retain that
+ * same file as its report source rather than treating it as prediction-only. */
+static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "modello XIAM per output misto letto");
+    const char *path = work_path("mixed_fit_prediction.xo");
+    FILE *fp = fopen(path, "w");
+    CHECK(fp != NULL, "output XIAM misto creato");
+    if (!fp) DONE();
+    fputs(" Parameters  and  Errors\n", fp);
+    fputs(" BJ            0.215066122 { 0.000000171}\n", fp);
+    fputs(" 3 3 1  2 0 2  F1 4 2 F 6 4 S 1 V 1  85.557690  -2.1105 -4.9283 5.0000 -2.8177 -5.0756 B 1 K -3 0 t 6 1\n", fp);
+    fclose(fp);
+    CHECK(xiam_load_output_file(s, path), "output XIAM misto letto");
+    CHECK_INT("catalogo misto importato", s->n_pred, 1);
+    CHECK(!strcmp(s->xiam.output_path, path), "catalogo misto conserva output_path");
+    CHECK(!strcmp(s->xiam.fit_output_path, path), "catalogo misto conserva anche fit_output_path");
+    int bj = -1;
+    for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "BJ")) { bj = i; break; }
+    CHECK(bj >= 0, "BJ nel modello misto");
+    if (bj >= 0) {
+        CHECK_DBL("BJ del report misto", s->xiam.params[bj].value_ghz, 0.215066122, 1e-12);
+        CHECK_DBL("errore BJ del report misto", s->xiam.params[bj].error_ghz, 0.000000171, 1e-15);
+    }
+    DONE();
+}
+
 /* XIAM uses one .xi per Hamiltonian.  Opening a second native model must not
  * replace the first model, its prediction, or its independent calculation
  * controls; selecting a model restores exactly that native workspace. */
@@ -1505,6 +1533,50 @@ static int test_xiam_v6_prediction_matches_native_when_configured(void) {
     CHECK_INT("tutte le identita XIAM del catalogo v6", missing, 0);
     CHECK(max_freq <= 2e-6, "frequenze v6 riprodotte entro 2 Hz? ottenuto %.9g MHz", max_freq);
     CHECK(max_lgint <= 2e-5, "intensita SPCAT v6 riprodotte ottenuto %.9g", max_lgint);
+    free(reference);
+    DONE();
+}
+
+/* The v6 oracle above has no quadrupole terms.  Re-run a numerically small
+ * subset of the two-nitrogen catalogue to exercise XIAM's F1/F labels and
+ * chi parameters through the application's writer and native parser. */
+static int test_xiam_2n_reduced_prediction_matches_native_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "input 2N letto");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "catalogo 2N di riferimento letto");
+    int n_reference = s->n_pred;
+    PredLine *reference = malloc((size_t)n_reference * sizeof(*reference));
+    CHECK(reference != NULL, "memoria per il catalogo 2N di riferimento");
+    if (!reference) DONE();
+    memcpy(reference, s->pred_lines, (size_t)n_reference * sizeof(*reference));
+    s->xiam.fmin_mhz = 59600.0; s->xiam.fmax_mhz = 100000.0; s->xiam.max_j = 4;
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    CHECK(xiam_calculate(s), "previsione 2N ridotta eseguita dal backend dell'app");
+    int selected = 0, missing = 0; double max_freq = 0.0, max_lgint = 0.0;
+    for (int i = 0; i < n_reference; i++) {
+        const PredLine *want = &reference[i];
+        if (want->Ju > 4 || want->freq_mhz < 59600.0 || want->freq_mhz > 100000.0) continue;
+        selected++;
+        const PredLine *got = NULL;
+        for (int j = 0; j < s->n_pred; j++)
+            if (xiam_same_transition(want, &s->pred_lines[j])) { got = &s->pred_lines[j]; break; }
+        if (!got) { missing++; continue; }
+        double df = fabs(got->freq_mhz - want->freq_mhz);
+        double di = fabs(got->cat_lgint - want->cat_lgint);
+        if (df > max_freq) max_freq = df;
+        if (di > max_lgint) max_lgint = di;
+    }
+    fprintf(g_tlog, "    2N reduced prediction: reference subset=%d regenerated=%d missing=%d max_df=%.9g MHz max_dlgI=%.9g\n",
+            selected, s->n_pred, missing, max_freq, max_lgint);
+    CHECK(selected > 20, "sottoinsieme 2N sufficientemente significativo (%d righe)", selected);
+    CHECK_INT("tutte le identita 2N del sottoinsieme", missing, 0);
+    CHECK(max_freq <= 2e-6, "frequenze 2N riprodotte ottenuto %.9g MHz", max_freq);
+    /* This XIAM 2N fixture prints SPCAT at four decimal places; one last
+       printed digit can differ across its native calculation modes even when
+       the complete state identity and frequency are identical. */
+    CHECK(max_lgint <= 2e-4, "intensita 2N riprodotte ottenuto %.9g", max_lgint);
     free(reference);
     DONE();
 }
@@ -3745,11 +3817,13 @@ static const Test TESTS[] = {
     {"test_xiam_imports_block_viii_and_saves_fit_input", test_xiam_imports_block_viii_and_saves_fit_input},
     {"test_xiam_native_intensity_scale", test_xiam_native_intensity_scale},
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
+    {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
     {"test_xiam_examples_parse_and_roundtrip", test_xiam_examples_parse_and_roundtrip},
     {"test_xiam_v6_prediction_matches_native_when_configured", test_xiam_v6_prediction_matches_native_when_configured},
+    {"test_xiam_2n_reduced_prediction_matches_native_when_configured", test_xiam_2n_reduced_prediction_matches_native_when_configured},
     {"test_xiam_v6_consecutive_fit_when_configured", test_xiam_v6_consecutive_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
