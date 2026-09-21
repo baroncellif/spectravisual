@@ -1342,8 +1342,10 @@ static int test_xiam_fit_report_updates_parameters(void) {
 static int test_xiam_rejects_legacy_workspace_input(void) {
     AppState *s = new_state();
     CHECK(!xiam_load_input_file(s, ".xiam/model.xi"), "workspace XIAM legacy rifiutato");
-    CHECK(strstr(s->xiam.status, "legacy .xiam/model.xi") != NULL,
+    CHECK(strstr(s->xiam.status, "legacy .xiam/.../model.xi") != NULL,
           "diagnostica esplicita per workspace legacy: %s", s->xiam.status);
+    CHECK(!xiam_load_input_file(s, "/tmp/example/.xiam/H123/model.xi"),
+          "workspace per-Hamiltonian legacy rifiutato");
     CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"),
           "un .xi sorgente normale resta caricabile");
     DONE();

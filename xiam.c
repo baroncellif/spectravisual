@@ -183,16 +183,15 @@ static const char *xiam_basename(const char *path) {
     return slash ? slash + 1 : (path && path[0] ? path : "XIAM model");
 }
 
-/* Releases before the per-Hamiltonian workspace used `.xiam/model.xi` as a
- * mutable scratch input.  It was overwritten after calculations and could
- * retain an aborted fit's constants; it is therefore not a model a user can
- * safely reopen as a source .xi. */
+/* Releases before the current `fit.xi`/`prediction.xi` workspace used a
+ * mutable `.xiam/.../model.xi` as input.  It was overwritten after
+ * calculations and could retain an aborted fit's constants; it is therefore
+ * never a model a user can safely reopen as a source .xi. */
 static int xiam_is_legacy_workspace_input(const char *path) {
-    static const char suffix[] = "/.xiam/model.xi";
     if (!path) return 0;
-    if (!strcmp(path, ".xiam/model.xi")) return 1;
-    size_t n = strlen(path), m = sizeof(suffix) - 1;
-    return n >= m && !strcmp(path + n - m, suffix);
+    const char *base = xiam_basename(path);
+    if (strcmp(base, "model.xi")) return 0;
+    return !strncmp(path, ".xiam/", 6) || strstr(path, "/.xiam/") != NULL;
 }
 
 /* The UI edits an active projection, exactly like the Pickett project does.
@@ -940,6 +939,14 @@ static int xiam_prepare_work_dir(AppState *s) {
 static int xiam_run(AppState *s, int fitting) {
     XiamState *x = &s->xiam;
     if (!x->loaded) { snprintf(x->status,sizeof(x->status),"Open a .xi input first (drop it onto the main window)."); return 0; }
+    /* The model may already have been open when an updated program starts.
+       Check here too, not just at Open, so an in-memory legacy workspace can
+       never be fitted or overwrite a newer working copy. */
+    if (xiam_is_legacy_workspace_input(x->input_path)) {
+        snprintf(x->status, sizeof(x->status),
+                 "Refusing legacy .xiam/.../model.xi workspace: reopen the original source .xi before fitting.");
+        return 0;
+    }
     if (!s->settings.xiam_path[0] || access(s->settings.xiam_path, X_OK) != 0) { snprintf(x->status,sizeof(x->status),"Set the executable XIAM-2NQ v0.44 path in Settings."); return 0; }
     if (fitting) { int n = 0; for (int i=0;i<s->n_assignments;i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) n++; if (!n) { snprintf(x->status,sizeof(x->status),"Select and assign at least one prediction from this .xi model before fitting."); return 0; } }
     if (!xiam_prepare_work_dir(s)) return 0;
@@ -1016,7 +1023,7 @@ int xiam_load_input_file(AppState *s, const char *path) {
     if (!s || !path || !path[0]) return 0; XiamState *x=&s->xiam;
     if (xiam_is_legacy_workspace_input(path)) {
         snprintf(x->status, sizeof(x->status),
-                 "Refusing legacy .xiam/model.xi workspace: it may contain overwritten fit constants. Open the original source .xi instead.");
+                 "Refusing legacy .xiam/.../model.xi workspace: it may contain overwritten fit constants. Open the original source .xi instead.");
         return 0;
     }
     int existing = xiam_find_hamiltonian_path(x, path);
