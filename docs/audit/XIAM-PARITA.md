@@ -6,18 +6,22 @@ le stesse sottofinestre e le stesse voci**; la sola differenza ammessa è
 l'insieme dei *parametri* — nativi XIAM (GHz, `fit`/`dqu`/`dqx`, blocchi I–VIII)
 invece che Pickett (`.par`/`.var`/`.int`, id numerici).
 
-Ogni voce ha la forma **cosa manca → cosa fare → test**. Lo stato è aggiornato
-mano a mano; un passo si chiude solo con `make test` verde.
+Ogni voce ha la forma **cosa manca → cosa fare → test**. Tutti i passi sono
+chiusi: `make test` è verde (115 PASS, 0 FAIL, 6 SKIP — gli SKIP richiedono
+`SV_XIAM_V044`). `xiam.c` è ora `#include`-ato da `tests/test_audit.c`, come
+`predfit.c`, quindi la geometria delle pagine e l'editing del sorgente nativo
+sono esercitati esattamente come li esegue la finestra.
 
 ## 0. Struttura della finestra
 
 | | Pred&Fit | XIAM (prima) |
 |---|---|---|
-| Schede | 6: Parameters, Lines, Fitting, **States**, Hamiltonians, Simulation | 5: manca States |
-| Navigatore | elenco gerarchico + H su/giù, + Hamiltonian, Rename, Duplicate, Delete (con conferma) | solo "+ Open .xi" e "Reload active .xi" |
-| Scroll navigatore | sì, con clamp | assente |
-| Editor di campo | testo completo (Home/End/Delete/selezione shift/⌘A⌘C⌘X⌘V, caret al click) | solo Backspace e ←/→ |
-| Hover di riga | sì (Lines, Fitting) | assente |
+| Schede | 6: Parameters, Lines, Fitting, **States**, Hamiltonians, Simulation | 5: mancava States → **ora 6, nello stesso ordine** |
+| Navigatore | elenco + H su/giù, add, Rename, Duplicate, Delete (con conferma) | solo "+ Open .xi" e "Reload" → **stessa pulsantiera + le due azioni .xi** |
+| Scroll navigatore | sì, con clamp | assente → **presente** |
+| Editor di campo | testo completo (Home/End/Delete/selezione shift/⌘A⌘C⌘X⌘V, caret al click) | solo Backspace e ←/→ → **identico** |
+| Hover di riga | sì (Lines, Fitting) | assente → **presente su entrambe** |
+| Chrome | ADV_PAD/HEADER/TAB/CONTENT/FOOTER | numeri magici → **stesse costanti** |
 
 ## 1. Bug di contabilità dello scroll  — *X-01*
 
@@ -31,7 +35,7 @@ mano a mano; un passo si chiude solo con `make test` verde.
 
 → derivare il numero di righe visibili in un solo posto, aggiungere i clamp,
 dare al navigatore il suo scroll.
-**Test**: `test_xiam_scroll_limits_follow_the_rendered_rows`.
+**Test**: `test_xiam_scroll_limits_follow_the_rendered_rows` — ✅ fatto.
 
 ## 2. Parametri non aggiungibili né eliminabili — *X-02*
 
@@ -44,7 +48,7 @@ che il `.xi` dichiarava.
 senza `source_line` non arriverebbe mai a XIAM) e apre subito l'editor del nome;
 la `×` commenta la dichiarazione con `\` e toglie la riga dalla tabella,
 insieme all'eventuale direttiva `fit`/`dqu`/`dqx`. Nome editabile in cella.
-**Test**: `test_xiam_parameter_added_and_removed_reaches_the_input`.
+**Test**: `test_xiam_parameter_added_and_removed_reaches_the_input` — ✅ fatto.
 
 ## 3. Editor di testo ridotto — *X-03*
 
@@ -53,7 +57,7 @@ Canc, Home/End, la selezione con shift, ⌘A/⌘C/⌘X/⌘V e il posizionamento 
 caret cliccando nel campo già in modifica.
 
 → replicare `advanced_edit_event`.
-**Test**: `test_xiam_field_editor_matches_predfit`.
+**Test**: `test_xiam_field_editor_matches_predfit` — ✅ fatto.
 
 ## 4. Navigatore senza gestione del progetto — *X-04*
 
@@ -64,7 +68,7 @@ Hamiltonians.
 → stessa pulsantiera di Pred&Fit. La duplicazione copia `source_lines`,
 parametri e controlli con un `model_id` nuovo (le assegnazioni restano del
 modello originale, come in Pred&Fit).
-**Test**: `test_xiam_navigator_manages_the_project`.
+**Test**: `test_xiam_navigator_manages_the_project` — ✅ fatto.
 
 ## 5. Scheda States assente — *X-05*
 
@@ -81,7 +85,7 @@ L'equivalente nativo XIAM esiste e non è esposto da nessuna parte:
 → nuova scheda in posizione 3 (stesso ordine di Pred&Fit): celle di controllo
 del blocco II in alto, righe = simmetrie e stati torsionali, con la casella
 USE che commenta/decommenta la riga nativa e i valori (sigma, v) editabili.
-**Test**: `test_xiam_states_tab_edits_blocks_ii_v_vi`.
+**Test**: `test_xiam_states_tab_edits_blocks_ii_v_vi` — ✅ fatto.
 
 ## 6. Fitting senza Undo e senza click di riga — *X-06*
 
@@ -91,7 +95,7 @@ undo e **nessuna gestione del click** nelle righe dei residui.
 
 → storia dei parametri prima di ogni fit (`Undo fit` ripristina valori ed
 errori), click di riga che include/esclude, `×` che elimina, hover.
-**Test**: `test_xiam_undo_fit_restores_the_parameters`.
+**Test**: `test_xiam_undo_fit_restores_the_parameters` — ✅ fatto.
 
 ## 7. Hamiltonians senza sessione né import — *X-07*
 
@@ -100,7 +104,7 @@ Pred&Fit: `Save session` (con `*` se sporca), `Restore session`,
 `xiam_import_load_dir` esiste già ma **non è raggiungibile dalla UI**.
 
 → aggiungere i tre pulsanti di Pred&Fit accanto a quelli specifici di XIAM.
-**Test**: `test_xiam_hamiltonians_tab_saves_and_imports`.
+**Test**: `test_xiam_hamiltonians_tab_saves_and_imports` — ✅ fatto.
 
 ## 8. Simulation ridotta — *X-08*
 
@@ -112,7 +116,7 @@ XIAM: solo la casella per H.
 `XiamHamiltonian`, esposto al broadening con un filtro per solo
 `hamiltonian_id`), interruttori `mu_x`/`mu_y`/`mu_z` sui parametri nativi,
 pulsante `Traces:` condiviso con Pred&Fit.
-**Test**: `test_xiam_simulation_traces_and_dipoles`.
+**Test**: `test_xiam_simulation_traces_and_dipoles` — ✅ fatto.
 
 ## 9. Differenze che restano, e perché
 
@@ -128,3 +132,31 @@ pulsante `Traces:` condiviso con Pred&Fit.
   concentrazione propri; in XIAM simmetrie e stati torsionali restano dentro il
   modello e condividono `mu_x/mu_y/mu_z`, per cui le righe di States non hanno
   colonne di dipolo per riga.
+
+## 10. Stato finale
+
+Un commit per voce, ognuno con il suo test prima del commit:
+
+| commit | voce |
+|---|---|
+| `docs: audit XIAM against Pred&Fit parity` | questo documento |
+| `fix: clamp every XIAM workspace list on the drawn rows` | X-01 |
+| `feat: add, rename and remove XIAM constants` | X-02 |
+| `feat: give XIAM fields Pred&Fit's text editor` | X-03 |
+| `feat: manage the XIAM project from the sidebar` | X-04 |
+| `feat: save, restore and import from the XIAM Hamiltonians page` | X-07 |
+| `feat: undo a XIAM fit and act on its residual rows` | X-06 |
+| `feat: add the XIAM States page` | X-05 |
+| `feat: give each XIAM model its own trace colour and dipole switches` | X-08 |
+| `refactor: put the XIAM window on Pred&Fit's chrome` | §0 |
+
+Due difetti di layout trovati strada facendo e corretti con l'ultimo passo: a
+900 px la striscia di controllo dei Parameters sforava la sua tabella e i
+pulsanti del piede finivano sotto il campo dell'incertezza. La finestra XIAM
+ha quindi un minimo più largo (1120×620) di quella Pred&Fit: la striscia
+nativa è più larga della riga di opzioni `.par`.
+
+Non verificabile da questa suite: i sei test `SV_XIAM_V044` che eseguono
+davvero XIAM-2NQ v0.44. Vanno rieseguiti con il binario configurato prima di
+considerare chiuso il comportamento a runtime di `+ parameter`, della scheda
+States e di `Undo fit`.

@@ -10,6 +10,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stdarg.h>
@@ -856,20 +857,17 @@ static int xiam_state_record_kind(const char *line) {
 static int xiam_state_rows(const XiamState *x, XiamStateRow *out, int max) {
     int n = 0;
     for (int i = 0; x && i < x->n_source_lines && n < max; i++) {
-        int block = 0;
-        char work[256];
-        snprintf(work, sizeof(work), "%s", x->source_lines[i]);
-        char *at = xiam_ltrim(work);
-        if (!*at) continue;
+        /* Classify first: only the handful of lines that look like a record
+           are worth walking the headings for. */
         int kind = xiam_state_record_kind(x->source_lines[i]);
         if (!kind) continue;
-        block = xiam_line_block(x, i);
+        int block = xiam_line_block(x, i);
         /* A record only counts in the block that defines it: block VIII
            transitions and block III constants never look like one. */
         if (block != kind) continue;
         out[n].line = i;
         out[n].block = kind;
-        out[n].enabled = !xiam_is_comment(at);
+        out[n].enabled = !xiam_is_comment(x->source_lines[i]);
         n++;
     }
     return n;
@@ -2377,8 +2375,14 @@ static int xiam_scroll_limit(int total, int visible) {
 static void xiam_clamp_scrolls(AppState *s, const XiamUI *u) {
     XiamState *x = &s->xiam;
     int assignments = xiam_assignment_count(s, NULL);
-    XiamStateRow probe[MAX_XIAM_STATE_ROWS];
-    int states = xiam_state_rows(x, probe, MAX_XIAM_STATE_ROWS);
+    /* The States rows are counted by walking the native source, so only the
+       page that actually scrolls them pays for it; the others keep their
+       offset until they are opened. */
+    int states = -1;
+    if (x->active_tab == 3) {
+        XiamStateRow probe[MAX_XIAM_STATE_ROWS];
+        states = xiam_state_rows(x, probe, MAX_XIAM_STATE_ROWS);
+    }
     int *scroll[] = {&x->nav_scroll, &x->params_scroll, &x->lines_scroll,
                      &x->fit_params_scroll, &x->fitting_scroll, &x->states_scroll,
                      &x->hamiltonians_scroll, &x->simulation_scroll};
@@ -2387,7 +2391,7 @@ static void xiam_clamp_scrolls(AppState *s, const XiamUI *u) {
                    xiam_scroll_limit(assignments, u->rows_visible),
                    xiam_scroll_limit(xiam_fitted_parameter_count(x), u->fit_param_rows_visible),
                    xiam_scroll_limit(assignments, u->fit_obs_rows_visible),
-                   xiam_scroll_limit(states, u->state_rows_visible),
+                   states < 0 ? INT_MAX : xiam_scroll_limit(states, u->state_rows_visible),
                    xiam_scroll_limit(x->n_hamiltonians, u->rows_visible),
                    xiam_scroll_limit(x->n_hamiltonians, u->rows_visible)};
     for (size_t i = 0; i < sizeof(scroll) / sizeof(scroll[0]); i++) {
@@ -2645,6 +2649,7 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text_right(r, UI_FONT_MONO_SM, "UNC / MHz", unc_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "DEL", u->table.x + u->table.w - 10, u->table.y + 9, UI_DIM);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, u->rows.y - 3, UI_LINE);
+    const int del_x = u->table.x + u->table.w - 30;
     SDL_RenderSetClipRect(r, &u->rows);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int ai = xiam_assignment_index(s, x->lines_scroll + visible); if (ai < 0) break;
@@ -2661,7 +2666,7 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai)
             xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, x, a), y + 6, UI_ACCENT_TEXT);
         else { snprintf(b, sizeof(b), "%.6g", xiam_line_error(x, a)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
-        ui_text_right(r, UI_FONT_MONO_SM, "×", row.x + row.w - 12, y + 6, UI_WARN);
+        ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del_x, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DANGER_TEXT);
     }
     SDL_RenderSetClipRect(r, NULL);
     ui_button(r, u->btn_a, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
@@ -3113,7 +3118,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
            corner Pred&Fit keeps the .lin one. */
         if (point_in_rect(px, py, u.unc)) { xiam_edit_commit(s); xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
     } else if (x->active_tab == 1) {
-        if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
+        if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 30) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_fit(s); return 1; }
     } else if (x->active_tab == 2) {
