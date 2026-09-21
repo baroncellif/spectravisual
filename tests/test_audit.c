@@ -1388,6 +1388,93 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Pred&Fit's sidebar manages the project: reorder, rename, duplicate and
+ * delete.  XIAM's offered only "open" and "reload", so a native model could
+ * not be renamed, reordered, or copied into a variant to try. */
+static int test_xiam_navigator_manages_the_project(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "primo modello XIAM caricato");
+    int first_id = s->xiam.model_id;
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_v3_fit.xi"), "secondo modello XIAM caricato");
+    XiamState *x = &s->xiam;
+    int second_id = x->model_id;
+    CHECK_INT("il progetto ha due Hamiltoniani", x->n_hamiltonians, 2);
+
+    /* Rename, through the sidebar editor. */
+    x->edit_hamiltonian_row = 1;
+    xiam_edit_begin(x, XIAM_EDIT_H_NAME);
+    snprintf(x->edit_buf, sizeof(x->edit_buf), "trans conformer");
+    x->edit_caret = x->edit_anchor = (int)strlen(x->edit_buf);
+    xiam_edit_commit(s);
+    CHECK(!strcmp(x->hamiltonian[1].name, "trans conformer"),
+          "il modello attivo e' stato rinominato: %s", x->hamiltonian[1].name);
+    /* An empty name is refused instead of blanking the row. */
+    x->edit_hamiltonian_row = 1;
+    xiam_edit_begin(x, XIAM_EDIT_H_NAME);
+    x->edit_buf[0] = '\0'; x->edit_caret = x->edit_anchor = 0;
+    xiam_edit_commit(s);
+    CHECK(!strcmp(x->hamiltonian[1].name, "trans conformer"),
+          "un nome vuoto non cancella quello esistente: %s", x->hamiltonian[1].name);
+
+    /* Duplicate: a new owner, the same source, its own observations. */
+    int owned_before = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].hamiltonian_id == second_id) owned_before++;
+    CHECK(owned_before > 0, "il secondo modello possiede transizioni di blocco VIII");
+    CHECK(xiam_duplicate_active(s), "il modello attivo viene duplicato");
+    CHECK_INT("il progetto ha tre Hamiltoniani", x->n_hamiltonians, 3);
+    CHECK_INT("la copia e' quella attiva", x->active_hamiltonian, 2);
+    int copy_id = x->model_id;
+    CHECK(copy_id != second_id && copy_id != first_id, "la copia ha un proprietario indipendente");
+    CHECK(strstr(x->hamiltonian[2].name, "copy") != NULL,
+          "il nome della copia la distingue: %s", x->hamiltonian[2].name);
+    CHECK_INT("la copia conserva le costanti dell'originale",
+              x->n_params, x->hamiltonian[1].n_params);
+    CHECK(!strcmp(x->input_path, x->hamiltonian[1].input_path),
+          "la copia resta collegata al suo .xi di origine");
+    int owned_copy = 0, owned_source = 0;
+    for (int i = 0; i < s->n_assignments; i++) {
+        if (s->assignments[i].hamiltonian_id == copy_id) owned_copy++;
+        if (s->assignments[i].hamiltonian_id == second_id) owned_source++;
+    }
+    CHECK_INT("la copia ha le sue osservazioni", owned_copy, owned_before);
+    CHECK_INT("l'originale conserva le proprie", owned_source, owned_before);
+    /* The copy must not inherit the workspace of the model it came from. */
+    CHECK_INT("la copia non erede la cartella di lavoro", (int)strlen(x->work_dir), 0);
+    CHECK_INT("ne' il report di fit", (int)strlen(x->fit_output_path), 0);
+
+    /* Reopening the duplicated .xi selects the original, not the copy. */
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_v3_fit.xi"),
+          "riapertura del .xi di origine");
+    CHECK_INT("riaprire il sorgente seleziona l'originale", x->model_id, second_id);
+    CHECK_INT("e non aggiunge un Hamiltoniano", x->n_hamiltonians, 3);
+
+    /* Reorder: the sidebar order is the project order, and the selection
+       follows the row it was on. */
+    CHECK_INT("l'originale e' in posizione 1", x->active_hamiltonian, 1);
+    CHECK(xiam_move_hamiltonian(s, 1, -1), "il modello attivo sale");
+    CHECK_INT("la selezione segue la riga", x->active_hamiltonian, 0);
+    CHECK_INT("il modello attivo e' sempre lo stesso", x->model_id, second_id);
+    CHECK_INT("quello che era primo e' scalato", x->hamiltonian[1].model_id, first_id);
+    CHECK(!xiam_move_hamiltonian(s, 0, -1), "non si sale oltre la prima riga");
+    CHECK(xiam_move_hamiltonian(s, 0, 1), "e si torna giu'");
+    CHECK_INT("l'ordine e' ripristinato", x->hamiltonian[0].model_id, first_id);
+    CHECK_INT("la selezione e' tornata in posizione 1", x->active_hamiltonian, 1);
+
+    /* Delete: the model, its assignments and its catalogue go together. */
+    xiam_remove_active_hamiltonian(s);
+    CHECK_INT("il progetto ha due Hamiltoniani", x->n_hamiltonians, 2);
+    int still = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].hamiltonian_id == second_id) still++;
+    CHECK_INT("le assegnazioni del modello rimosso sono spartite", still, 0);
+    int remaining = 0;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].hamiltonian_id == copy_id) remaining++;
+    CHECK_INT("quelle della copia restano", remaining, owned_before);
+    DONE();
+}
+
 /* Helpers to drive the XIAM window's own event handler without a window:
    every key and text event it reads while a field is being edited is handled
    before any geometry is touched. */
@@ -4408,6 +4495,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_navigator_manages_the_project", test_xiam_navigator_manages_the_project},
     {"test_xiam_field_editor_matches_predfit", test_xiam_field_editor_matches_predfit},
     {"test_xiam_parameter_added_and_removed_reaches_the_input", test_xiam_parameter_added_and_removed_reaches_the_input},
     {"test_xiam_scroll_limits_follow_the_rendered_rows", test_xiam_scroll_limits_follow_the_rendered_rows},

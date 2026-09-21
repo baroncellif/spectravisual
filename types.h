@@ -462,6 +462,7 @@ typedef struct {
     int delete_hamiltonian_id; /* a second click confirms removal */
     int edit_assignment;       /* assignment currently edited in Lines, or -1 */
     int edit_name_row;         /* parameter whose native name is edited, or -1 */
+    int edit_hamiltonian_row;  /* Hamiltonian renamed in the sidebar, or -1 */
     int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
     int session_dirty;
     int session_loading_hamiltonian; /* session parser's current H, or -1 */

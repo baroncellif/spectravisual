@@ -30,7 +30,8 @@
 enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_TEMP = -4, XIAM_EDIT_JMAX = -5,
        XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7,
-       XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9 };
+       XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9,
+       XIAM_EDIT_H_NAME = -10 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
 static int xiam_prefix_w(int font, const char *text, int n);
@@ -1115,6 +1116,7 @@ void xiam_init(AppState *s) {
     s->xiam.edit_param = XIAM_EDIT_NONE;
     s->xiam.edit_assignment = -1;
     s->xiam.edit_name_row = -1;
+    s->xiam.edit_hamiltonian_row = -1;
     s->xiam.active_hamiltonian = -1;
     s->xiam.active_tab = 0;
     s->xiam.max_j = 30;
@@ -1423,6 +1425,72 @@ static void xiam_remove_active_hamiltonian(AppState *s) {
     xiam_mark_session_dirty(s);
 }
 
+/* A copy of the active model, the way Pred&Fit's Duplicate works: the same
+ * native source and constants under a new owner, so a variant can be fitted
+ * without disturbing the model it came from.  The copy keeps its source
+ * pathname so Reload still works; reopening that .xi selects the original,
+ * because the project is searched in order. */
+static int xiam_duplicate_active(AppState *s) {
+    if (!s) return 0;
+    XiamState *x = &s->xiam;
+    if (x->active_hamiltonian < 0) {
+        snprintf(x->status, sizeof(x->status), "Open a .xi input before duplicating a Hamiltonian.");
+        return 0;
+    }
+    if (x->n_hamiltonians >= MAX_XIAM_HAMILTONIANS) {
+        snprintf(x->status, sizeof(x->status), "A XIAM project supports at most %d Hamiltonians.", MAX_XIAM_HAMILTONIANS);
+        return 0;
+    }
+    xiam_store_active(x);
+    int index = x->n_hamiltonians++;
+    x->hamiltonian[index] = x->hamiltonian[x->active_hamiltonian];
+    XiamHamiltonian *copy = &x->hamiltonian[index];
+    /* A distinct owner is what keeps the two models' assignments, catalogues
+       and workspaces apart; derive it from the source path as usual. */
+    int id = 0;
+    for (int k = 1; k < 1000; k++) {
+        char key[600];
+        snprintf(key, sizeof(key), "%s#copy%d", copy->input_path, k);
+        id = xiam_model_id_from_path(key);
+        int clash = 0;
+        for (int i = 0; i < x->n_hamiltonians; i++)
+            if (i != index && x->hamiltonian[i].model_id == id) clash = 1;
+        if (!clash) break;
+    }
+    copy->model_id = id;
+    copy->work_dir[0] = copy->output_path[0] = copy->fit_output_path[0] = '\0';
+    char base[96]; snprintf(base, sizeof(base), "%s", copy->name);
+    snprintf(copy->name, sizeof(copy->name), "%.80s copy", base);
+    xiam_restore_active(x, index);
+    /* The .xi's own block VIII belongs to the model, so the copy gets its own
+       independent observations rather than sharing the original's rows. */
+    int imported = xiam_import_source_assignments(s);
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    snprintf(x->status, sizeof(x->status),
+             "%s created from the active Hamiltonian (%d transitions copied); calculate it before fitting.",
+             copy->name, imported);
+    return 1;
+}
+
+/* The sidebar order is the order of the project, exactly as in Pred&Fit. */
+static int xiam_move_hamiltonian(AppState *s, int index, int delta) {
+    if (!s) return 0;
+    XiamState *x = &s->xiam;
+    int to = index + delta;
+    if (index < 0 || index >= x->n_hamiltonians || to < 0 || to >= x->n_hamiltonians) return 0;
+    xiam_store_active(x);
+    XiamHamiltonian swap = x->hamiltonian[index];
+    x->hamiltonian[index] = x->hamiltonian[to];
+    x->hamiltonian[to] = swap;
+    if (x->active_hamiltonian == index) x->active_hamiltonian = to;
+    else if (x->active_hamiltonian == to) x->active_hamiltonian = index;
+    xiam_restore_active(x, x->active_hamiltonian);
+    xiam_mark_session_dirty(s);
+    snprintf(x->status, sizeof(x->status), "%s moved %s.", x->hamiltonian[to].name, delta < 0 ? "up" : "down");
+    return 1;
+}
+
 static void xiam_format_transition(const PredLine *p, char *out, size_t size) {
     if (!p) { snprintf(out, size, "—"); return; }
     snprintf(out, size, "%d %d %d  –  %d %d %d", p->Ju, p->Kau, p->Kcu,
@@ -1552,6 +1620,10 @@ static int xiam_delete_parameter(AppState *s, int row) {
 static void xiam_edit_begin(XiamState *x, int what) {
     x->edit_param=what; x->edit_replace=1;
     if (what >= 0) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",xiam_display_value(&x->params[what]));
+    else if (what==XIAM_EDIT_H_NAME)
+        snprintf(x->edit_buf,sizeof(x->edit_buf),"%s",
+                 x->edit_hamiltonian_row >= 0 && x->edit_hamiltonian_row < x->n_hamiltonians
+                     ? x->hamiltonian[x->edit_hamiltonian_row].name : "");
     else if (what==XIAM_EDIT_PARAM_NAME)
         snprintf(x->edit_buf,sizeof(x->edit_buf),"%s",
                  x->edit_name_row >= 0 && x->edit_name_row < x->n_params ? x->params[x->edit_name_row].name : "");
@@ -1589,6 +1661,18 @@ static void xiam_edit_commit(AppState *s) {
         xiam_store_active(x);
         xiam_apply_concentrations(s);
         s->intensity_window.species_sync_pending = 1;
+    }
+    else if (x->edit_param == XIAM_EDIT_H_NAME) {
+        int row = x->edit_hamiltonian_row;
+        char wanted[96]; snprintf(wanted, sizeof(wanted), "%s", xiam_ltrim(x->edit_buf));
+        for (int i = (int)strlen(wanted) - 1; i >= 0 && isspace((unsigned char)wanted[i]); i--) wanted[i] = '\0';
+        if (row >= 0 && row < x->n_hamiltonians && wanted[0]) {
+            snprintf(x->hamiltonian[row].name, sizeof(x->hamiltonian[row].name), "%s", wanted);
+            snprintf(x->status, sizeof(x->status), "Hamiltonian renamed to %s.", wanted);
+        } else if (row >= 0) {
+            snprintf(x->status, sizeof(x->status), "A Hamiltonian name cannot be empty.");
+        }
+        x->edit_hamiltonian_row = -1;
     }
     else if (x->edit_param == XIAM_EDIT_PARAM_NAME) {
         int row = x->edit_name_row;
@@ -1751,6 +1835,9 @@ typedef struct {
     int w, h, row_h, rows_visible;
     SDL_Rect tab[XIAM_TAB_COUNT], nav, nav_rows, table, rows, footer;
     SDL_Rect btn_a, btn_b, btn_c, btn_d;
+    /* The sidebar is on every page, and it manages the project: the same
+       pulsantiera as Pred&Fit's, plus the two .xi-specific actions. */
+    SDL_Rect nav_up, nav_down, nav_open, nav_reload, nav_rename, nav_duplicate, nav_delete;
     int nav_rows_visible;
     /* Parameters: the run-control strip pushes its own table down. */
     SDL_Rect param_table, param_rows;
@@ -1772,7 +1859,15 @@ static XiamUI xiam_ui(XiamState *x) {
     for (int i = 0; i < XIAM_TAB_COUNT; i++) { u.tab[i] = (SDL_Rect){tx, tab_y, widths[i], tab_h}; tx += widths[i] + 10; }
     u.footer = (SDL_Rect){0, u.h - 60, u.w, 60};
     u.nav = (SDL_Rect){18, 112, 270, u.footer.y - 124};
-    u.nav_rows = (SDL_Rect){u.nav.x + 2, u.nav.y + 32, u.nav.w - 4, u.nav.h - 106};
+    u.nav_rows = (SDL_Rect){u.nav.x + 2, u.nav.y + 32, u.nav.w - 4, u.nav.h - 238};
+    if (u.nav_rows.h < 27) u.nav_rows.h = 27;
+    u.nav_up = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 200, (u.nav.w - 26) / 2, 26};
+    u.nav_down = (SDL_Rect){u.nav_up.x + u.nav_up.w + 6, u.nav_up.y, u.nav_up.w, 26};
+    u.nav_open = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 166, u.nav.w - 20, 28};
+    u.nav_reload = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 130, u.nav.w - 20, 26};
+    u.nav_rename = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 96, (u.nav.w - 26) / 2, 26};
+    u.nav_duplicate = (SDL_Rect){u.nav_rename.x + u.nav_rename.w + 6, u.nav_rename.y, u.nav_rename.w, 26};
+    u.nav_delete = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 62, u.nav.w - 20, 26};
     u.table = (SDL_Rect){306, 140, u.w - 324, u.footer.y - 152};
     u.rows = (SDL_Rect){u.table.x + 1, u.table.y + 33, u.table.w - 2, u.table.h - 35};
     u.row_h = 27; u.rows_visible = u.rows.h / u.row_h;
@@ -1935,6 +2030,7 @@ static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u
                                   int mx, int my, int down) {
     ui_fill(r, u->nav, UI_INPUT); ui_frame(r, u->nav, UI_LINE);
     ui_text(r, UI_FONT_MONO_SM, "XIAM HAMILTONIANS", u->nav.x + 10, u->nav.y + 10, UI_DIM);
+    ui_hline(r, u->nav.x + 2, u->nav.x + u->nav.w - 2, u->nav_rows.y - 3, UI_LINE);
     SDL_RenderSetClipRect(r, &u->nav_rows);
     for (int visible = 0; visible < u->nav_rows_visible; visible++) {
         int i = x->nav_scroll + visible;
@@ -1943,9 +2039,14 @@ static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u
         SDL_Rect row = {u->nav_rows.x, y, u->nav_rows.w, u->row_h - 2};
         if (i == x->active_hamiltonian) ui_fill(r, row, UI_ACCENT_SOFT);
         else if (visible & 1) ui_fill(r, row, UI_CHROME);
-        char b[160]; snprintf(b, sizeof(b), "H%d  %s", i + 1, x->hamiltonian[i].name);
-        ui_text(r, UI_FONT_SANS_SM, b, row.x + 10, row.y + 6,
-                i == x->active_hamiltonian ? UI_ACCENT_TEXT : UI_TEXT);
+        char b[160];
+        int editing = x->edit_param == XIAM_EDIT_H_NAME && x->edit_hamiltonian_row == i;
+        snprintf(b, sizeof(b), "H%d  ", i + 1);
+        int prefix_w = ui_text_w(UI_FONT_SANS_SM, b);
+        SDL_Color name_c = i == x->active_hamiltonian ? UI_ACCENT_TEXT : UI_TEXT;
+        ui_text(r, UI_FONT_SANS_SM, b, row.x + 10, row.y + 6, UI_DIM);
+        xiam_cell_text(r, UI_FONT_SANS_SM, x, editing, x->hamiltonian[i].name,
+                       row.x + 10 + prefix_w, row.y + 6, editing ? UI_ACCENT_TEXT : name_c);
     }
     SDL_RenderSetClipRect(r, NULL);
     if (x->n_hamiltonians > u->nav_rows_visible) {
@@ -1953,10 +2054,17 @@ static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u
         snprintf(b, sizeof(b), "%d of %d", u->nav_rows_visible, x->n_hamiltonians);
         ui_text_right(r, UI_FONT_SANS_SM, b, u->nav.x + u->nav.w - 10, u->nav.y + 10, UI_FAINT);
     }
-    ui_button(r, (SDL_Rect){u->nav.x + 10, u->nav.y + u->nav.h - 66, u->nav.w - 20, 28},
-              "+ Open .xi Hamiltonian", -1, UI_BTN_PRIMARY, 0, mx, my, down);
-    ui_button(r, (SDL_Rect){u->nav.x + 10, u->nav.y + u->nav.h - 32, u->nav.w - 20, 24},
-              "Reload active .xi", -1, UI_BTN_QUIET, 0, mx, my, down);
+    int many = x->n_hamiltonians > 1;
+    ui_button(r, u->nav_up, "H up", -1, UI_BTN_QUIET, 0, many ? mx : -999, my, down);
+    ui_button(r, u->nav_down, "H down", -1, UI_BTN_QUIET, 0, many ? mx : -999, my, down);
+    ui_button(r, u->nav_open, "+ Open .xi Hamiltonian", -1, UI_BTN_PRIMARY, 0, mx, my, down);
+    ui_button(r, u->nav_reload, "Reload active .xi", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->nav_rename, "Rename", -1, UI_BTN_QUIET,
+              x->edit_param == XIAM_EDIT_H_NAME, mx, my, down);
+    ui_button(r, u->nav_duplicate, "Duplicate", -1, UI_BTN_QUIET, 0, mx, my, down);
+    int confirming = x->active_hamiltonian >= 0 && x->delete_hamiltonian_id == x->model_id;
+    ui_button(r, u->nav_delete, x->n_hamiltonians ? (confirming ? "Confirm" : "Delete") : "Empty", -1,
+              x->n_hamiltonians ? UI_BTN_DANGER : UI_BTN_QUIET, confirming, mx, my, down);
 }
 
 static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
@@ -2226,7 +2334,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (cmd && k == SDLK_x) { xiam_edit_copy(x, 1); return 1; }
         if (cmd && k == SDLK_v) { xiam_edit_paste(x); return 1; }
         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_TAB) { xiam_edit_commit(s); return 1; }
-        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_ESCAPE) { x->edit_param = XIAM_EDIT_NONE; x->edit_assignment = -1; x->edit_name_row = -1; x->edit_hamiltonian_row = -1; SDL_StopTextInput(); return 1; }
         if (k == SDLK_BACKSPACE) {
             x->edit_replace = 0;
             if (!xiam_edit_delete_selection(x) && x->edit_caret > 0) {
@@ -2265,6 +2373,17 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         /* Clicking inside the cell that is being edited aims the caret.  It
            must not commit and reopen the edit, which would select the whole
            text again and leave the click with nothing to show for it. */
+        if (x->edit_param == XIAM_EDIT_H_NAME &&
+            point_in_rect(e->button.x, e->button.y, hit.nav_rows)) {
+            int row = x->nav_scroll + (e->button.y - hit.nav_rows.y) / hit.row_h;
+            if (row == x->edit_hamiltonian_row) {
+                char prefix[32]; snprintf(prefix, sizeof(prefix), "H%d  ", row + 1);
+                xiam_place_caret(x, UI_FONT_SANS_SM,
+                                 hit.nav_rows.x + 10 + ui_text_w(UI_FONT_SANS_SM, prefix),
+                                 e->button.x);
+                return 1;
+            }
+        }
         if (x->active_tab == 1 && point_in_rect(e->button.x, e->button.y, hit.rows) &&
             x->edit_assignment >= 0 && x->edit_assignment < s->n_assignments &&
             (x->edit_param == XIAM_EDIT_LINE_OBS || x->edit_param == XIAM_EDIT_LINE_ERR)) {
@@ -2312,13 +2431,40 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != id) return 0;
     int px = e->button.x, py = e->button.y;
     for (int i = 0; i < XIAM_TAB_COUNT; i++) if (point_in_rect(px, py, u.tab[i])) { xiam_edit_commit(s); x->active_tab = i; x->delete_hamiltonian_id = 0; return 1; }
-    SDL_Rect nav_open = {u.nav.x + 10, u.nav.y + u.nav.h - 66, u.nav.w - 20, 28};
-    SDL_Rect nav_reload = {u.nav.x + 10, u.nav.y + u.nav.h - 32, u.nav.w - 20, 24};
-    if (point_in_rect(px, py, nav_open)) { char path[512]; if (xiam_pick_input(path, sizeof(path))) xiam_load_input_file(s, path); return 1; }
-    if (point_in_rect(px, py, nav_reload)) { xiam_reload_active_input(s); return 1; }
+    /* The sidebar is global navigation, before the tab-specific editor. */
+    if (point_in_rect(px, py, u.nav_open)) { char path[512]; if (xiam_pick_input(path, sizeof(path))) xiam_load_input_file(s, path); return 1; }
+    if (point_in_rect(px, py, u.nav_reload)) { xiam_reload_active_input(s); return 1; }
     if (point_in_rect(px, py, u.nav_rows)) {
         int i = x->nav_scroll + (py - u.nav_rows.y) / u.row_h;
-        if (i >= 0 && i < x->n_hamiltonians) xiam_select_hamiltonian(x, i);
+        if (i >= 0 && i < x->n_hamiltonians) {
+            xiam_select_hamiltonian(x, i);
+            x->delete_hamiltonian_id = 0;
+            /* A second click on the selected row renames it, like a file. */
+            if (e->button.clicks >= 2) { x->edit_hamiltonian_row = i; xiam_edit_begin(x, XIAM_EDIT_H_NAME); }
+        }
+        return 1;
+    }
+    if (point_in_rect(px, py, u.nav_up) || point_in_rect(px, py, u.nav_down)) {
+        xiam_move_hamiltonian(s, x->active_hamiltonian, point_in_rect(px, py, u.nav_up) ? -1 : 1);
+        return 1;
+    }
+    if (point_in_rect(px, py, u.nav_rename)) {
+        if (x->active_hamiltonian >= 0) {
+            x->edit_hamiltonian_row = x->active_hamiltonian;
+            xiam_edit_begin(x, XIAM_EDIT_H_NAME);
+        }
+        return 1;
+    }
+    if (point_in_rect(px, py, u.nav_duplicate)) { xiam_duplicate_active(s); return 1; }
+    if (point_in_rect(px, py, u.nav_delete)) {
+        if (x->active_hamiltonian < 0) return 1;
+        if (x->delete_hamiltonian_id == x->model_id) xiam_remove_active_hamiltonian(s);
+        else {
+            x->delete_hamiltonian_id = x->model_id;
+            snprintf(x->status, sizeof(x->status),
+                     "Click Confirm to remove %s and its assignments.",
+                     x->hamiltonian[x->active_hamiltonian].name);
+        }
         return 1;
     }
     if (x->active_tab == 0) {
