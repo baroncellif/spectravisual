@@ -16,7 +16,8 @@
 #define MAX_PICKETT_LABEL 128
 #define MAX_PICKETT_SPECIES 16
 #define MAX_PICKETT_HAMILTONIANS 16
-#define MAX_INTFIT_SPECIES (MAX_PICKETT_SPECIES * MAX_PICKETT_HAMILTONIANS)
+#define MAX_XIAM_HAMILTONIANS 16
+#define MAX_INTFIT_SPECIES (MAX_PICKETT_SPECIES * MAX_PICKETT_HAMILTONIANS + MAX_XIAM_HAMILTONIANS)
 #define MAX_INTFIT_GROUPS MAX_INTFIT_SPECIES
 #define MAX_XIAM_PARAMS 512
 #define MAX_XIAM_SOURCE_LINES 4096
@@ -425,6 +426,7 @@ typedef struct {
     int max_j;
     double fmin_mhz, fmax_mhz;
     double temperature_k;
+    double concentration;       /* native XIAM model scale in the shared plot */
     int has_freq, has_ints, has_j;
     int axis_convention;
     int axis_auto_convention;
@@ -432,8 +434,6 @@ typedef struct {
     char status[256];
     char diagnostics[8192];
 } XiamHamiltonian;
-
-#define MAX_XIAM_HAMILTONIANS 16
 
 /* A separate, one-Hamiltonian XIAM workspace.  It retains the input text so
  * directives XIAM knows but SpectraVisual does not are never discarded.
@@ -462,6 +462,8 @@ typedef struct {
     int edit_assignment;       /* assignment currently edited in Lines, or -1 */
     int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
     int session_dirty;
+    int session_loading_hamiltonian; /* session parser's current H, or -1 */
+    int session_active_hamiltonian;  /* selection to restore after parsing */
     int edit_param;            /* -1 while no parameter value is edited */
     int edit_caret, edit_anchor, edit_replace;
     char edit_buf[96];
@@ -478,6 +480,7 @@ typedef struct {
     int max_j;
     double fmin_mhz, fmax_mhz;
     double temperature_k;
+    double concentration;       /* active Hamiltonian projection */
     int has_freq, has_ints, has_j;
     int axis_convention;       /* effective: 0=not declared, 1=prolate, 2=oblate */
     int axis_auto_convention;  /* convention inferred from BJ/BK/B- */

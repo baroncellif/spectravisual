@@ -91,7 +91,10 @@ Prediction handling
 	•	Click on a predicted line: select a single transition
 	•	Ctrl / Cmd + click: select multiple predicted lines
 	•	.cat files are read in SPCAT's fixed-width layout: letter-coded quantum numbers (A5 = 105, a1 = -11) are decoded and trailing blanks do not matter. Lines with NQN 0 or more than 6 quantum numbers per state are not supported: they are skipped and their number is shown in the title bar.
+	•	Pickett/SPCAT and native XIAM predictions can share one plot. Loading a CAT or running Pickett replaces only the Pickett side; every loaded XIAM Hamiltonian remains overlaid, and recalculating one XIAM model replaces only that model's native rows.
 	•	m : apply Lorentzian broadening to predicted lines
+	•	Kaiser FFT broadening is a viewer-side convolution on the combined, frequency-sorted stick list (SPFIT/SPCAT themselves generate line positions and intensities, not broadened profiles). It uses the active experimental grid for `df`.
+	•	Pred&Fit Advanced > Project > Import `.fit/load` accepts Pickett model families (`name.par` or `.var`, optional `.int/.lin/.cat`) and XIAM pairs (`name.xi`, optional same-stem `name.xo`). The files in `load/` are never modified; an `.xo` without its `.xi` source is ignored.
 	•	d : open the Intensity analysis panel
 	•	C : open a window to filter predicted transitions by intensity (log10(Int))
 	•	Intensity analysis: enter T cat/T rot plus a/b/c catalog and replacement dipoles, in Debye. Its Relative intensity fit section integrates the active trace around the assigned peaks. Select independently whether to fit T rot and which a/b/c dipoles to correct; the global scale is always fitted because experimental units are arbitrary. Export fit writes `intensity_fit.ifit` with all accepted and rejected lines.

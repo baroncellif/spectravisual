@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -25,7 +27,8 @@
 
 enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_TEMP = -4, XIAM_EDIT_JMAX = -5,
-       XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7 };
+       XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7,
+       XIAM_EDIT_CONCENTRATION = -8 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
 
@@ -209,6 +212,7 @@ static void xiam_store_active(XiamState *x) {
     memcpy(h->params, x->params, sizeof(h->params)); h->n_params = x->n_params;
     h->spin = x->spin; h->spin2 = x->spin2; h->model_id = x->model_id; h->max_j = x->max_j;
     h->fmin_mhz = x->fmin_mhz; h->fmax_mhz = x->fmax_mhz; h->temperature_k = x->temperature_k;
+    h->concentration = x->concentration;
     h->has_freq = x->has_freq; h->has_ints = x->has_ints; h->has_j = x->has_j;
     h->axis_convention = x->axis_convention; h->axis_auto_convention = x->axis_auto_convention;
     h->axis_override = x->axis_override;
@@ -228,6 +232,7 @@ static void xiam_restore_active(XiamState *x, int index) {
     memcpy(x->params, h->params, sizeof(x->params)); x->n_params = h->n_params;
     x->spin = h->spin; x->spin2 = h->spin2; x->model_id = h->model_id; x->max_j = h->max_j;
     x->fmin_mhz = h->fmin_mhz; x->fmax_mhz = h->fmax_mhz; x->temperature_k = h->temperature_k;
+    x->concentration = h->concentration;
     x->has_freq = h->has_freq; x->has_ints = h->has_ints; x->has_j = h->has_j;
     x->axis_convention = h->axis_convention; x->axis_auto_convention = h->axis_auto_convention;
     x->axis_override = h->axis_override;
@@ -242,6 +247,7 @@ static void xiam_clear_active(XiamState *x) {
     x->input_path[0] = x->output_path[0] = x->fit_output_path[0] = x->work_dir[0] = '\0';
     x->n_source_lines = x->n_params = 0; x->spin = x->spin2 = 0; x->model_id = 0;
     x->max_j = 30; x->fmin_mhz = 0.0; x->fmax_mhz = 10000.0; x->temperature_k = 1.0;
+    x->concentration = 1.0;
     x->has_freq = x->has_ints = x->has_j = 0;
     x->axis_convention = x->axis_auto_convention = x->axis_override = 0;
     x->status[0] = x->diagnostics[0] = '\0';
@@ -250,6 +256,56 @@ static void xiam_clear_active(XiamState *x) {
 static int xiam_select_hamiltonian(XiamState *x, int index) {
     if (!x || index < 0 || index >= x->n_hamiltonians) return 0;
     xiam_store_active(x); xiam_restore_active(x, index); return 1;
+}
+
+static void xiam_mark_session_dirty(AppState *s) {
+    if (!s) return;
+    s->xiam.session_dirty = 1;
+    s->predfit.session_dirty = 1;
+}
+
+double xiam_hamiltonian_concentration(const AppState *s, int hamiltonian_id) {
+    if (!s) return 1.0;
+    const XiamState *x = &s->xiam;
+    for (int i = 0; i < x->n_hamiltonians; i++)
+        if (x->hamiltonian[i].model_id == hamiltonian_id) {
+            double c = x->hamiltonian[i].concentration;
+            return isfinite(c) && c >= 0.0 ? c : 1.0;
+        }
+    return 1.0;
+}
+
+void xiam_apply_concentrations(AppState *s) {
+    if (!s || !s->pred_lines || s->n_pred <= 0) return;
+    double top = 0.0;
+    for (int i = 0; i < s->n_pred; i++) {
+        PredLine *p = &s->pred_lines[i];
+        if (p->backend == PRED_BACKEND_XIAM) {
+            double base = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+            p->line_strength = 0.0;
+            p->linear_int = base * xiam_hamiltonian_concentration(s, p->hamiltonian_id);
+            p->lgint = p->linear_int > 0.0 ? log10(p->linear_int) : -INFINITY;
+        }
+        if (p->linear_int > top) top = p->linear_int;
+    }
+    s->pred_global_max = top > 0.0 ? top : 1.0;
+}
+
+int xiam_set_hamiltonian_concentration(AppState *s, int hamiltonian_id,
+                                       double concentration) {
+    if (!s || !isfinite(concentration) || concentration < 0.0) return 0;
+    XiamState *x = &s->xiam;
+    for (int i = 0; i < x->n_hamiltonians; i++) {
+        if (x->hamiltonian[i].model_id != hamiltonian_id) continue;
+        x->hamiltonian[i].concentration = concentration;
+        if (i == x->active_hamiltonian) x->concentration = concentration;
+        xiam_store_active(x);
+        xiam_apply_concentrations(s);
+        s->intensity_window.species_sync_pending = 1;
+        xiam_mark_session_dirty(s);
+        return 1;
+    }
+    return 0;
 }
 
 static int xiam_find_hamiltonian_path(const XiamState *x, const char *path) {
@@ -476,10 +532,18 @@ static void xiam_adopt_prediction(AppState *s, PredLine *rows, int n, double lo,
     free(rows); free(s->pred_lines);
     s->pred_lines = merged; s->n_pred = at;
     qsort(s->pred_lines, (size_t)s->n_pred, sizeof(*s->pred_lines), xiam_cmp_line);
-    lo = s->pred_lines[0].freq_mhz; hi = s->pred_lines[s->n_pred - 1].freq_mhz; top = 0.0;
-    for (int i = 0; i < s->n_pred; i++) if (s->pred_lines[i].linear_int > top) top = s->pred_lines[i].linear_int;
-    s->pred_global_max = top > 0.0 ? top : 1.0;
-    s->n_selected = 0; s->pxmin = lo; s->pxmax = hi; s->cat_temp_k = s->xiam.temperature_k; s->rot_temp_k = s->xiam.temperature_k;
+    lo = s->pred_lines[0].freq_mhz; hi = s->pred_lines[s->n_pred - 1].freq_mhz;
+    (void)top;
+    xiam_apply_concentrations(s);
+    s->n_selected = 0; s->pxmin = lo; s->pxmax = hi;
+    /* A mixed prediction keeps Pred&Fit's display controls authoritative for
+       its own rows.  XIAM native intensities do not have a CAT temperature
+       that can be rescaled, so changing these shared fields after adding one
+       would be misleading and can restyle the Pickett side. */
+    if (!s->predfit.generated_catalog_active) {
+        s->cat_temp_k = s->xiam.temperature_k;
+        s->rot_temp_k = s->xiam.temperature_k;
+    }
     snprintf(s->pred_path, sizeof(s->pred_path), "%s", path ? path : "XIAM .xo");
     int first = !s->data_loaded; s->data_loaded = 1;
     if (first) { s->xmin=lo; s->xmax=hi; s->vxmin=lo; s->vxmax=hi; s->pvxmin=lo; s->pvxmax=hi; s->ymin=s->vymin=0.0; s->ymax=s->vymax=1.0; s->bar_x=s->pbar_x=(lo+hi)*0.5; }
@@ -999,6 +1063,7 @@ void xiam_init(AppState *s) {
     s->xiam.active_tab = 0;
     s->xiam.max_j = 30;
     s->xiam.temperature_k = 1.0;
+    s->xiam.concentration = 1.0;
 }
 
 void xiam_close(AppState *s) {
@@ -1050,13 +1115,36 @@ int xiam_load_input_file(AppState *s, const char *path) {
     if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s);
     snprintf(x->status,sizeof(x->status),"Loaded Hamiltonian %d/%d (%s): %d molecular parameters, %d Block VIII transitions imported; input/output are in MHz.",x->active_hamiltonian+1,x->n_hamiltonians,xiam_basename(path),x->n_params,imported);
     xiam_store_active(x);
+    xiam_mark_session_dirty(s);
     return 1;
+}
+
+/* An output is often opened from Finder after another XIAM input is already
+ * selected.  Associate same-stem source/output pairs before parsing: without
+ * this, `alpha.xo` could silently replace the catalogue of the active beta.xi
+ * model and give its rows beta's owner id. */
+static int xiam_same_file_stem(const char *left, const char *right) {
+    const char *a = xiam_basename(left), *b = xiam_basename(right);
+    const char *adot = strrchr(a, '.'), *bdot = strrchr(b, '.');
+    size_t an = adot ? (size_t)(adot - a) : strlen(a);
+    size_t bn = bdot ? (size_t)(bdot - b) : strlen(b);
+    return an > 0 && an == bn && strncasecmp(a, b, an) == 0;
+}
+
+static void xiam_select_output_owner(XiamState *x, const char *output_path) {
+    if (!x || !output_path || !output_path[0]) return;
+    for (int i = 0; i < x->n_hamiltonians; i++)
+        if (xiam_same_file_stem(x->hamiltonian[i].input_path, output_path)) {
+            xiam_select_hamiltonian(x, i);
+            return;
+        }
 }
 
 int xiam_load_output_file(AppState *s, const char *path) {
     PredLine *rows=NULL; int n=0; double lo=0,hi=0,top=0;
-    int model_id = s && s->xiam.loaded ? s->xiam.model_id : xiam_model_id_from_path(path);
     if (!s || !path) return 0;
+    xiam_select_output_owner(&s->xiam, path);
+    int model_id = s->xiam.loaded ? s->xiam.model_id : xiam_model_id_from_path(path);
     int fit_parameters = s->xiam.loaded ? xiam_parse_fit_parameters(&s->xiam,path) : 0;
     /* XIAM can be asked to print a catalogue together with a fit report.
        Preserve the report pathname even in that mixed form: otherwise the
@@ -1066,12 +1154,111 @@ int xiam_load_output_file(AppState *s, const char *path) {
         if (fit_parameters) {
             snprintf(s->xiam.status,sizeof(s->xiam.status),"Loaded %d fitted XIAM parameters; this .xo contains no native prediction list.",fit_parameters);
             xiam_store_active(&s->xiam);
+            xiam_mark_session_dirty(s);
             return 1;
         }
         snprintf(s->xiam.status,sizeof(s->xiam.status),"No readable native XIAM prediction records in %s.",path);
         return 0;
     }
-    xiam_adopt_prediction(s,rows,n,lo,hi,top,path); snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path); xiam_store_active(&s->xiam); if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s); return 1;
+    xiam_adopt_prediction(s,rows,n,lo,hi,top,path); snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path); xiam_store_active(&s->xiam); xiam_mark_session_dirty(s); if (SDL_WasInit(SDL_INIT_VIDEO)) xiam_open(s); return 1;
+}
+
+/* .fit/load is shared with Pred&Fit.  Native XIAM models are independent
+ * inputs rather than Pickett states, so import the source first and only then
+ * read the matching output while that source is its active Hamiltonian. */
+#define MAX_XIAM_LOAD_MODELS 64
+typedef struct {
+    char stem[256];
+    char xi_name[256];
+    char xo_name[256];
+    int has_xi, has_xo;
+} XiamLoadCandidate;
+
+static int xiam_load_candidate_slot(XiamLoadCandidate *list, int *count,
+                                    const char *stem) {
+    for (int i = 0; i < *count; i++)
+        if (strcasecmp(list[i].stem, stem) == 0) return i;
+    if (*count >= MAX_XIAM_LOAD_MODELS) return -1;
+    memset(&list[*count], 0, sizeof(list[*count]));
+    snprintf(list[*count].stem, sizeof(list[*count].stem), "%s", stem);
+    return (*count)++;
+}
+
+static int xiam_load_candidate_cmp(const void *left, const void *right) {
+    const XiamLoadCandidate *a = left, *b = right;
+    return strcasecmp(a->stem, b->stem);
+}
+
+int xiam_import_load_dir(AppState *s, const char *directory) {
+    if (!s || !directory || !directory[0]) return 0;
+    DIR *dir = opendir(directory);
+    if (!dir) {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "Cannot open XIAM import folder %s.", directory);
+        return 0;
+    }
+
+    XiamLoadCandidate found[MAX_XIAM_LOAD_MODELS];
+    int n_found = 0, ignored = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *dot = strrchr(entry->d_name, '.');
+        if (!dot || dot == entry->d_name) continue;
+        int is_xi = strcasecmp(dot, ".xi") == 0;
+        int is_xo = strcasecmp(dot, ".xo") == 0;
+        if (!is_xi && !is_xo) continue;
+        size_t stem_len = (size_t)(dot - entry->d_name);
+        if (stem_len == 0 || stem_len >= sizeof(found[0].stem) ||
+            strlen(entry->d_name) >= sizeof(found[0].xi_name)) {
+            ignored++;
+            continue;
+        }
+        char stem[256];
+        memcpy(stem, entry->d_name, stem_len);
+        stem[stem_len] = '\0';
+        int slot = xiam_load_candidate_slot(found, &n_found, stem);
+        if (slot < 0) { ignored++; continue; }
+        if (is_xi) {
+            found[slot].has_xi = 1;
+            snprintf(found[slot].xi_name, sizeof(found[slot].xi_name), "%s", entry->d_name);
+        } else {
+            found[slot].has_xo = 1;
+            snprintf(found[slot].xo_name, sizeof(found[slot].xo_name), "%s", entry->d_name);
+        }
+    }
+    closedir(dir);
+    qsort(found, (size_t)n_found, sizeof(found[0]), xiam_load_candidate_cmp);
+
+    int imported = 0, output_failed = 0, orphan_output = 0;
+    for (int i = 0; i < n_found; i++) {
+        if (!found[i].has_xi) { orphan_output++; continue; }
+        char input_path[700];
+        snprintf(input_path, sizeof(input_path), "%s/%s", directory, found[i].xi_name);
+        if (!xiam_load_input_file(s, input_path)) { ignored++; continue; }
+        imported++;
+        if (!found[i].has_xo) continue;
+        char output_path[700];
+        snprintf(output_path, sizeof(output_path), "%s/%s", directory, found[i].xo_name);
+        if (!xiam_load_output_file(s, output_path)) output_failed++;
+    }
+    if (imported) {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "Imported %d XIAM Hamiltonian%s from .fit/load%s%s.",
+                 imported, imported == 1 ? "" : "s",
+                 output_failed ? "; one or more .xo files were not readable" : "",
+                 orphan_output ? "; .xo without a matching .xi was ignored" : "");
+    } else if (orphan_output) {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "No XIAM input imported: .xo files need a same-stem .xi source in %s.", directory);
+    } else if (!n_found) {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "No XIAM .xi/.xo files found in %s.", directory);
+    } else {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "No XIAM input could be imported from %s.", directory);
+    }
+    (void)ignored;
+    return imported;
 }
 
 int xiam_save_fit_file(AppState *s, const char *path) {
@@ -1112,6 +1299,7 @@ int xiam_fit(AppState *s) {
         snprintf(s->xiam.status, sizeof(s->xiam.status),
                  "Fit completed (%d constants); fit.xo is retained, but the updated prediction could not be read.", updated);
     xiam_store_active(&s->xiam);
+    xiam_mark_session_dirty(s);
     /* The fit itself is valid even if the optional catalogue refresh fails. */
     return 1;
 }
@@ -1129,6 +1317,7 @@ static int xiam_reload_active_input(AppState *s) {
     snprintf(x->status, sizeof(x->status), "Reloaded %s; %d Block VIII transitions refreshed.",
              xiam_basename(path), imported);
     xiam_store_active(x);
+    xiam_mark_session_dirty(s);
     return 1;
 }
 
@@ -1175,6 +1364,7 @@ static void xiam_remove_active_hamiltonian(AppState *s) {
         xiam_clear_active(x); x->active_hamiltonian = -1;
         snprintf(x->status, sizeof(x->status), "No XIAM Hamiltonians are open.");
     }
+    xiam_mark_session_dirty(s);
 }
 
 static void xiam_format_transition(const PredLine *p, char *out, size_t size) {
@@ -1221,6 +1411,7 @@ static void xiam_delete_assignment(AppState *s, int index) {
     }
     for (int i = index; i + 1 < s->n_assignments; i++) s->assignments[i] = s->assignments[i + 1];
     s->n_assignments--; save_assignments(s);
+    xiam_mark_session_dirty(s);
 }
 
 static void xiam_edit_begin(XiamState *x, int what) {
@@ -1229,6 +1420,7 @@ static void xiam_edit_begin(XiamState *x, int what) {
     else if (what==XIAM_EDIT_FMIN) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->fmin_mhz);
     else if (what==XIAM_EDIT_FMAX) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->fmax_mhz);
     else if (what==XIAM_EDIT_TEMP) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->temperature_k);
+    else if (what==XIAM_EDIT_CONCENTRATION) snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->concentration);
     else snprintf(x->edit_buf,sizeof(x->edit_buf),"%d",x->max_j);
     x->edit_caret=x->edit_anchor=(int)strlen(x->edit_buf); SDL_StartTextInput();
 }
@@ -1254,6 +1446,12 @@ static void xiam_edit_commit(AppState *s) {
     else if (x->edit_param==XIAM_EDIT_FMAX) x->fmax_mhz=v;
     else if (x->edit_param==XIAM_EDIT_TEMP && v>0.0) x->temperature_k=v;
     else if (x->edit_param==XIAM_EDIT_JMAX) x->max_j=(int)lround(v);
+    else if (x->edit_param==XIAM_EDIT_CONCENTRATION && isfinite(v) && v>=0.0) {
+        x->concentration=v;
+        xiam_store_active(x);
+        xiam_apply_concentrations(s);
+        s->intensity_window.species_sync_pending = 1;
+    }
     else if ((x->edit_param == XIAM_EDIT_LINE_OBS || x->edit_param == XIAM_EDIT_LINE_ERR) &&
              x->edit_assignment >= 0 && x->edit_assignment < s->n_assignments) {
         Assignment *a = &s->assignments[x->edit_assignment];
@@ -1263,6 +1461,7 @@ static void xiam_edit_commit(AppState *s) {
     }
     x->edit_param=XIAM_EDIT_NONE; x->edit_assignment=-1; SDL_StopTextInput();
     xiam_store_active(x);
+    xiam_mark_session_dirty(s);
 }
 
 static void xiam_edit_insert(XiamState *x, const char *text) {
@@ -1398,15 +1597,18 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     SDL_Rect fmin = {u->table.x, u->table.y + 22, 130, 28};
     SDL_Rect fmax = {u->table.x + 140, u->table.y + 22, 130, 28};
     SDL_Rect temp = {u->table.x + 280, u->table.y + 22, 105, 28};
-    SDL_Rect jmax = {u->table.x + 395, u->table.y + 22, 85, 28};
-    SDL_Rect axis = {u->table.x + 496, u->table.y + 22, 210, 28};
+    SDL_Rect conc = {u->table.x + 395, u->table.y + 22, 90, 28};
+    SDL_Rect jmax = {u->table.x + 495, u->table.y + 22, 75, 28};
+    SDL_Rect axis = {u->table.x + 580, u->table.y + 22, 210, 28};
     ui_text(r, UI_FONT_SANS_SM, "F min / MHz", fmin.x, fmin.y - 15, UI_FAINT);
     ui_text(r, UI_FONT_SANS_SM, "F max / MHz", fmax.x, fmax.y - 15, UI_FAINT);
     ui_text(r, UI_FONT_SANS_SM, "T / K", temp.x, temp.y - 15, UI_FAINT);
+    ui_text(r, UI_FONT_SANS_SM, "Concentration", conc.x, conc.y - 15, UI_FAINT);
     ui_text(r, UI_FONT_SANS_SM, "Jmax", jmax.x, jmax.y - 15, UI_FAINT);
     snprintf(b, sizeof(b), "%.10g", x->fmin_mhz); ui_field_ex(r, fmin, NULL, x->edit_param == XIAM_EDIT_FMIN ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_FMIN, x->edit_caret, x->edit_anchor);
     snprintf(b, sizeof(b), "%.10g", x->fmax_mhz); ui_field_ex(r, fmax, NULL, x->edit_param == XIAM_EDIT_FMAX ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_FMAX, x->edit_caret, x->edit_anchor);
     snprintf(b, sizeof(b), "%.8g", x->temperature_k); ui_field_ex(r, temp, NULL, x->edit_param == XIAM_EDIT_TEMP ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_TEMP, x->edit_caret, x->edit_anchor);
+    snprintf(b, sizeof(b), "%.8g", x->concentration); ui_field_ex(r, conc, NULL, x->edit_param == XIAM_EDIT_CONCENTRATION ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_CONCENTRATION, x->edit_caret, x->edit_anchor);
     snprintf(b, sizeof(b), "%d", x->max_j); ui_field_ex(r, jmax, NULL, x->edit_param == XIAM_EDIT_JMAX ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_JMAX, x->edit_caret, x->edit_anchor);
     ui_button(r, axis, xiam_axis_button_text(x), -1, UI_BTN_QUIET, 0, mx, my, down);
     SDL_Rect table = {u->table.x, u->table.y + 64, u->table.w, u->table.h - 64};
@@ -1564,11 +1766,13 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
     ui_text(r, UI_FONT_SANS, "Hamiltonians — each row is one independent native .xi model", u->table.x, 112, UI_ACCENT_TEXT);
     ui_text(r, UI_FONT_SANS_SM, "Tunnelling and hyperfine states remain inside their XIAM Hamiltonian; they are not Pickett-like species.", u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
-    int temp_right = u->table.x + u->table.w * 77 / 100;
+    int temp_right = u->table.x + u->table.w * 72 / 100;
+    int conc_right = u->table.x + u->table.w * 84 / 100;
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "SOURCE .xi", u->table.x + u->table.w * 30 / 100, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "T / K", temp_right, u->table.y + 9, UI_DIM);
-    ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + u->table.w * 80 / 100, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "CONC.", conc_right, u->table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + u->table.w * 87 / 100, u->table.y + 9, UI_DIM);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int i = x->hamiltonians_scroll + visible; if (i >= x->n_hamiltonians) break;
         XiamHamiltonian *h = &x->hamiltonian[i]; int y = u->rows.y + visible * u->row_h;
@@ -1577,7 +1781,8 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
         snprintf(b, sizeof(b), "H%d  %s", i + 1, h->name); ui_text(r, UI_FONT_SANS_SM, b, row.x + 10, y + 6, i == x->active_hamiltonian ? UI_ACCENT_TEXT : UI_TEXT);
         ui_text(r, UI_FONT_MONO_SM, h->input_path[0] ? h->input_path : "—", u->table.x + u->table.w * 30 / 100, y + 6, UI_DIM);
         snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text_right(r, UI_FONT_MONO_SM, b, temp_right, y + 6, UI_DIM);
-        ui_text(r, UI_FONT_MONO_SM, h->simulate_excluded ? "[ ]" : "[x]", u->table.x + u->table.w * 80 / 100, y + 6, h->simulate_excluded ? UI_FAINT : UI_OK);
+        snprintf(b, sizeof(b), "%.6g", h->concentration); ui_text_right(r, UI_FONT_MONO_SM, b, conc_right, y + 6, UI_DIM);
+        ui_text(r, UI_FONT_MONO_SM, h->simulate_excluded ? "[ ]" : "[x]", u->table.x + u->table.w * 87 / 100, y + 6, h->simulate_excluded ? UI_FAINT : UI_OK);
     }
     ui_button(r, u->btn_a, "+ Open .xi", -1, UI_BTN_PRIMARY, 0, mx, my, down);
     ui_button(r, u->btn_b, "Reload active .xi", -1, UI_BTN_QUIET, 0, mx, my, down);
@@ -1588,15 +1793,17 @@ static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *
                                    int mx, int my, int down) {
     char b[256]; int checked = 0;
     ui_text(r, UI_FONT_SANS, "Simulation — checked native XIAM Hamiltonians are calculated and overlaid together", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, "One XIAM run per .xi; the resulting catalogues retain native SPCAT intensities.", u->table.x, 128, UI_DIM);
+    ui_text(r, UI_FONT_SANS_SM, "One XIAM run per .xi; concentration is the native intensity multiplier (edit it in Parameters).", u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
-    int range_right = u->table.x + u->table.w * 64 / 100;
-    int temp_right = u->table.x + u->table.w * 80 / 100;
+    int range_right = u->table.x + u->table.w * 58 / 100;
+    int temp_right = u->table.x + u->table.w * 69 / 100;
+    int conc_right = u->table.x + u->table.w * 80 / 100;
     int jmax_right = u->table.x + u->table.w * 91 / 100;
     ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN", u->table.x + u->table.w * 10 / 100, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "FREQ. RANGE / MHz", range_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "T / K", temp_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "CONC.", conc_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "JMAX", jmax_right, u->table.y + 9, UI_DIM);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int i = x->simulation_scroll + visible; if (i >= x->n_hamiltonians) break;
@@ -1608,6 +1815,7 @@ static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *
         snprintf(b, sizeof(b), "H%d  %s", i + 1, h->name); ui_text(r, UI_FONT_SANS_SM, b, u->table.x + u->table.w * 10 / 100, y + 6, on ? UI_TEXT : UI_DIM);
         snprintf(b, sizeof(b), "%.8g – %.8g", h->fmin_mhz, h->fmax_mhz); ui_text_right(r, UI_FONT_MONO_SM, b, range_right, y + 6, on ? UI_DIM : UI_FAINT);
         snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text_right(r, UI_FONT_MONO_SM, b, temp_right, y + 6, on ? UI_DIM : UI_FAINT);
+        snprintf(b, sizeof(b), "%.6g", h->concentration); ui_text_right(r, UI_FONT_MONO_SM, b, conc_right, y + 6, on ? UI_DIM : UI_FAINT);
         snprintf(b, sizeof(b), "%d", h->max_j); ui_text_right(r, UI_FONT_MONO_SM, b, jmax_right, y + 6, on ? UI_DIM : UI_FAINT);
     }
     snprintf(b, sizeof(b), "Simulate (%d H)", checked); ui_button(r, u->btn_a, b, -1, checked ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
@@ -1667,18 +1875,19 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         return 1;
     }
     if (x->active_tab == 0) {
-        SDL_Rect fmin = {u.table.x, u.table.y + 22, 130, 28}, fmax = {u.table.x + 140, u.table.y + 22, 130, 28}, temp = {u.table.x + 280, u.table.y + 22, 105, 28}, jmax = {u.table.x + 395, u.table.y + 22, 85, 28}, axis = {u.table.x + 496, u.table.y + 22, 210, 28};
+        SDL_Rect fmin = {u.table.x, u.table.y + 22, 130, 28}, fmax = {u.table.x + 140, u.table.y + 22, 130, 28}, temp = {u.table.x + 280, u.table.y + 22, 105, 28}, conc = {u.table.x + 395, u.table.y + 22, 90, 28}, jmax = {u.table.x + 495, u.table.y + 22, 75, 28}, axis = {u.table.x + 580, u.table.y + 22, 210, 28};
         if (point_in_rect(px, py, fmin)) { xiam_edit_begin(x, XIAM_EDIT_FMIN); return 1; }
         if (point_in_rect(px, py, fmax)) { xiam_edit_begin(x, XIAM_EDIT_FMAX); return 1; }
         if (point_in_rect(px, py, temp)) { xiam_edit_begin(x, XIAM_EDIT_TEMP); return 1; }
+        if (point_in_rect(px, py, conc)) { xiam_edit_begin(x, XIAM_EDIT_CONCENTRATION); return 1; }
         if (point_in_rect(px, py, jmax)) { xiam_edit_begin(x, XIAM_EDIT_JMAX); return 1; }
-        if (point_in_rect(px, py, axis)) { x->axis_override = (x->axis_override + 1) % 3; xiam_update_axis_convention(x); xiam_store_active(x); return 1; }
+        if (point_in_rect(px, py, axis)) { x->axis_override = (x->axis_override + 1) % 3; xiam_update_axis_convention(x); xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
         SDL_Rect rows = {u.table.x + 1, u.table.y + 95, u.table.w - 2, u.table.h - 97};
-        if (point_in_rect(px, py, rows)) { int i = x->params_scroll + (py - rows.y) / u.row_h; if (i >= 0 && i < x->n_params) { if (px >= u.table.x + u.table.w * 72 / 100) x->params[i].fit_method = (x->params[i].fit_method + 1) % 4; else xiam_edit_begin(x, i); xiam_store_active(x); } return 1; }
+        if (point_in_rect(px, py, rows)) { int i = x->params_scroll + (py - rows.y) / u.row_h; if (i >= 0 && i < x->n_params) { if (px >= u.table.x + u.table.w * 72 / 100) { x->params[i].fit_method = (x->params[i].fit_method + 1) % 4; xiam_mark_session_dirty(s); } else xiam_edit_begin(x, i); xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_edit_commit(s); xiam_calculate(s); return 1; }
     } else if (x->active_tab == 1) {
-        if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); } xiam_store_active(x); } return 1; }
+        if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_fit(s); return 1; }
     } else if (x->active_tab == 2) {
@@ -1691,11 +1900,209 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_b)) { xiam_reload_active_input(s); return 1; }
         if (point_in_rect(px, py, u.btn_c) && x->active_hamiltonian >= 0) { if (x->delete_hamiltonian_id == x->model_id) xiam_remove_active_hamiltonian(s); else { x->delete_hamiltonian_id = x->model_id; snprintf(x->status, sizeof(x->status), "Click Confirm remove H to remove this XIAM Hamiltonian and its assignments."); } return 1; }
     } else if (x->active_tab == 4) {
-        if (point_in_rect(px, py, u.rows)) { int i = x->simulation_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded; else x->hamiltonian[i].simulate_excluded = !x->hamiltonian[i].simulate_excluded; xiam_store_active(x); } return 1; }
+        if (point_in_rect(px, py, u.rows)) { int i = x->simulation_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded; else x->hamiltonian[i].simulate_excluded = !x->hamiltonian[i].simulate_excluded; xiam_store_active(x); xiam_mark_session_dirty(s); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { xiam_simulate_checked(s); return 1; }
-        if (point_in_rect(px, py, u.btn_b) || point_in_rect(px, py, u.btn_c)) { int excluded = point_in_rect(px, py, u.btn_c); x->simulate_excluded = excluded; for (int i = 0; i < x->n_hamiltonians; i++) x->hamiltonian[i].simulate_excluded = excluded; xiam_store_active(x); return 1; }
+        if (point_in_rect(px, py, u.btn_b) || point_in_rect(px, py, u.btn_c)) { int excluded = point_in_rect(px, py, u.btn_c); x->simulate_excluded = excluded; for (int i = 0; i < x->n_hamiltonians; i++) x->hamiltonian[i].simulate_excluded = excluded; xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
     }
     return 1;
+}
+
+void xiam_write_session(AppState *s, FILE *fp) {
+    if (!s || !fp) return;
+    XiamState *x = &s->xiam;
+    xiam_store_active(x);
+    fprintf(fp, "xiamproject %d %d\n", x->n_hamiltonians, x->active_hamiltonian);
+    for (int i = 0; i < x->n_hamiltonians; i++) {
+        const XiamHamiltonian *h = &x->hamiltonian[i];
+        fprintf(fp, "xiambegin %d %s\n", h->model_id, h->name);
+        fprintf(fp, "xiamctrl %d %d %d %.17g %.17g %.17g %.17g %d %d %d %d %d %d\n",
+                h->simulate_excluded != 0, h->loaded != 0, h->max_j,
+                h->fmin_mhz, h->fmax_mhz, h->temperature_k, h->concentration,
+                h->has_freq != 0, h->has_ints != 0, h->has_j != 0,
+                h->axis_convention, h->axis_auto_convention, h->axis_override);
+        fprintf(fp, "xiampath %s\n", h->input_path);
+        fprintf(fp, "xiamoutput %s\n", h->output_path);
+        fprintf(fp, "xiamfitoutput %s\n", h->fit_output_path);
+        for (int k = 0; k < h->n_params; k++) {
+            const XiamParameter *p = &h->params[k];
+            fprintf(fp, "xiamparam %s %.17g %.17g %d %d %d %d %d\n", p->name,
+                    p->value_ghz, p->error_ghz, p->source_line, p->fit_source_line,
+                    p->fit_method, p->is_quadrupole != 0, p->is_frequency != 0);
+        }
+        for (int k = 0; k < h->n_source_lines; k++)
+            fprintf(fp, "xiamsource %d %s\n", k, h->source_lines[k]);
+        fputs("xiamend\n", fp);
+    }
+}
+
+void xiam_session_begin(AppState *s) {
+    if (!s) return;
+    if (s->xiam.window) xiam_close(s);
+    memset(&s->xiam, 0, sizeof(s->xiam));
+    xiam_init(s);
+    s->xiam.session_loading_hamiltonian = -1;
+    s->xiam.session_active_hamiltonian = -1;
+}
+
+static XiamHamiltonian *xiam_session_current(XiamState *x) {
+    int i = x ? x->session_loading_hamiltonian : -1;
+    return x && i >= 0 && i < x->n_hamiltonians ? &x->hamiltonian[i] : NULL;
+}
+
+int xiam_read_session_line(AppState *s, const char *line) {
+    if (!s || !line) return 0;
+    XiamState *x = &s->xiam;
+    if (strncmp(line, "xiamproject ", 12) == 0) {
+        int ignored = 0, active = -1;
+        if (sscanf(line + 12, "%d %d", &ignored, &active) >= 1)
+            x->session_active_hamiltonian = active;
+        return 1;
+    }
+    if (strncmp(line, "xiambegin ", 10) == 0) {
+        int id = 0, used = 0;
+        if (sscanf(line + 10, "%d%n", &id, &used) == 1 && id < 0 &&
+            x->n_hamiltonians < MAX_XIAM_HAMILTONIANS) {
+            int i = x->n_hamiltonians++;
+            XiamHamiltonian *h = &x->hamiltonian[i];
+            memset(h, 0, sizeof(*h));
+            h->model_id = id; h->max_j = 30; h->fmax_mhz = 10000.0;
+            h->temperature_k = h->concentration = 1.0;
+            const char *name = line + 10 + used;
+            while (*name == ' ' || *name == '\t') name++;
+            snprintf(h->name, sizeof(h->name), "%s", *name ? name : "XIAM model");
+            x->session_loading_hamiltonian = i;
+        } else x->session_loading_hamiltonian = -1;
+        return 1;
+    }
+    if (strcmp(line, "xiamend") == 0) {
+        x->session_loading_hamiltonian = -1;
+        return 1;
+    }
+    XiamHamiltonian *h = xiam_session_current(x);
+    if (!h) return strncmp(line, "xiam", 4) == 0;
+    if (strncmp(line, "xiamctrl ", 9) == 0) {
+        int excluded = 0, loaded = 0, max_j = 30;
+        int has_freq = 0, has_ints = 0, has_j = 0, axis = 0, automatic = 0, override = 0;
+        double fmin = 0.0, fmax = 10000.0, temp = 1.0, concentration = 1.0;
+        if (sscanf(line + 9, "%d %d %d %lf %lf %lf %lf %d %d %d %d %d %d",
+                   &excluded, &loaded, &max_j, &fmin, &fmax, &temp, &concentration,
+                   &has_freq, &has_ints, &has_j, &axis, &automatic, &override) == 13) {
+            h->simulate_excluded = excluded != 0; h->loaded = loaded != 0; h->max_j = max_j;
+            h->fmin_mhz = fmin; h->fmax_mhz = fmax; h->temperature_k = temp;
+            h->concentration = isfinite(concentration) && concentration >= 0.0 ? concentration : 1.0;
+            h->has_freq = has_freq != 0; h->has_ints = has_ints != 0; h->has_j = has_j != 0;
+            h->axis_convention = axis; h->axis_auto_convention = automatic; h->axis_override = override;
+        }
+        return 1;
+    }
+    if (strncmp(line, "xiampath ", 9) == 0) {
+        snprintf(h->input_path, sizeof(h->input_path), "%s", line + 9);
+        return 1;
+    }
+    if (strncmp(line, "xiamoutput ", 11) == 0) {
+        snprintf(h->output_path, sizeof(h->output_path), "%s", line + 11);
+        return 1;
+    }
+    if (strncmp(line, "xiamfitoutput ", 14) == 0) {
+        snprintf(h->fit_output_path, sizeof(h->fit_output_path), "%s", line + 14);
+        return 1;
+    }
+    if (strncmp(line, "xiamparam ", 10) == 0) {
+        XiamParameter p = {0};
+        int quadrupole = 0, frequency = 0;
+        if (sscanf(line + 10, "%47s %lf %lf %d %d %d %d %d", p.name, &p.value_ghz,
+                   &p.error_ghz, &p.source_line, &p.fit_source_line, &p.fit_method,
+                   &quadrupole, &frequency) == 8 && h->n_params < MAX_XIAM_PARAMS) {
+            p.is_quadrupole = quadrupole != 0; p.is_frequency = frequency != 0;
+            h->params[h->n_params++] = p;
+        }
+        return 1;
+    }
+    if (strncmp(line, "xiamsource ", 11) == 0) {
+        int index = -1, used = 0;
+        if (sscanf(line + 11, "%d%n", &index, &used) == 1 &&
+            index >= 0 && index < MAX_XIAM_SOURCE_LINES) {
+            const char *text = line + 11 + used;
+            if (*text == ' ') text++;
+            snprintf(h->source_lines[index], sizeof(h->source_lines[index]), "%s", text);
+            if (index + 1 > h->n_source_lines) h->n_source_lines = index + 1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+void xiam_session_finalize(AppState *s) {
+    if (!s) return;
+    XiamState *x = &s->xiam;
+    for (int i = 0; i < x->n_hamiltonians; i++) {
+        XiamHamiltonian *stored = &x->hamiltonian[i];
+        XiamParameter saved[MAX_XIAM_PARAMS];
+        int n_saved = stored->n_params;
+        memcpy(saved, stored->params, (size_t)n_saved * sizeof(saved[0]));
+        int loaded = stored->loaded, max_j = stored->max_j;
+        int has_freq = stored->has_freq, has_ints = stored->has_ints, has_j = stored->has_j;
+        int axis = stored->axis_convention, automatic = stored->axis_auto_convention;
+        int override = stored->axis_override, excluded = stored->simulate_excluded;
+        double fmin = stored->fmin_mhz, fmax = stored->fmax_mhz;
+        double temp = stored->temperature_k, concentration = stored->concentration;
+        xiam_restore_active(x, i);
+        if (x->n_source_lines > 0) {
+            xiam_parse_source(s);
+            for (int k = 0; k < n_saved; k++) {
+                int at = xiam_find_parameter(x, saved[k].name);
+                if (at >= 0) {
+                    x->params[at].value_ghz = saved[k].value_ghz;
+                    x->params[at].error_ghz = saved[k].error_ghz;
+                    x->params[at].fit_method = saved[k].fit_method;
+                } else if (x->n_params < MAX_XIAM_PARAMS) {
+                    x->params[x->n_params++] = saved[k];
+                }
+            }
+        }
+        x->loaded = loaded; x->max_j = max_j; x->fmin_mhz = fmin; x->fmax_mhz = fmax;
+        x->temperature_k = temp > 0.0 ? temp : 1.0;
+        x->concentration = isfinite(concentration) && concentration >= 0.0 ? concentration : 1.0;
+        x->has_freq = has_freq; x->has_ints = has_ints; x->has_j = has_j;
+        x->axis_override = override; x->axis_auto_convention = automatic; x->axis_convention = axis;
+        x->simulate_excluded = excluded;
+        xiam_update_axis_convention(x);
+        xiam_store_active(x);
+    }
+    int active = x->session_active_hamiltonian;
+    if (active < 0 || active >= x->n_hamiltonians) active = x->n_hamiltonians ? 0 : -1;
+    if (active >= 0) xiam_restore_active(x, active);
+    else xiam_clear_active(x);
+    x->active_hamiltonian = active;
+    x->session_loading_hamiltonian = -1;
+    x->session_active_hamiltonian = active;
+    x->session_dirty = 0;
+}
+
+int xiam_restore_session_predictions(AppState *s) {
+    if (!s) return 0;
+    XiamState *x = &s->xiam;
+    int saved_active = x->active_hamiltonian, restored = 0;
+    for (int i = 0; i < x->n_hamiltonians; i++) {
+        if (!xiam_select_hamiltonian(x, i) || !x->output_path[0]) continue;
+        FILE *fp = fopen(x->output_path, "r");
+        if (!fp) continue;
+        fclose(fp);
+        int before = s->n_pred;
+        if (xiam_load_output_file(s, x->output_path) && s->n_pred > before) restored++;
+    }
+    if (saved_active >= 0 && saved_active < x->n_hamiltonians)
+        xiam_select_hamiltonian(x, saved_active);
+    xiam_apply_concentrations(s);
+    if (restored > 0) {
+        snprintf(x->status, sizeof(x->status),
+                 "Restored %d XIAM catalogue%s from the session.",
+                 restored, restored == 1 ? "" : "s");
+        xiam_store_active(x);
+    }
+    s->predfit.session_dirty = 0;
+    x->session_dirty = 0;
+    return restored;
 }
 
 void xiam_render(AppState *s) {

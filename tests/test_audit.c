@@ -1402,6 +1402,9 @@ static int test_xiam_project_keeps_independent_hamiltonians(void) {
     CHECK_INT("progetto XIAM contiene due Hamiltoniani", s->xiam.n_hamiltonians, 2);
     CHECK(s->xiam.model_id != first_owner, "ogni .xi ha un proprietario indipendente");
     CHECK_INT("catalogo del primo H non viene cancellato", s->n_pred, first_lines);
+    CHECK(xiam_load_output_file(s, first_xo), "output del primo H riconosciuto mentre il secondo e' attivo");
+    CHECK_INT(".xo torna al proprietario con lo stesso nome", s->xiam.model_id, first_owner);
+    CHECK_INT("catalogo del primo H resta completo", s->n_pred, first_lines);
     CHECK(xiam_load_output_file(s, second_xo), "report di fit del secondo Hamiltoniano caricato");
 
     CHECK(xiam_load_input_file(s, first_xi), "ri-selezione del primo Hamiltoniano");
@@ -1414,6 +1417,217 @@ static int test_xiam_project_keeps_independent_hamiltonians(void) {
     for (int i = 0; i < s->xiam.n_params; i++) if (!strcmp(s->xiam.params[i].name, "BJ")) { bj = i; break; }
     CHECK(bj >= 0, "BJ disponibile nel secondo Hamiltoniano");
     if (bj >= 0) CHECK_DBL("risultato di fit resta nel secondo H", s->xiam.params[bj].value_ghz, 0.215066122, 1e-10);
+    DONE();
+}
+
+/* A simultaneous XIAM project has a native abundance for every .xi.  It must
+ * be independent of the selected Hamiltonian and survive a later generic
+ * Pred&Fit display refresh, which normally resets native rows to CAT values. */
+static int test_xiam_hamiltonians_keep_independent_concentrations(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "primo XIAM caricato");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "primo catalogo XIAM caricato");
+    int first_id = s->xiam.model_id;
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xi"), "secondo XIAM caricato");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xo"), "secondo catalogo XIAM caricato");
+    int second_id = s->xiam.model_id;
+    CHECK(xiam_set_hamiltonian_concentration(s, first_id, 0.25), "concentrazione del primo H impostata");
+    CHECK(xiam_set_hamiltonian_concentration(s, second_id, 2.0), "concentrazione del secondo H impostata");
+    CHECK_DBL("concentrazione primo H indipendente", xiam_hamiltonian_concentration(s, first_id), 0.25, 1e-12);
+    CHECK_DBL("concentrazione secondo H indipendente", xiam_hamiltonian_concentration(s, second_id), 2.0, 1e-12);
+    intensity_analysis_sync_species(s);
+    int listed_first = 0, listed_second = 0;
+    for (int i = 0; i < s->intensity_window.n_species; i++) {
+        IntensityFitSpecies *sp = &s->intensity_window.species[i];
+        if (sp->hamiltonian_id == first_id && sp->state_index == -1) {
+            listed_first = 1;
+            CHECK_DBL("primo H separato nell'analisi intensita", sp->concentration, 0.25, 1e-12);
+        }
+        if (sp->hamiltonian_id == second_id && sp->state_index == -1) {
+            listed_second = 1;
+            CHECK_DBL("secondo H separato nell'analisi intensita", sp->concentration, 2.0, 1e-12);
+        }
+    }
+    CHECK(listed_first && listed_second, "analisi intensita elenca entrambi gli H XIAM");
+    CHECK_INT("Trot disabilitata per intensita native XIAM", s->intensity_window.fit_temperature, 0);
+    int checked_first = 0, checked_second = 0;
+    for (int i = 0; i < s->n_pred; i++) {
+        PredLine *p = &s->pred_lines[i];
+        if (p->backend != PRED_BACKEND_XIAM) continue;
+        double base = pow(10.0, p->cat_lgint);
+        if (p->hamiltonian_id == first_id && !checked_first++)
+            CHECK_DBL("righe del primo H scalate", p->linear_int, base * 0.25, 1e-18);
+        if (p->hamiltonian_id == second_id && !checked_second++)
+            CHECK_DBL("righe del secondo H scalate", p->linear_int, base * 2.0, 1e-18);
+    }
+    CHECK(checked_first && checked_second, "cataloghi di entrambi gli H presenti");
+    rescale_predicted_intensities_multi(s->pred_lines, s->n_pred, NULL, 0, &s->pred_global_max);
+    xiam_apply_concentrations(s);
+    for (int i = 0; i < s->n_pred; i++) {
+        PredLine *p = &s->pred_lines[i];
+        if (p->backend == PRED_BACKEND_XIAM && p->hamiltonian_id == first_id) {
+            CHECK_DBL("refresh non perde concentrazione XIAM", p->linear_int,
+                      pow(10.0, p->cat_lgint) * 0.25, 1e-18);
+            break;
+        }
+    }
+    DONE();
+}
+
+/* Save session must preserve the native XIAM project itself, not merely the
+ * current output path.  Reopening has to recover both independent controls
+ * and the overlay catalogue without rerunning XIAM. */
+static int test_xiam_session_roundtrip(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "primo XIAM per sessione");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "primo catalogo per sessione");
+    int first_id = s->xiam.model_id;
+    s->xiam.fmax_mhz = 3456.75;
+    CHECK(xiam_set_hamiltonian_concentration(s, first_id, 0.375), "concentrazione primo H per sessione");
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xi"), "secondo XIAM per sessione");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xo"), "secondo catalogo per sessione");
+    int second_id = s->xiam.model_id;
+    s->xiam.fmax_mhz = 6123.5;
+    CHECK(xiam_set_hamiltonian_concentration(s, second_id, 1.75), "concentrazione secondo H per sessione");
+    s->xiam.simulate_excluded = 1;
+    predfit_save_session(s);
+
+    AppState *r = new_state();
+    predfit_load_session(r);
+    CHECK_INT("due Hamiltoniani XIAM dalla sessione", r->xiam.n_hamiltonians, 2);
+    CHECK_INT("Hamiltoniana attiva XIAM ripristinata", r->xiam.model_id, second_id);
+    CHECK_DBL("Fmax della seconda XIAM ripristinata", r->xiam.fmax_mhz, 6123.5, 1e-12);
+    CHECK_DBL("concentrazione della seconda XIAM ripristinata", r->xiam.concentration, 1.75, 1e-12);
+    CHECK_INT("esclusione della seconda XIAM ripristinata", r->xiam.simulate_excluded, 1);
+    CHECK_DBL("concentrazione della prima XIAM ripristinata", xiam_hamiltonian_concentration(r, first_id), 0.375, 1e-12);
+    CHECK_INT("catalogo non caricato prima del restore esplicito", r->n_pred, 0);
+    CHECK(xiam_restore_session_predictions(r) >= 2, "cataloghi XIAM riaperti dalla sessione");
+    int first_rows = 0, second_rows = 0;
+    for (int i = 0; i < r->n_pred; i++) {
+        PredLine *p = &r->pred_lines[i];
+        if (p->backend != PRED_BACKEND_XIAM) continue;
+        if (p->hamiltonian_id == first_id) first_rows++;
+        if (p->hamiltonian_id == second_id) second_rows++;
+    }
+    CHECK(first_rows > 0 && second_rows > 0, "entrambe le previsioni XIAM ripristinate");
+    CHECK_INT("Hamiltoniana attiva resta la seconda", r->xiam.model_id, second_id);
+
+    /* This is the real application restore path: it first reopens the
+       Pred&Fit session and then restores any saved overlays. */
+    AppState *full = new_state();
+    CHECK(predfit_restore_latest(full), "restore session completo con XIAM");
+    CHECK_INT("due XIAM dal restore completo", full->xiam.n_hamiltonians, 2);
+    int restored_rows = 0;
+    for (int i = 0; i < full->n_pred; i++)
+        if (full->pred_lines[i].backend == PRED_BACKEND_XIAM) restored_rows++;
+    CHECK(restored_rows > 0, "overlay XIAM dal restore completo");
+    CHECK_DBL("concentrazione primo H dal restore completo",
+              xiam_hamiltonian_concentration(full, first_id), 0.375, 1e-12);
+    DONE();
+}
+
+/* XIAM and SPCAT are two prediction producers, not alternative viewer modes.
+ * Exercise the exact pending-load route used for a multi-file drop, then add
+ * a second native Hamiltonian and reload the CAT in the reverse order.  The
+ * Kaiser profile must still see the one sorted, combined prediction list. */
+static int test_mixed_xiam_and_catalogue_keep_both_and_broaden(void) {
+    AppState *s = new_state();
+    const char *xi1 = SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi";
+    const char *xo1 = SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo";
+    const char *xi2 = SV_TESTS_DIR "/../xiam_examples/v6_pred.xi";
+    const char *xo2 = SV_TESTS_DIR "/../xiam_examples/v6_pred.xo";
+    const char *cat = fx("cat3_303.cat");
+
+    CHECK(path_looks_like_xiam_input("MODEL.XI"), "drop .XI maiuscolo riconosciuto");
+    CHECK(path_looks_like_xiam_output("MODEL.XO"), "drop .XO maiuscolo riconosciuto");
+    CHECK(path_looks_like_cat("MODEL.CAT"), "drop .CAT maiuscolo riconosciuto");
+
+    CHECK(app_enqueue_pending_load(s, PENDING_LOAD_XIAM_INPUT, xi1, 0), "XIAM input in coda");
+    CHECK(app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat, 0), "CAT in coda");
+    CHECK(app_enqueue_pending_load(s, PENDING_LOAD_XIAM_OUTPUT, xo1, 0), "XIAM output in coda");
+    CHECK_INT("input, CAT e output convivono nella coda", s->pending_load_count, 3);
+    pump(s);
+
+    int xiam_rows = 0, cat_rows = 0;
+    for (int i = 0; i < s->n_pred; i++) {
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) xiam_rows++;
+        else cat_rows++;
+    }
+    CHECK(xiam_rows > 0, "il drop misto ha perso le righe XIAM");
+    CHECK(cat_rows > 0, "il drop misto ha perso le righe CAT");
+
+    CHECK(xiam_load_input_file(s, xi2), "secondo Hamiltoniano XIAM caricato");
+    CHECK(xiam_load_output_file(s, xo2), "secondo catalogo XIAM caricato");
+    int xiam_after_second = 0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) xiam_after_second++;
+    CHECK(xiam_after_second > xiam_rows, "il secondo XIAM non e' stato sommato al primo");
+    CHECK_INT("due Hamiltoniani XIAM attivi", s->xiam.n_hamiltonians, 2);
+
+    CHECK(set_predictions(s, cat), "CAT ricaricato dopo XIAM");
+    int xiam_after_cat = 0; cat_rows = 0;
+    for (int i = 0; i < s->n_pred; i++) {
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) xiam_after_cat++;
+        else cat_rows++;
+        if (i > 0) CHECK(s->pred_lines[i - 1].freq_mhz <= s->pred_lines[i].freq_mhz,
+                          "plot misto non ordinato a %d", i);
+    }
+    CHECK_INT("ricaricare il CAT conserva entrambi XIAM", xiam_after_cat, xiam_after_second);
+    CHECK(cat_rows > 0, "ricaricare il CAT ha lasciato solo XIAM");
+
+    Point bins[2] = {{0.0, 0.0}, {0.010, 0.0}};
+    s->current_pts = bins; s->n_pts = 2;
+    s->broadening_active = 1; s->broaden_mode = 1;
+    s->kaiser_beta = 1.0; s->kaiser_ceros = 6; s->kaiser_intrinsic = 0.0;
+    double at = 0.0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) { at = s->pred_lines[i].freq_mhz; break; }
+    CHECK(at > 0.0, "manca una frequenza XIAM per Kaiser");
+    if (at > 0.0)
+        CHECK(broadened_value_at(s, at, 0, 0) > 0.0,
+              "Kaiser nullo nel centro di una riga XIAM del plot misto");
+    DONE();
+}
+
+/* The Simulate route does not use set_predictions(): it merges generated
+ * SPCAT catalogues itself.  Verify that its replacement keeps an already
+ * loaded XIAM catalogue and that the later intensity refresh leaves native
+ * XIAM intensity untouched. */
+static int test_simulated_pickett_and_xiam_keep_both(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"),
+          "sorgente XIAM caricata");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"),
+          "catalogo XIAM caricato");
+    int native_before = s->n_pred;
+    double native_freq = s->pred_lines[0].freq_mhz;
+    double native_intensity = s->pred_lines[0].linear_int;
+
+    PredFitState *p = &s->predfit;
+    int owner = predfit_active_hamiltonian_id(s);
+    p->n_simulated = 1;
+    p->simulated[0].hamiltonian_id = owner;
+    p->simulated[0].cat_temp_k = p->temp_k > 0.0 ? p->temp_k : 1.0;
+    snprintf(p->simulated[0].cat_path, sizeof(p->simulated[0].cat_path), "%s", fx("cat3_303.cat"));
+    CHECK(set_predictions_simulated(s), "simulazione SPCAT unita a XIAM");
+
+    int native = 0, pickett = 0;
+    for (int i = 0; i < s->n_pred; i++) {
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) native++;
+        else if (s->pred_lines[i].backend == PRED_BACKEND_PICKETT &&
+                 s->pred_lines[i].hamiltonian_id == owner) pickett++;
+    }
+    CHECK_INT("tutte le righe XIAM restano dopo Simulate", native, native_before);
+    CHECK(pickett > 0, "le righe SPCAT non hanno proprietario Pickett");
+    PredLine *same_native = NULL;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM &&
+            fabs(s->pred_lines[i].freq_mhz - native_freq) < 1e-9) {
+            same_native = &s->pred_lines[i]; break;
+        }
+    CHECK(same_native != NULL, "la riga XIAM usata come riferimento e' scomparsa");
+    if (same_native) CHECK_DBL("refresh Pickett non estrapola XIAM", same_native->linear_int,
+                               native_intensity, 1e-18);
     DONE();
 }
 
@@ -2335,6 +2549,44 @@ static int test_import_load_dir_builds_hamiltonians(void) {
     CHECK_INT("sessione da salvare esplicitamente", p->session_dirty, 1);
     CHECK(access(work_path(".fit/spectravisual.state"), F_OK) != 0,
           "l'import non deve scrivere la sessione");
+    DONE();
+}
+
+/* Import is one action for both backends.  `.xi` remains the native source of
+ * a XIAM Hamiltonian and a same-stem `.xo` restores its catalogue/report; the
+ * files in load/ are read only and repeating Import is idempotent. */
+static int test_import_load_dir_also_imports_xiam_pairs(void) {
+    AppState *s = new_state();
+    CHECK_INT("crea .fit", mkdir(work_path(".fit"), 0700), 0);
+    CHECK_INT("crea load", mkdir(work_path(".fit/load"), 0700), 0);
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi",
+                    work_path(".fit/load/alpha.XI")), "copia alpha.XI");
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo",
+                    work_path(".fit/load/alpha.xo")), "copia alpha.xo");
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/v6_pred.xi",
+                    work_path(".fit/load/beta.xi")), "copia beta.xi");
+    CHECK(copy_path(SV_TESTS_DIR "/../xiam_examples/v6_pred.xo",
+                    work_path(".fit/load/beta.XO")), "copia beta.XO");
+    write_load_model("mon", 1);
+
+    CHECK_INT("import combinato", predfit_import_load_dir(s), 3);
+    CHECK_INT("due sorgenti XIAM", s->xiam.n_hamiltonians, 2);
+    CHECK_INT("un modello Pickett importato", predfit_hamiltonian_count(s), 2);
+    int xiam_rows = 0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) xiam_rows++;
+    CHECK(xiam_rows > 0, "i .xo in load/ non hanno popolato la previsione XIAM");
+    CHECK(access(work_path(".fit/load/alpha.XI"), F_OK) == 0,
+          "l'import ha modificato/rimosso alpha.XI");
+    CHECK(access(work_path(".fit/load/beta.XO"), F_OK) == 0,
+          "l'import ha modificato/rimosso beta.XO");
+
+    CHECK_INT("secondo import combinato", predfit_import_load_dir(s), 3);
+    CHECK_INT("XIAM idempotente", s->xiam.n_hamiltonians, 2);
+    int xiam_rows_again = 0;
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) xiam_rows_again++;
+    CHECK_INT("cataloghi XIAM non duplicati", xiam_rows_again, xiam_rows);
     DONE();
 }
 
@@ -3883,6 +4135,10 @@ static const Test TESTS[] = {
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
+    {"test_xiam_hamiltonians_keep_independent_concentrations", test_xiam_hamiltonians_keep_independent_concentrations},
+    {"test_xiam_session_roundtrip", test_xiam_session_roundtrip},
+    {"test_mixed_xiam_and_catalogue_keep_both_and_broaden", test_mixed_xiam_and_catalogue_keep_both_and_broaden},
+    {"test_simulated_pickett_and_xiam_keep_both", test_simulated_pickett_and_xiam_keep_both},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
     {"test_xiam_examples_parse_and_roundtrip", test_xiam_examples_parse_and_roundtrip},
@@ -3902,6 +4158,7 @@ static const Test TESTS[] = {
     {"test_multihamiltonian_session_roundtrip", test_multihamiltonian_session_roundtrip},
     {"test_two_hamiltonians_keep_independent_int_controls", test_two_hamiltonians_keep_independent_int_controls},
     {"test_import_load_dir_builds_hamiltonians", test_import_load_dir_builds_hamiltonians},
+    {"test_import_load_dir_also_imports_xiam_pairs", test_import_load_dir_also_imports_xiam_pairs},
     {"test_fitting_view_reads_the_report_back", test_fitting_view_reads_the_report_back},
     {"test_fitting_page_lists_the_active_model", test_fitting_page_lists_the_active_model},
     {"test_fitting_view_ignores_another_model", test_fitting_view_ignores_another_model},

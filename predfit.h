@@ -3,8 +3,9 @@
 
 #include "types.h"
 
-/* Every Pickett file of a project - catalogues, .par/.var/.lin and the session
-   itself - lives in this folder inside the data directory. */
+/* Every project file - Pickett catalogues/.par/.var/.lin, native XIAM inputs
+   imported through load/, and the session itself - lives below this folder
+   inside the data directory. */
 #define FIT_DIR_NAME ".fit"
 
 void predfit_init(AppState *state);
@@ -43,6 +44,8 @@ int predfit_load_exclusions(AppState *state);
    fit uncertainties the user chose. Save it whenever the working set changes. */
 void predfit_load_session(AppState *state);
 void predfit_save_session(AppState *state);
+/* Imports Pickett (.par/.var/.int/.lin) and native XIAM (.xi/.xo) models from
+   .fit/load.  Sources there are never altered. */
 int predfit_import_load_dir(AppState *state);
 int predfit_simulate(AppState *state);
 

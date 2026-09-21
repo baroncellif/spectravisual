@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <strings.h>
 #include <errno.h>
 
 #define ABS(x) ((x)<0?-(x):(x))
@@ -1212,15 +1213,15 @@ static void handle_text_input_event(AppState *s, char *text) {
 
 static int path_looks_like_cat(const char *path) {
     size_t len = strlen(path);
-    return len >= 4 && strcmp(path + len - 4, ".cat") == 0;
+    return len >= 4 && strcasecmp(path + len - 4, ".cat") == 0;
 }
 static int path_looks_like_xiam_input(const char *path) {
     size_t len = strlen(path);
-    return len >= 3 && strcmp(path + len - 3, ".xi") == 0;
+    return len >= 3 && strcasecmp(path + len - 3, ".xi") == 0;
 }
 static int path_looks_like_xiam_output(const char *path) {
     size_t len = strlen(path);
-    return len >= 3 && strcmp(path + len - 3, ".xo") == 0;
+    return len >= 3 && strcasecmp(path + len - 3, ".xo") == 0;
 }
 
 // --- KEYBOARD ---

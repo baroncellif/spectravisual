@@ -1,4 +1,5 @@
 #include "predfit.h"
+#include "xiam.h"
 #include "intensity_fit.h"
 #include "controller.h"
 #include "layout.h"
@@ -431,7 +432,7 @@ void predfit_save_session(AppState *s) {
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
     FILE *fp = fopen(tmp_path, "w");
     if (!fp) return;
-    fputs("# SpectraVisual session v5\n", fp);
+    fputs("# SpectraVisual session v6\n", fp);
     fputs("# Pickett parameter ID, value and user-selected fit uncertainty\n", fp);
     for (int i = 0; i < p->n_param; i++)
         fprintf(fp, "param %d %.17g %.17g\n", p->param[i].id, p->param[i].value, p->param[i].error);
@@ -498,6 +499,7 @@ void predfit_save_session(AppState *s) {
     for (int i = 0; i < p->n_simulated; i++)
         fprintf(fp, "h4plot %d %.17g\n", p->simulated[i].hamiltonian_id,
                 p->simulated[i].cat_temp_k);
+    xiam_write_session(s, fp);
     fprintf(fp, "view %.17g %.17g %.17g %.17g %.17g %.17g %d %d\n",
             s->vxmin, s->vxmax, s->vymin, s->vymax, s->pvxmin, s->pvxmax,
             s->sync_active != 0, s->rolling_avg_window);
@@ -588,6 +590,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
     FILE *fp = fopen(path, "r");
     if (!fp) return;
     intensity_analysis_session_begin(s);
+    xiam_session_begin(s);
     s->n_session_spec = 0;
     s->session_active_spec = -1;
     s->session_has_view = 0;
@@ -610,6 +613,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         char *nl = strpbrk(line, "\r\n");
         if (nl) *nl = '\0';
         if (intensity_analysis_read_session_line(s, line)) continue;
+        if (xiam_read_session_line(s, line)) continue;
         if (strncmp(line, "species_traces ", 15) == 0) {
             int mode = atoi(line + 15);
             p->species_trace_mode = (mode >= 0 && mode <= 2) ? mode : TRACE_SUM;
@@ -870,6 +874,7 @@ static void load_session(AppState *s, SessionRestoreInfo *restore_info) {
         for (int i = 0; i < p->n_param; i++) if (p->param[i].id == id) { p->param[i].error = error; break; }
     }
     fclose(fp);
+    xiam_session_finalize(s);
     /* A plot entry only means something while its model is still in the
        project: a Hamiltonian deleted from a hand-edited session must not
        leave a catalogue behind that nothing can rescale. */
@@ -964,6 +969,7 @@ void predfit_recompute_display_intensities(AppState *s) {
         if (n > 0) {
             rescale_predicted_intensities_multi(s->pred_lines, s->n_pred, models, n,
                                                 &s->pred_global_max);
+            xiam_apply_concentrations(s);
             return;
         }
     }
@@ -976,6 +982,7 @@ void predfit_recompute_display_intensities(AppState *s) {
         rescale_predicted_intensities(s->pred_lines,s->n_pred,s->cat_temp_k,s->rot_temp_k,
                                       s->dipole_cat,s->dipole_red,&s->pred_global_max);
     }
+    xiam_apply_concentrations(s);
 }
 
 /* Pred&Fit deliberately publishes its active species only when a Pred&Fit
@@ -1036,7 +1043,14 @@ void predfit_adopt_generated_catalog(AppState *s) {
     memcpy(s->dipole_cat,p->mu,sizeof(p->mu));
     s->rot_temp_k=p->temp_k;
     int hamiltonian_id = predfit_active_hamiltonian_id(s);
-    for (int i = 0; i < s->n_pred; i++) s->pred_lines[i].hamiltonian_id = hamiltonian_id;
+    /* set_predictions() retains any native XIAM rows already on screen.  A
+       generated Pickett catalogue owns only its own rows: assigning its id or
+       backend to XIAM would make the next native fit target the wrong model. */
+    for (int i = 0; i < s->n_pred; i++) {
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM) continue;
+        s->pred_lines[i].hamiltonian_id = hamiltonian_id;
+        s->pred_lines[i].backend = PRED_BACKEND_PICKETT;
+    }
     predfit_recompute_display_intensities(s);
     refresh_assignment_predictions(s);
 }
@@ -2122,14 +2136,15 @@ static int import_fit_lines(AppState *s, int *ignored_exclusions) {
 }
 
 /* ---------------------------------------------------------------------- *
- *  Importing Pickett files written elsewhere
+ *  Importing models written elsewhere
  *
  *  .fit/load is a drop box.  Files named after the model they describe -
  *  mon.par (or mon.var), mon.int, mon.lin - become the Hamiltonian "mon"
  *  with every state its .int declares.  Several models can wait there at
- *  once: each distinct basename is one Hamiltonian.  Nothing in load/ is
- *  modified or deleted, and the workspace files keep being generated from
- *  the imported model like any other Hamiltonian's.
+ *  once: each distinct basename is one Hamiltonian.  Native XIAM .xi/.xo
+ *  pairs in the same drop box are imported by their own backend after these
+ *  Pickett files.  Nothing in load/ is modified or deleted, and generated
+ *  workspace files keep living outside that source folder.
  * ---------------------------------------------------------------------- */
 
 #define MAX_LOAD_MODELS 32
@@ -2420,7 +2435,7 @@ int predfit_import_load_dir(AppState *s) {
     DIR *d = opendir(dir);
     if (!d) {
         snprintf(p->status, sizeof(p->status),
-                 "Put Pickett files (name.par/.var/.int/.lin) in %s and press Import again.", dir);
+                 "Put Pickett (name.par/.var/.int/.lin) or XIAM (name.xi/.xo) files in %s and press Import again.", dir);
         return 0;
     }
     LoadCandidate found[MAX_LOAD_MODELS];
@@ -2447,35 +2462,48 @@ int predfit_import_load_dir(AppState *s) {
     closedir(d);
     qsort(found, (size_t)n_found, sizeof(found[0]), load_candidate_cmp);
 
-    int imported = 0, skipped = 0;
+    int pickett_imported = 0, skipped = 0;
     char report[160] = "", last_error[160] = "";
     for (int i = 0; i < n_found; i++) {
         if (!found[i].has_par && !found[i].has_var) { skipped++; continue; }
         char note[160] = "";
         if (import_one_model(s, dir, &found[i], note, sizeof(note))) {
-            imported++;
+            pickett_imported++;
             if (!report[0]) snprintf(report, sizeof(report), "%s", note);
         } else {
             skipped++;
             snprintf(last_error, sizeof(last_error), "%s", note);
         }
     }
+    /* XIAM has one source .xi per Hamiltonian rather than a Pickett family of
+       companion files.  Its importer pairs a same-stem .xo only after that
+       exact input becomes active, preserving owner identity in a mixed plot. */
+    int xiam_imported = xiam_import_load_dir(s, dir);
+    int imported = pickett_imported + xiam_imported;
     if (imported > 0) {
         save_assignments(s);
         predfit_save_exclusions(s);
         p->session_dirty = 1;
         p->advanced_nav_state = -1;
-        if (imported == 1)
+        if (pickett_imported > 0 && xiam_imported > 0)
+            snprintf(p->status, sizeof(p->status),
+                     "Imported %d Pickett and %d XIAM Hamiltonian%s from %s/. Save session to keep the Pickett project.",
+                     pickett_imported, xiam_imported, xiam_imported == 1 ? "" : "s", LOAD_DIR_NAME);
+        else if (pickett_imported == 1)
             snprintf(p->status, sizeof(p->status), "Imported %s. Save session to keep it.", report);
-        else
+        else if (pickett_imported > 1)
             snprintf(p->status, sizeof(p->status),
                      "Imported %d Hamiltonians from %s/ (%s, ...). Save session to keep them.",
-                     imported, LOAD_DIR_NAME, report);
+                     pickett_imported, LOAD_DIR_NAME, report);
+        else
+            snprintf(p->status, sizeof(p->status),
+                     "Imported %d XIAM Hamiltonian%s from %s/; their source files remain there.",
+                     xiam_imported, xiam_imported == 1 ? "" : "s", LOAD_DIR_NAME);
     } else if (last_error[0]) {
         snprintf(p->status, sizeof(p->status), "Nothing imported - %s", last_error);
     } else {
         snprintf(p->status, sizeof(p->status),
-                 "%s holds no model to import: a .par or a .var is required.", dir);
+                 "%s holds no model to import: use a Pickett .par/.var or XIAM .xi source.", dir);
     }
     (void)skipped;
     return imported;
@@ -2641,9 +2669,26 @@ int predfit_restore_latest(AppState *s) {
     /* data_dir can have changed since init even when no session exists. */
     predfit_refresh_work_dir(s);
     load_session(s, &restore_info);
+    int xiam_restored = xiam_restore_session_predictions(s);
     char cat_path[600]; work_file(p, "model.cat", cat_path, sizeof(cat_path));
     FILE *cat = fopen(cat_path, "r");
-    if (!cat) return 0;
+    if (!cat) {
+        /* A XIAM-only project has no Pickett model.cat to trigger the usual
+           assignment import.  Its rich assignments are nevertheless part of
+           the same data directory and must return with the native workspace. */
+        if (s->xiam.n_hamiltonians > 0) {
+            char assignments_path[600];
+            AssignmentFileReport report;
+            settings_data_file(s, "assignments.txt", assignments_path, sizeof(assignments_path));
+            load_assignments_file(assignments_path, s->assignments, &s->n_assignments, &report);
+            snprintf(p->status, sizeof(p->status),
+                     "Restored %d XIAM Hamiltonian%s%s.", s->xiam.n_hamiltonians,
+                     s->xiam.n_hamiltonians == 1 ? "" : "s",
+                     xiam_restored > 0 ? " and their native catalogues" : "");
+            return 1;
+        }
+        return 0;
+    }
     fclose(cat);
     import_fitted_parameters(p);
     sync_basic_from_parameters(p);

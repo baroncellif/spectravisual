@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <math.h>
 
 #include "types.h"
@@ -300,16 +301,27 @@ static void reopen_predfit_session(AppState *state) {
              state->n_spectra, state->n_spectra == 1 ? "" : "s");
 }
 
-/* A catalogue and a simulation both replace the whole plot, so only the last
-   one asked for can win.  Dropping the superseded requests keeps the queue
-   honest: a catalogue still waiting must not load after - and wipe the model
-   list of - the simulation that replaced it. */
-static void drop_pending_plot_loads(AppState *state) {
+/* Pickett catalogues/simulations replace one another, as do successive XIAM
+   outputs for the active native model.  They are deliberately two different
+   queues, however: a user can load XIAM and SPCAT in the same event batch and
+   expects one mixed prediction, not whichever happens to be processed last. */
+static int pending_load_is_pickett_plot(PendingLoadKind kind) {
+    return kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION;
+}
+
+static int pending_load_is_xiam_plot(PendingLoadKind kind) {
+    return kind == PENDING_LOAD_XIAM_OUTPUT;
+}
+
+static void drop_pending_plot_loads(AppState *state, PendingLoadKind incoming) {
+    int drop_pickett = pending_load_is_pickett_plot(incoming);
+    int drop_xiam = pending_load_is_xiam_plot(incoming);
     int kept = 0;
     for (int i = 0; i < state->pending_load_count; i++) {
         int from = (state->pending_load_head + i) % MAX_PENDING_LOADS;
         PendingLoadKind kind = state->pending_loads[from].kind;
-        if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION || kind == PENDING_LOAD_XIAM_OUTPUT) continue;
+        if ((drop_pickett && pending_load_is_pickett_plot(kind)) ||
+            (drop_xiam && pending_load_is_xiam_plot(kind))) continue;
         int to = (state->pending_load_head + kept) % MAX_PENDING_LOADS;
         if (to != from) state->pending_loads[to] = state->pending_loads[from];
         kept++;
@@ -320,8 +332,8 @@ static void drop_pending_plot_loads(AppState *state) {
 int app_enqueue_pending_load(AppState *state, PendingLoadKind kind,
                              const char *path, int generated_catalog) {
     if (!state || !path || !path[0]) return 0;
-    if (kind == PENDING_LOAD_CATALOG || kind == PENDING_LOAD_SIMULATION || kind == PENDING_LOAD_XIAM_OUTPUT)
-        drop_pending_plot_loads(state);
+    if (pending_load_is_pickett_plot(kind) || pending_load_is_xiam_plot(kind))
+        drop_pending_plot_loads(state, kind);
     if (state->pending_load_count >= MAX_PENDING_LOADS) {
         snprintf(state->error_message, sizeof(state->error_message),
                  "Too many files waiting to load (maximum %d).", MAX_PENDING_LOADS);
@@ -406,7 +418,13 @@ static int add_spectrum(AppState *state, const char *path) {
     return 1;
 }
 
-// Load (replace) the prediction set.
+static int pred_line_by_frequency(const void *a, const void *b) {
+    double fa = ((const PredLine *)a)->freq_mhz, fb = ((const PredLine *)b)->freq_mhz;
+    return fa < fb ? -1 : fa > fb ? 1 : 0;
+}
+
+/* Load one Pickett/external catalogue.  Native XIAM output is a separately
+ * owned prediction source, so replacing the Pickett side must retain it. */
 static int set_predictions(AppState *state, const char *path) {
     PredLine *pred = NULL;
     double pxmin, pxmax, pgmax;
@@ -421,6 +439,30 @@ static int set_predictions(AppState *state, const char *path) {
             snprintf(state->error_message, sizeof(state->error_message),
                      "Could not load predictions: %s", path);
         return 0;
+    }
+    int native_kept = 0;
+    for (int i = 0; i < state->n_pred; i++)
+        if (state->pred_lines[i].backend == PRED_BACKEND_XIAM) native_kept++;
+    if (native_kept) {
+        PredLine *merged = malloc((size_t)(n + native_kept) * sizeof(*merged));
+        if (!merged) {
+            free(pred);
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Not enough memory to keep the existing XIAM prediction with %s.", path);
+            return 0;
+        }
+        int at = 0;
+        for (int i = 0; i < state->n_pred; i++)
+            if (state->pred_lines[i].backend == PRED_BACKEND_XIAM)
+                merged[at++] = state->pred_lines[i];
+        memcpy(merged + at, pred, (size_t)n * sizeof(*pred));
+        at += n;
+        free(pred);
+        pred = merged;
+        n = at;
+        qsort(pred, (size_t)n, sizeof(*pred), pred_line_by_frequency);
+        pxmin = pred[0].freq_mhz; pxmax = pred[n - 1].freq_mhz; pgmax = 0.0;
+        for (int i = 0; i < n; i++) if (pred[i].linear_int > pgmax) pgmax = pred[i].linear_int;
     }
     free(state->pred_lines);
     state->pred_lines = pred;
@@ -455,21 +497,18 @@ static int set_predictions(AppState *state, const char *path) {
         /* Also in the title bar: status_message is only shown while nothing
            is loaded, and skipped catalogue lines must not go unnoticed. */
         snprintf(state->status_message, sizeof(state->status_message),
-                 "Loaded %d predicted lines; %d skipped: NQN 0 or above 6 is not supported.", n, unsupported);
+                 "Loaded %d catalogue lines%s; %d skipped: NQN 0 or above 6 is not supported.",
+                 n - native_kept, native_kept ? " alongside native XIAM" : "", unsupported);
         snprintf(state->error_message, sizeof(state->error_message), "%s", state->status_message);
     } else {
         snprintf(state->status_message, sizeof(state->status_message),
-                 "Loaded %d predicted lines.", n);
+                 "Loaded %d catalogue lines%s.", n - native_kept,
+                 native_kept ? " alongside native XIAM" : "");
         state->error_message[0] = '\0';
     }
     ensure_aux_loaded(state);   /* after the messages above: it can add its own */
     if (state->verbose) fprintf(stderr, "%s\n", state->status_message);
     return 1;
-}
-
-static int pred_line_by_frequency(const void *a, const void *b) {
-    double fa = ((const PredLine *)a)->freq_mhz, fb = ((const PredLine *)b)->freq_mhz;
-    return fa < fb ? -1 : fa > fb ? 1 : 0;
 }
 
 /* Merge the catalogues of one simulation into a single prediction set.  Every
@@ -480,7 +519,6 @@ static int set_predictions_simulated(AppState *state) {
     PredFitState *p = &state->predfit;
     PredLine *merged = NULL;
     int n_merged = 0, unsupported = 0, sources = 0;
-    double pxmin = 0.0, pxmax = 0.0;
     char failed[200] = "";
     for (int i = 0; i < p->n_simulated; i++) {
         PredLine *rows = NULL;
@@ -501,11 +539,11 @@ static int set_predictions_simulated(AppState *state) {
         merged = grown;
         for (int k = 0; k < n; k++) {
             rows[k].hamiltonian_id = p->simulated[i].hamiltonian_id;
+            rows[k].backend = PRED_BACKEND_PICKETT;
             merged[n_merged + k] = rows[k];
         }
         free(rows);
-        if (sources == 0 || rmin < pxmin) pxmin = rmin;
-        if (sources == 0 || rmax > pxmax) pxmax = rmax;
+        (void)rmin; (void)rmax;
         n_merged += n;
         sources++;
     }
@@ -515,19 +553,36 @@ static int set_predictions_simulated(AppState *state) {
                  "Simulation produced no predicted line. %s", failed);
         return 0;
     }
+    /* Keep native outputs already in the viewer.  XIAM and SPCAT do not share
+       a file format or an owner namespace, but their sticks are comparable on
+       the same MHz axis and must reach the same broadening pass. */
+    int native_kept = 0;
+    for (int i = 0; i < state->n_pred; i++)
+        if (state->pred_lines[i].backend == PRED_BACKEND_XIAM) native_kept++;
+    if (native_kept) {
+        PredLine *grown = realloc(merged, (size_t)(n_merged + native_kept) * sizeof(*merged));
+        if (!grown) {
+            free(merged);
+            snprintf(state->error_message, sizeof(state->error_message),
+                     "Not enough memory to keep the existing XIAM prediction with the SPCAT simulation.");
+            return 0;
+        }
+        merged = grown;
+        for (int i = 0; i < state->n_pred; i++)
+            if (state->pred_lines[i].backend == PRED_BACKEND_XIAM)
+                merged[n_merged++] = state->pred_lines[i];
+    }
     /* One plot, one frequency order: the merged rows come from several files. */
     qsort(merged, (size_t)n_merged, sizeof(*merged), pred_line_by_frequency);
     free(state->pred_lines);
     state->pred_lines = merged;
     state->n_pred = n_merged;
     state->n_selected = 0;
-    state->pxmin = pxmin;
-    state->pxmax = pxmax;
-    /* An explicit Simulate must reveal every checked model.  Keep a normal
-       zoom when it contains them all, but do not leave the user looking at a
-       frequency slice where one or more newly simulated catalogues have no
-       transition at all.  During session restore the saved-view policy below
-       makes the same decision after that view has been read. */
+    state->pxmin = merged[0].freq_mhz;
+    state->pxmax = merged[n_merged - 1].freq_mhz;
+    /* Inspect the just-merged rows, not the prediction from the previous
+       frame.  Otherwise a pre-existing XIAM-only plot can make Simulate
+       decide that its newly generated Pickett models are already visible. */
     if (!state->session_has_view &&
         session_view_hides_simulated_model(state, state->sync_active ? state->vxmin : state->pvxmin,
                                             state->sync_active ? state->vxmax : state->pvxmax))
@@ -544,14 +599,15 @@ static int set_predictions_simulated(AppState *state) {
     int first = !state->data_loaded;
     state->data_loaded = 1;
     if (first) {
-        state->xmin = pxmin; state->xmax = pxmax; state->ymin = 0.0; state->ymax = 1.0;
-        state->vxmin = pxmin; state->vxmax = pxmax; state->vymin = 0.0; state->vymax = 1.0;
-        state->pvxmin = pxmin; state->pvxmax = pxmax;
-        state->bar_x = (pxmin + pxmax) / 2.0; state->pbar_x = state->bar_x;
+        state->xmin = state->pxmin; state->xmax = state->pxmax; state->ymin = 0.0; state->ymax = 1.0;
+        state->vxmin = state->pxmin; state->vxmax = state->pxmax; state->vymin = 0.0; state->vymax = 1.0;
+        state->pvxmin = state->pxmin; state->pvxmax = state->pxmax;
+        state->bar_x = (state->pxmin + state->pxmax) / 2.0; state->pbar_x = state->bar_x;
     }
     snprintf(state->status_message, sizeof(state->status_message),
-             "Simulated %d Hamiltonian%s: %d predicted lines%s.",
-             sources, sources == 1 ? "" : "s", n_merged,
+             "Simulated %d Hamiltonian%s: %d SPCAT lines%s%s.",
+             sources, sources == 1 ? "" : "s", n_merged - native_kept,
+             native_kept ? " plus native XIAM" : "",
              unsupported > 0 ? " (some skipped: NQN 0 or above 6)" : "");
     if (unsupported > 0 || failed[0])
         snprintf(state->error_message, sizeof(state->error_message), "%s%s%s",
@@ -667,9 +723,9 @@ int main(int argc, char *argv[])
         /* A session file is a project, not a two-column trace: it is opened
            below, the way dropping it on the window opens it. */
         if (strcmp(base, "spectravisual.state") == 0) { session_arg = argv[k]; continue; }
-        if (len >= 4 && strcmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
-        else if (len >= 3 && strcmp(argv[k] + len - 3, ".xi") == 0) xiam_input_arg = argv[k];
-        else if (len >= 3 && strcmp(argv[k] + len - 3, ".xo") == 0) xiam_output_arg = argv[k];
+        if (len >= 4 && strcasecmp(argv[k] + len - 4, ".cat") == 0) pred_arg = argv[k];
+        else if (len >= 3 && strcasecmp(argv[k] + len - 3, ".xi") == 0) xiam_input_arg = argv[k];
+        else if (len >= 3 && strcasecmp(argv[k] + len - 3, ".xo") == 0) xiam_output_arg = argv[k];
         else if (n_spec_args < MAX_SPECTRA) spec_args[n_spec_args++] = argv[k];
     }
 

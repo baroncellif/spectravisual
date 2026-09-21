@@ -429,10 +429,13 @@ static void rescale_line_by_species(PredLine *p, double cat_temp_k, double rot_t
     if (p->intensity_native) {
         p->lgint = p->cat_lgint;
         p->linear_int = isfinite(p->cat_lgint) ? pow(10.0, p->cat_lgint) : 0.0;
+        /* XIAM has no Pickett state/dipole model behind it.  An explicit
+           state_index == -1 is the common intensity-fit layer's XIAM scale;
+           do not instead inherit a Pickett state just because the displayed
+           QN slot happens to contain the same number. */
         if (species) {
-            int state = p->n_qn >= 4 ? p->M1l : 0;
             for (int i = 0; i < n_species; i++)
-                if (species[i].state_index == state || species[i].state_index == -1) {
+                if (species[i].state_index == -1) {
                     p->linear_int *= species[i].concentration;
                     break;
                 }

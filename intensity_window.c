@@ -80,6 +80,22 @@ static void report_add(IntensityFitWindow *w, const char *fmt, ...) {
     va_end(ap);
 }
 
+static int xiam_model_has_intensity_records(const AppState *s, int hamiltonian_id) {
+    for (int i = 0; i < s->n_pred; i++)
+        if (s->pred_lines[i].backend == PRED_BACKEND_XIAM &&
+            s->pred_lines[i].hamiltonian_id == hamiltonian_id) return 1;
+    for (int i = 0; i < s->n_assignments; i++)
+        if (s->assignments[i].pred.backend == PRED_BACKEND_XIAM &&
+            s->assignments[i].hamiltonian_id == hamiltonian_id) return 1;
+    return 0;
+}
+
+static int intensity_window_has_xiam_species(const IntensityFitWindow *w) {
+    for (int i = 0; i < w->n_species; i++)
+        if (w->species[i].state_index == -1) return 1;
+    return 0;
+}
+
 /* The species Pred&Fit currently offers, with their catalogue values. */
 static int collect_predfit_species(const AppState *s, IntensityFitSpecies *out, int cap) {
     const PredFitState *p = &s->predfit;
@@ -124,22 +140,25 @@ static int collect_predfit_species(const AppState *s, IntensityFitSpecies *out, 
             }
         }
     }
-    /* XIAM has exactly one model per .xi, not a Pickett multi-species tree.
-       Still expose its assigned native predictions to the common intensity
-       analysis so concentration/scale work remains available. */
-    int have_xiam = 0;
-    for (int i = 0; i < s->n_assignments; i++)
-        if (s->assignments[i].pred.backend == PRED_BACKEND_XIAM &&
-            s->assignments[i].hamiltonian_id == s->xiam.model_id) { have_xiam = 1; break; }
-    if (have_xiam && n < cap) {
+    /* XIAM has one native intensity scale per .xi, not one shared scale for
+       whichever input happens to be active.  Keep every loaded Hamiltonian
+       separate so a simultaneous XIAM simulation can fit its abundances. */
+    for (int h = 0; h < s->xiam.n_hamiltonians && n < cap; h++) {
+        const XiamHamiltonian *model = &s->xiam.hamiltonian[h];
+        if (!xiam_model_has_intensity_records(s, model->model_id)) continue;
         IntensityFitSpecies *dst = &out[n++];
         memset(dst, 0, sizeof(*dst));
-        dst->hamiltonian_id = s->xiam.model_id; dst->state_index = -1;
-        snprintf(dst->name, sizeof(dst->name), "XIAM");
-        snprintf(dst->backend_name, sizeof(dst->backend_name), "XIAM");
-        dst->included = 1; dst->temperature_group = 1; dst->concentration = 1.0;
-        dst->temperature_k = dst->cat_temperature_k = s->xiam.temperature_k > 0.0 ? s->xiam.temperature_k : 1.0;
-        dst->fitted_concentration = 1.0; dst->fitted_temperature_k = dst->temperature_k;
+        dst->hamiltonian_id = model->model_id; dst->state_index = -1;
+        snprintf(dst->name, sizeof(dst->name), "XIAM H%d", h + 1);
+        snprintf(dst->backend_name, sizeof(dst->backend_name), "XIAM H%d: %s", h + 1,
+                 model->name[0] ? model->name : "model");
+        dst->included = !model->simulate_excluded;
+        dst->temperature_group = 1;
+        dst->concentration = isfinite(model->concentration) && model->concentration >= 0.0
+                           ? model->concentration : 1.0;
+        dst->temperature_k = dst->cat_temperature_k = model->temperature_k > 0.0 ? model->temperature_k : 1.0;
+        dst->fitted_concentration = dst->concentration;
+        dst->fitted_temperature_k = dst->temperature_k;
     }
     return n;
 }
@@ -173,13 +192,11 @@ static void initialise_from_predfit(AppState *s) {
     w->fmin_mhz = s->n_pts ? s->current_pts[0].x : 0.0;
     w->fmax_mhz = s->n_pts ? s->current_pts[s->n_pts - 1].x : 0.0;
     w->n_species = collect_predfit_species(s, w->species, MAX_INTFIT_SPECIES);
-    for (int i = 0; i < w->n_species; i++) if (w->species[i].hamiltonian_id == s->xiam.model_id &&
-                                                 w->species[i].state_index == -1) {
+    if (intensity_window_has_xiam_species(w)) {
         /* Native .xo lines supply the SPCAT intensity but not the CAT lower
            energy/DR fields needed for a safe temperature extrapolation. */
         w->fit_temperature = 0;
         snprintf(w->message, sizeof(w->message), "XIAM native SPCAT intensities: concentration/scale only; Trot is held at the prediction value.");
-        break;
     }
     w->initialized = 1;
 }
@@ -1672,8 +1689,7 @@ int intensity_analysis_handle_event(AppState *s, const SDL_Event *e) {
     if (w->edit_field) commit_edit(w);
     if (point_in_rect(x,y,if_button(18,52,104))) { w->fit_concentration = !w->fit_concentration; return 1; }
     if (point_in_rect(x,y,if_button(128,52,104))) {
-        for (int i = 0; i < w->n_species; i++) if (w->species[i].hamiltonian_id == s->xiam.model_id &&
-                                                     w->species[i].state_index == -1) {
+        if (intensity_window_has_xiam_species(w)) {
             w->fit_temperature = 0;
             snprintf(w->message,sizeof(w->message),"XIAM native SPCAT intensities have no CAT thermal fields; Trot fitting is disabled.");
             return 1;

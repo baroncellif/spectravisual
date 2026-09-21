@@ -1,7 +1,15 @@
 # build artifacts
 *.o
 *.dSYM/
-
+xiam_examples
+xiam_examples/
+.xiam/
+.xiam/*
+.fit/*
+.fit
+files_ftoh42/
+files_ftoh42/*
+spettro*.txt
 # compiled binaries
 spectravisual
 liveplot
