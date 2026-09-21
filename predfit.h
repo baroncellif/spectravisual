@@ -53,6 +53,9 @@ int predfit_simulate(AppState *state);
 typedef struct {
     int hamiltonian_id;
     int state_index;      /* the state QN SPCAT prints, not a row number */
+    /* A XIAM Hamiltonian resolves its torsional and hyperfine states inside
+       one model, so its trace is the whole model rather than one state. */
+    int any_state;
     SDL_Color color;
     char label[96];
 } PredfitSpeciesTrace;

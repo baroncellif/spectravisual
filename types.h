@@ -428,6 +428,8 @@ typedef struct {
     double temperature_k;
     double concentration;       /* native XIAM model scale in the shared plot */
     double line_error_mhz;      /* default uncertainty of a written .xi datum */
+    SDL_Color trace_color;      /* colour of this model's broadened trace */
+    int mu_excluded[3];         /* mu_x/mu_y/mu_z zeroed for the next run */
     int has_freq, has_ints, has_j;
     int axis_convention;
     int axis_auto_convention;
@@ -501,6 +503,8 @@ typedef struct {
     double temperature_k;
     double concentration;       /* active Hamiltonian projection */
     double line_error_mhz;      /* active Hamiltonian projection */
+    int mu_excluded[3];         /* active Hamiltonian projection */
+    int trace_color_next;       /* next default colour of the project */
     int has_freq, has_ints, has_j;
     int axis_convention;       /* effective: 0=not declared, 1=prolate, 2=oblate */
     int axis_auto_convention;  /* convention inferred from BJ/BK/B- */

@@ -101,6 +101,16 @@ static int xiam_is_frequency(const char *name) {
            strcmp(low, "epsil") != 0 && strncmp(low, "epsil_", 6) != 0;
 }
 
+/* Distinct from Pred&Fit's state palette: in a mixed plot the eye has to
+ * separate a native XIAM model from a Pickett state at a glance. */
+static const SDL_Color XIAM_TRACE_PALETTE[8] = {
+    { 96, 186, 240, 235}, {242, 158,  74, 235}, {132, 214, 150, 235}, {224, 126, 196, 235},
+    {240, 214, 104, 235}, {150, 160, 246, 235}, {238, 122, 118, 235}, {118, 216, 214, 235}
+};
+
+/* mu_x / mu_y / mu_z, in XIAM's own order. */
+static const char *const XIAM_DIPOLE[3] = {"mu_x", "mu_y", "mu_z"};
+
 static double xiam_display_value(const XiamParameter *p) {
     if (!p || !p->is_frequency) return p ? p->value_ghz : 0.0;
     return p->value_ghz * 1000.0 / (p->is_quadrupole ? 2.0 : 1.0);
@@ -223,6 +233,7 @@ static void xiam_store_active(XiamState *x) {
     h->fmin_mhz = x->fmin_mhz; h->fmax_mhz = x->fmax_mhz; h->temperature_k = x->temperature_k;
     h->concentration = x->concentration;
     h->line_error_mhz = x->line_error_mhz;
+    for (int k = 0; k < 3; k++) h->mu_excluded[k] = x->mu_excluded[k];
     h->has_freq = x->has_freq; h->has_ints = x->has_ints; h->has_j = x->has_j;
     h->axis_convention = x->axis_convention; h->axis_auto_convention = x->axis_auto_convention;
     h->axis_override = x->axis_override;
@@ -244,6 +255,7 @@ static void xiam_restore_active(XiamState *x, int index) {
     x->fmin_mhz = h->fmin_mhz; x->fmax_mhz = h->fmax_mhz; x->temperature_k = h->temperature_k;
     x->concentration = h->concentration;
     x->line_error_mhz = h->line_error_mhz > 0.0 ? h->line_error_mhz : 0.010;
+    for (int k = 0; k < 3; k++) x->mu_excluded[k] = h->mu_excluded[k];
     x->has_freq = h->has_freq; x->has_ints = h->has_ints; x->has_j = h->has_j;
     x->axis_convention = h->axis_convention; x->axis_auto_convention = h->axis_auto_convention;
     x->axis_override = h->axis_override;
@@ -259,6 +271,7 @@ static void xiam_clear_active(XiamState *x) {
     x->n_source_lines = x->n_params = 0; x->spin = x->spin2 = 0; x->model_id = 0;
     x->max_j = 30; x->fmin_mhz = 0.0; x->fmax_mhz = 10000.0; x->temperature_k = 1.0;
     x->concentration = 1.0; x->line_error_mhz = 0.010;
+    x->mu_excluded[0] = x->mu_excluded[1] = x->mu_excluded[2] = 0;
     x->has_freq = x->has_ints = x->has_j = 0;
     x->axis_convention = x->axis_auto_convention = x->axis_override = 0;
     x->status[0] = x->diagnostics[0] = '\0';
@@ -302,6 +315,39 @@ void xiam_apply_concentrations(AppState *s) {
     s->pred_global_max = top > 0.0 ? top : 1.0;
 }
 
+SDL_Color xiam_trace_color(const AppState *s, int hamiltonian_id) {
+    if (s) {
+        const XiamState *x = &s->xiam;
+        for (int i = 0; i < x->n_hamiltonians; i++)
+            if (x->hamiltonian[i].model_id == hamiltonian_id && x->hamiltonian[i].trace_color.a > 0)
+                return x->hamiltonian[i].trace_color;
+    }
+    return XIAM_TRACE_PALETTE[0];
+}
+
+int xiam_plot_traces(const AppState *s, PredfitSpeciesTrace *out, int max) {
+    if (!s || !out || max <= 0) return 0;
+    const XiamState *x = &s->xiam;
+    int n = 0;
+    for (int i = 0; i < x->n_hamiltonians && n < max; i++) {
+        const XiamHamiltonian *h = &x->hamiltonian[i];
+        if (h->simulate_excluded || !h->loaded) continue;
+        /* Only a model that actually has rows in the plot gets a trace. */
+        int rows = 0;
+        for (int k = 0; k < s->n_pred && !rows; k++)
+            if (s->pred_lines[k].backend == PRED_BACKEND_XIAM &&
+                s->pred_lines[k].hamiltonian_id == h->model_id) rows = 1;
+        if (!rows) continue;
+        out[n].hamiltonian_id = h->model_id;
+        out[n].state_index = 0;
+        out[n].any_state = 1;
+        out[n].color = h->trace_color.a > 0 ? h->trace_color : XIAM_TRACE_PALETTE[i % 8];
+        snprintf(out[n].label, sizeof(out[n].label), "%s", h->name);
+        n++;
+    }
+    return n;
+}
+
 int xiam_set_hamiltonian_concentration(AppState *s, int hamiltonian_id,
                                        double concentration) {
     if (!s || !isfinite(concentration) || concentration < 0.0) return 0;
@@ -326,11 +372,16 @@ static int xiam_find_hamiltonian_path(const XiamState *x, const char *path) {
     return -1;
 }
 
+static void xiam_assign_default_trace_color(XiamState *x, XiamHamiltonian *h) {
+    h->trace_color = XIAM_TRACE_PALETTE[(x->trace_color_next++) % 8];
+}
+
 static void xiam_register_active(XiamState *x) {
     if (!x || x->n_hamiltonians >= MAX_XIAM_HAMILTONIANS) return;
     int index = x->n_hamiltonians++;
     memset(&x->hamiltonian[index], 0, sizeof(x->hamiltonian[index]));
     snprintf(x->hamiltonian[index].name, sizeof(x->hamiltonian[index].name), "%s", xiam_basename(x->input_path));
+    xiam_assign_default_trace_color(x, &x->hamiltonian[index]);
     x->active_hamiltonian = index; xiam_store_active(x);
 }
 
@@ -1262,7 +1313,16 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
             fprintf(fp, "\\%s\n", current); continue;
         }
         int pi = -1; for (int k = 0; k < x->n_params; k++) if (x->params[k].source_line == i) { pi = k; break; }
-        if (pi >= 0) { char changed[512]; xiam_replace_number(changed, sizeof(changed), x->source_lines[i], x->params[pi].value_ghz); fprintf(fp, "%s\n", changed); continue; }
+        if (pi >= 0) {
+            /* An unchecked dipole is written as zero and keeps its stored
+               value, exactly as Pred&Fit's mu checkboxes do to the .int. */
+            double value = x->params[pi].value_ghz;
+            for (int k = 0; k < 3; k++)
+                if (x->mu_excluded[k] && !strcmp(x->params[pi].name, XIAM_DIPOLE[k])) value = 0.0;
+            char changed[512];
+            xiam_replace_number(changed, sizeof(changed), x->source_lines[i], value);
+            fprintf(fp, "%s\n", changed); continue;
+        }
         int fit_pi = -1; for (int k = 0; k < x->n_params; k++) if (x->params[k].fit_source_line == i) { fit_pi = k; break; }
         if (fitting && fit_pi >= 0) { fprintf(fp, "\\%s\n", x->source_lines[i]); continue; }
         fprintf(fp, "%s\n", x->source_lines[i]);
@@ -1788,6 +1848,8 @@ static int xiam_duplicate_active(AppState *s) {
     copy->work_dir[0] = copy->output_path[0] = copy->fit_output_path[0] = '\0';
     char base[96]; snprintf(base, sizeof(base), "%s", copy->name);
     snprintf(copy->name, sizeof(copy->name), "%.80s copy", base);
+    /* A copy is a different model in the same plot: give it its own colour. */
+    xiam_assign_default_trace_color(x, copy);
     xiam_restore_active(x, index);
     /* The .xi's own block VIII belongs to the model, so the copy gets its own
        independent observations rather than sharing the original's rows. */
@@ -2755,22 +2817,23 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
             u->btn_d.x, u->footer.y + 19, x->session_dirty ? UI_ACCENT_TEXT : UI_FAINT);
 }
 
-static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *u,
+static void xiam_render_simulation(SDL_Renderer *r, AppState *s, XiamState *x, const XiamUI *u,
                                    int mx, int my, int down) {
     char b[256]; int checked = 0;
     ui_text(r, UI_FONT_SANS, "Simulation — checked native XIAM Hamiltonians are calculated and overlaid together", u->table.x, 112, UI_ACCENT_TEXT);
     ui_text(r, UI_FONT_SANS_SM, "One XIAM run per .xi; concentration is the native intensity multiplier (edit it in Parameters).", u->table.x, 128, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
-    int range_right = u->table.x + u->table.w * 58 / 100;
-    int temp_right = u->table.x + u->table.w * 69 / 100;
-    int conc_right = u->table.x + u->table.w * 80 / 100;
-    int jmax_right = u->table.x + u->table.w * 91 / 100;
+    int trace_x = u->table.x + u->table.w * 40 / 100;
+    static const double mu_at[3] = {0.47, 0.58, 0.69};
+    int conc_right = u->table.x + u->table.w * 88 / 100;
     ui_text(r, UI_FONT_MONO_SM, "SIM", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "HAMILTONIAN", u->table.x + u->table.w * 10 / 100, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "FREQ. RANGE / MHz", range_right, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "T / K", temp_right, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "CONC.", conc_right, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "JMAX", jmax_right, u->table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "TRACE", trace_x, u->table.y + 9, UI_DIM);
+    for (int k = 0; k < 3; k++) {
+        snprintf(b, sizeof(b), "%s", XIAM_DIPOLE[k]);
+        ui_text(r, UI_FONT_MONO_SM, b, u->table.x + (int)(u->table.w * mu_at[k]), u->table.y + 9, UI_DIM);
+    }
+    ui_text_right(r, UI_FONT_MONO_SM, "T / K  ·  CONC.", conc_right, u->table.y + 9, UI_DIM);
     for (int visible = 0; visible < u->rows_visible; visible++) {
         int i = x->simulation_scroll + visible; if (i >= x->n_hamiltonians) break;
         XiamHamiltonian *h = &x->hamiltonian[i]; int y = u->rows.y + visible * u->row_h;
@@ -2779,14 +2842,37 @@ static void xiam_render_simulation(SDL_Renderer *r, XiamState *x, const XiamUI *
         int on = !h->simulate_excluded; if (on) checked++;
         ui_text(r, UI_FONT_MONO_SM, on ? "[x]" : "[ ]", row.x + 11, y + 6, on ? UI_OK : UI_FAINT);
         snprintf(b, sizeof(b), "H%d  %s", i + 1, h->name); ui_text(r, UI_FONT_SANS_SM, b, u->table.x + u->table.w * 10 / 100, y + 6, on ? UI_TEXT : UI_DIM);
-        snprintf(b, sizeof(b), "%.8g – %.8g", h->fmin_mhz, h->fmax_mhz); ui_text_right(r, UI_FONT_MONO_SM, b, range_right, y + 6, on ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%.6g", h->temperature_k); ui_text_right(r, UI_FONT_MONO_SM, b, temp_right, y + 6, on ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%.6g", h->concentration); ui_text_right(r, UI_FONT_MONO_SM, b, conc_right, y + 6, on ? UI_DIM : UI_FAINT);
-        snprintf(b, sizeof(b), "%d", h->max_j); ui_text_right(r, UI_FONT_MONO_SM, b, jmax_right, y + 6, on ? UI_DIM : UI_FAINT);
+        /* The colour this model's broadened trace is drawn in; click it. */
+        SDL_Rect swatch = {trace_x, y + 3, 26, u->row_h - 8};
+        SDL_Color sc = h->trace_color.a > 0 ? h->trace_color : XIAM_TRACE_PALETTE[i % 8];
+        if (s->predfit.species_trace_mode == TRACE_SUM) { sc.r /= 3; sc.g /= 3; sc.b /= 3; }
+        ui_fill(r, swatch, sc); ui_frame(r, swatch, UI_LINE);
+        for (int k = 0; k < 3; k++) {
+            /* The dipole's own stored value, whichever model owns the row. */
+            double value = 0.0;
+            for (int q = 0; q < h->n_params; q++)
+                if (!strcmp(h->params[q].name, XIAM_DIPOLE[k])) { value = h->params[q].value_ghz; break; }
+            int used = on && !h->mu_excluded[k] && value != 0.0;
+            snprintf(b, sizeof(b), "[%c] %.4g", h->mu_excluded[k] ? ' ' : 'x', value);
+            ui_text(r, UI_FONT_MONO_SM, b, u->table.x + (int)(u->table.w * mu_at[k]), y + 6,
+                    used ? UI_TEXT : UI_FAINT);
+        }
+        snprintf(b, sizeof(b), "%.6g K  ·  %.4g", h->temperature_k, h->concentration);
+        ui_text_right(r, UI_FONT_MONO_SM, b, conc_right, y + 6, on ? UI_DIM : UI_FAINT);
     }
     snprintf(b, sizeof(b), "Simulate (%d H)", checked); ui_button(r, u->btn_a, b, -1, checked ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_b, "Check all", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_c, "Uncheck all", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_d,
+              s->predfit.species_trace_mode == TRACE_SUM ? "Traces: sum" :
+              s->predfit.species_trace_mode == TRACE_SUM_AND_STATES ? "Traces: sum + models"
+                                                                    : "Traces: models", -1,
+              UI_BTN_QUIET, s->predfit.species_trace_mode != TRACE_SUM, mx, my, down);
+    ui_text(r, UI_FONT_SANS_SM,
+            s->predfit.species_trace_mode != TRACE_SUM
+                ? "With broadening on, each checked model is drawn in its own colour (also in the Broadening panel)."
+                : "One XIAM run per checked .xi; the catalogues are shown in one plot.",
+            u->btn_d.x + u->btn_d.w + 16, u->footer.y + 19, UI_FAINT);
 }
 
 int xiam_handle_event(AppState *s, const SDL_Event *e) {
@@ -3071,9 +3157,61 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
             return 1;
         }
     } else if (x->active_tab == 5) {
-        if (point_in_rect(px, py, u.rows)) { int i = x->simulation_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded; else x->hamiltonian[i].simulate_excluded = !x->hamiltonian[i].simulate_excluded; xiam_store_active(x); xiam_mark_session_dirty(s); } return 1; }
+        if (point_in_rect(px, py, u.rows)) {
+            int i = x->simulation_scroll + (py - u.rows.y) / u.row_h;
+            if (i >= 0 && i < x->n_hamiltonians) {
+                XiamHamiltonian *h = &x->hamiltonian[i];
+                int trace_x = u.table.x + u.table.w * 40 / 100;
+                static const double mu_at[3] = {0.47, 0.58, 0.69};
+                if (px < u.table.x + u.table.w * 10 / 100) {
+                    /* The only checkbox a row owns is its own. */
+                    if (i == x->active_hamiltonian) x->simulate_excluded = !x->simulate_excluded;
+                    else h->simulate_excluded = !h->simulate_excluded;
+                } else if (px >= trace_x && px < trace_x + 26) {
+                    SDL_Color chosen = h->trace_color.a > 0 ? h->trace_color : XIAM_TRACE_PALETTE[i % 8];
+                    if (settings_pick_color(&chosen)) {
+                        chosen.a = chosen.a ? chosen.a : 235;
+                        h->trace_color = chosen;
+                    }
+                } else if (px >= u.table.x + (int)(u.table.w * mu_at[0]) &&
+                           px < u.table.x + u.table.w * 80 / 100) {
+                    for (int k = 2; k >= 0; k--) {
+                        if (px < u.table.x + (int)(u.table.w * mu_at[k])) continue;
+                        h->mu_excluded[k] = !h->mu_excluded[k];
+                        if (i == x->active_hamiltonian) x->mu_excluded[k] = h->mu_excluded[k];
+                        break;
+                    }
+                } else {
+                    xiam_select_hamiltonian(x, i);
+                }
+                xiam_store_active(x); xiam_mark_session_dirty(s);
+            }
+            return 1;
+        }
         if (point_in_rect(px, py, u.btn_a)) { xiam_simulate_checked(s); return 1; }
-        if (point_in_rect(px, py, u.btn_b) || point_in_rect(px, py, u.btn_c)) { int excluded = point_in_rect(px, py, u.btn_c); x->simulate_excluded = excluded; for (int i = 0; i < x->n_hamiltonians; i++) x->hamiltonian[i].simulate_excluded = excluded; xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
+        if (point_in_rect(px, py, u.btn_b) || point_in_rect(px, py, u.btn_c)) {
+            int excluded = point_in_rect(px, py, u.btn_c);
+            x->simulate_excluded = excluded;
+            for (int i = 0; i < x->n_hamiltonians; i++) {
+                x->hamiltonian[i].simulate_excluded = excluded;
+                for (int k = 0; k < 3; k++) x->hamiltonian[i].mu_excluded[k] = 0;
+            }
+            for (int k = 0; k < 3; k++) x->mu_excluded[k] = 0;
+            xiam_store_active(x); xiam_mark_session_dirty(s);
+            return 1;
+        }
+        if (point_in_rect(px, py, u.btn_d)) {
+            /* The same three choices as the Broadening panel and Pred&Fit. */
+            s->predfit.species_trace_mode = (s->predfit.species_trace_mode + 1) % 3;
+            s->predfit.session_dirty = 1;
+            snprintf(x->status, sizeof(x->status),
+                     s->predfit.species_trace_mode == TRACE_SUM
+                         ? "Broadening draws the total trace only."
+                         : s->predfit.species_trace_mode == TRACE_SUM_AND_STATES
+                           ? "Broadening draws the total trace and one per model, in its colour."
+                           : "Broadening draws one trace per model only, each in its colour.");
+            return 1;
+        }
     }
     return 1;
 }
@@ -3092,6 +3230,9 @@ void xiam_write_session(AppState *s, FILE *fp) {
                 h->has_freq != 0, h->has_ints != 0, h->has_j != 0,
                 h->axis_convention, h->axis_auto_convention, h->axis_override);
         fprintf(fp, "xiamline %.17g\n", h->line_error_mhz);
+        fprintf(fp, "xiamtrace %d %d %d %d %d %d %d\n",
+                h->trace_color.r, h->trace_color.g, h->trace_color.b, h->trace_color.a,
+                h->mu_excluded[0] != 0, h->mu_excluded[1] != 0, h->mu_excluded[2] != 0);
         fprintf(fp, "xiampath %s\n", h->input_path);
         fprintf(fp, "xiamoutput %s\n", h->output_path);
         fprintf(fp, "xiamfitoutput %s\n", h->fit_output_path);
@@ -3175,6 +3316,15 @@ int xiam_read_session_line(AppState *s, const char *line) {
     }
     if (strncmp(line, "xiamoutput ", 11) == 0) {
         snprintf(h->output_path, sizeof(h->output_path), "%s", line + 11);
+        return 1;
+    }
+    if (strncmp(line, "xiamtrace ", 10) == 0) {
+        int cr = 0, cg = 0, cb = 0, ca = 0, mx0 = 0, my0 = 0, mz0 = 0;
+        if (sscanf(line + 10, "%d %d %d %d %d %d %d", &cr, &cg, &cb, &ca,
+                   &mx0, &my0, &mz0) == 7) {
+            h->trace_color = (SDL_Color){(Uint8)cr, (Uint8)cg, (Uint8)cb, (Uint8)ca};
+            h->mu_excluded[0] = mx0 != 0; h->mu_excluded[1] = my0 != 0; h->mu_excluded[2] = mz0 != 0;
+        }
         return 1;
     }
     if (strncmp(line, "xiamline ", 9) == 0) {
@@ -3304,7 +3454,7 @@ void xiam_render(AppState *s) {
     else if (x->active_tab == 2) xiam_render_fitting(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 3) xiam_render_states(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 4) xiam_render_hamiltonians(r, x, &u, mx, my, down);
-    else xiam_render_simulation(r, x, &u, mx, my, down);
+    else xiam_render_simulation(r, s, x, &u, mx, my, down);
     ui_text(r, UI_FONT_SANS_SM, x->status[0] ? x->status : "Open a .xi input to begin a native XIAM project.", 18, u.h - 24, UI_TEXT);
     SDL_RenderPresent(r);
 }

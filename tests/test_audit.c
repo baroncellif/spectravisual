@@ -1388,6 +1388,139 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Pred&Fit's Simulation page has a colour swatch per trace, the three dipole
+ * checkboxes and the Traces button.  XIAM's had only the SIM checkbox, so a
+ * mixed or multi-model plot drew every native model in the same profile
+ * colour and no dipole could be switched off. */
+static int test_xiam_simulation_traces_and_dipoles(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xi"), "primo modello XIAM");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xo"), "catalogo del primo");
+    int first_id = s->xiam.model_id;
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "secondo modello XIAM");
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xo"), "catalogo del secondo");
+    int second_id = s->xiam.model_id;
+    XiamState *x = &s->xiam;
+
+    /* One trace per checked model, each in its own colour, covering the whole
+       model because XIAM resolves its states internally. */
+    PredfitSpeciesTrace traces[MAX_XIAM_HAMILTONIANS];
+    int n = xiam_plot_traces(s, traces, MAX_XIAM_HAMILTONIANS);
+    CHECK_INT("due tracce XIAM", n, 2);
+    if (n == 2) {
+        CHECK_INT("la traccia copre tutto il modello", traces[0].any_state, 1);
+        CHECK(traces[0].hamiltonian_id != traces[1].hamiltonian_id, "una traccia per modello");
+        CHECK(traces[0].color.r != traces[1].color.r || traces[0].color.g != traces[1].color.g ||
+              traces[0].color.b != traces[1].color.b, "i due modelli hanno colori distinti");
+        CHECK(traces[0].color.a > 0 && traces[1].color.a > 0, "i colori sono opachi");
+        CHECK(traces[0].label[0] && traces[1].label[0], "ogni traccia e' etichettata");
+    }
+
+    /* Unchecking a model removes its trace. */
+    int first_index = -1;
+    for (int i = 0; i < x->n_hamiltonians; i++) if (x->hamiltonian[i].model_id == first_id) first_index = i;
+    CHECK(first_index >= 0, "il primo modello si trova nel progetto");
+    if (first_index < 0) DONE();
+    x->hamiltonian[first_index].simulate_excluded = 1;
+    CHECK_INT("un modello escluso non ha traccia", xiam_plot_traces(s, traces, MAX_XIAM_HAMILTONIANS), 1);
+    x->hamiltonian[first_index].simulate_excluded = 0;
+
+    /* A chosen colour is the colour the plot uses. */
+    x->hamiltonian[first_index].trace_color = (SDL_Color){10, 200, 30, 235};
+    SDL_Color got = xiam_trace_color(s, first_id);
+    CHECK_INT("il colore scelto e' quello del grafico (r)", got.r, 10);
+    CHECK_INT("il colore scelto e' quello del grafico (g)", got.g, 200);
+    CHECK_INT("il colore scelto e' quello del grafico (b)", got.b, 30);
+
+    /* A duplicate is a different model in the same plot: its own colour. */
+    CHECK(xiam_duplicate_active(s), "il modello attivo viene duplicato");
+    int copy = x->active_hamiltonian;
+    int source = -1;
+    for (int i = 0; i < x->n_hamiltonians; i++) if (x->hamiltonian[i].model_id == second_id) source = i;
+    CHECK(source >= 0 && copy != source, "la copia e' un'altra riga");
+    if (source >= 0)
+        CHECK(x->hamiltonian[copy].trace_color.r != x->hamiltonian[source].trace_color.r ||
+              x->hamiltonian[copy].trace_color.g != x->hamiltonian[source].trace_color.g ||
+              x->hamiltonian[copy].trace_color.b != x->hamiltonian[source].trace_color.b,
+              "la copia non erede il colore dell'originale");
+
+    /* A dipole switched off is written as zero and keeps its stored value. */
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_pred.xi"), "torna al primo modello");
+    int mu_z = xiam_find_parameter(x, "mu_z");
+    CHECK(mu_z >= 0, "mu_z e' dichiarato nel modello");
+    if (mu_z < 0) DONE();
+    double stored = x->params[mu_z].value_ghz;
+    CHECK(stored != 0.0, "mu_z ha un valore non nullo: %.6g", stored);
+    x->mu_excluded[2] = 1;
+    xiam_store_active(x);
+    char saved[900]; snprintf(saved, sizeof(saved), "%s", work_path("xiam_mu.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "input scritto con mu_z escluso");
+    FILE *fp = fopen(saved, "rb");
+    double written_z = -1.0, written_y = -1.0;
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            const char *at = line;
+            while (*at == ' ' || *at == '\t') at++;
+            if (*at == '\\' || *at == '!') continue;
+            char key[64] = ""; double v = 0.0;
+            if (sscanf(at, "%63s %lf", key, &v) != 2) continue;
+            if (!strcmp(key, "mu_z")) written_z = v;
+            if (!strcmp(key, "mu_y")) written_y = v;
+        }
+        fclose(fp);
+    }
+    CHECK_DBL("il dipolo escluso e' scritto come zero", written_z, 0.0, 1e-15);
+    CHECK_DBL("il valore memorizzato non viene perso", x->params[mu_z].value_ghz, stored, 1e-15);
+    CHECK(written_y >= 0.0, "gli altri dipoli restano dichiarati");
+
+    /* Re-checking it restores the value in the generated input. */
+    x->mu_excluded[2] = 0;
+    xiam_store_active(x);
+    snprintf(saved, sizeof(saved), "%s", work_path("xiam_mu_back.xi"));
+    CHECK(xiam_save_fit_file(s, saved), "input riscritto con mu_z incluso");
+    fp = fopen(saved, "rb");
+    written_z = -1.0;
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            const char *at = line;
+            while (*at == ' ' || *at == '\t') at++;
+            if (*at == '\\' || *at == '!') continue;
+            char key[64] = ""; double v = 0.0;
+            if (sscanf(at, "%63s %lf", key, &v) == 2 && !strcmp(key, "mu_z")) written_z = v;
+        }
+        fclose(fp);
+    }
+    CHECK_DBL("il dipolo riattivato torna al suo valore", written_z, stored, 1e-9);
+
+    /* Both survive the session, like Pred&Fit's state colours. */
+    predfit_save_session(s);
+    AppState *r = new_state();
+    predfit_load_session(r);
+    int restored = -1;
+    for (int i = 0; i < r->xiam.n_hamiltonians; i++)
+        if (r->xiam.hamiltonian[i].model_id == first_id) restored = i;
+    CHECK(restored >= 0, "il primo modello torna dalla sessione");
+    if (restored >= 0) {
+        CHECK_INT("il colore scelto torna dalla sessione", r->xiam.hamiltonian[restored].trace_color.g, 200);
+        r->xiam.hamiltonian[restored].mu_excluded[2] = 1;
+    }
+    /* And a saved dipole exclusion comes back too. */
+    x->mu_excluded[1] = 1;
+    xiam_store_active(x);
+    predfit_save_session(s);
+    AppState *r2 = new_state();
+    predfit_load_session(r2);
+    restored = -1;
+    for (int i = 0; i < r2->xiam.n_hamiltonians; i++)
+        if (r2->xiam.hamiltonian[i].model_id == first_id) restored = i;
+    if (restored >= 0)
+        CHECK_INT("l'esclusione di mu_y torna dalla sessione",
+                  r2->xiam.hamiltonian[restored].mu_excluded[1], 1);
+    DONE();
+}
+
 /* Count the active (uncommented) declarations of a keyword in a generated
  * .xi, and the active records that begin with a given text. */
 static int xi_active_key(const char *path, const char *key) {
@@ -4773,6 +4906,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_simulation_traces_and_dipoles", test_xiam_simulation_traces_and_dipoles},
     {"test_xiam_states_tab_edits_blocks_ii_v_vi", test_xiam_states_tab_edits_blocks_ii_v_vi},
     {"test_xiam_undo_fit_restores_the_parameters", test_xiam_undo_fit_restores_the_parameters},
     {"test_xiam_hamiltonians_tab_saves_and_imports", test_xiam_hamiltonians_tab_saves_and_imports},

@@ -7,6 +7,7 @@
 #include "plotgpu.h"
 #include "algorithms.h"
 #include "predfit.h"
+#include "xiam.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -179,6 +180,7 @@ typedef struct {
        state's contribution is directly comparable with the total. */
     int    one_state;   /* 0 = every line, 1 = only the state below */
     int    hamiltonian_id, state_index;
+    int    any_state;   /* 1 = every state of that Hamiltonian (XIAM) */
 } BroadCfg;
 
 /* The state a catalogue row belongs to: SPCAT prints it as the fourth QN of
@@ -187,7 +189,8 @@ static int pred_line_state(const PredLine *q) { return q->n_qn >= 4 ? q->M1l : 0
 
 static int broad_line_included(const BroadCfg *c, const PredLine *q) {
     if (!c->one_state) return 1;
-    return q->hamiltonian_id == c->hamiltonian_id && pred_line_state(q) == c->state_index;
+    if (q->hamiltonian_id != c->hamiltonian_id) return 0;
+    return c->any_state || pred_line_state(q) == c->state_index;
 }
 
 static BroadCfg broad_config(const AppState *s) {
@@ -824,9 +827,13 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                being compared with the experiment and must stay readable. */
             int trace_mode = state->predfit.species_trace_mode;
             if (trace_mode != TRACE_SUM) {
-                PredfitSpeciesTrace species[MAX_PICKETT_HAMILTONIANS * MAX_PICKETT_SPECIES];
-                int n_species = predfit_plot_species(state, species,
-                                                     (int)(sizeof(species) / sizeof(species[0])));
+                PredfitSpeciesTrace species[MAX_PICKETT_HAMILTONIANS * MAX_PICKETT_SPECIES
+                                            + MAX_XIAM_HAMILTONIANS];
+                int max_species = (int)(sizeof(species) / sizeof(species[0]));
+                int n_species = predfit_plot_species(state, species, max_species);
+                /* A XIAM model contributes one trace of its own, in its own
+                   colour, so a mixed plot separates the two backends. */
+                n_species += xiam_plot_traces(state, species + n_species, max_species - n_species);
                 float sub_width = (float)state->settings.profile_width
                                 - (trace_mode == TRACE_SUM_AND_STATES ? 1.0f : 0.0f);
                 if (sub_width < 1.0f) sub_width = 1.0f;
@@ -835,6 +842,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                     one.one_state = 1;
                     one.hamiltonian_id = species[sp].hamiltonian_id;
                     one.state_index = species[sp].state_index;
+                    one.any_state = species[sp].any_state;
                     int sn = 0;
                     for (int i = 0; i < steps; i++) {
                         double f0 = state->pvxmin + i * col_span;

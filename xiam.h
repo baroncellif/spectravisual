@@ -2,6 +2,7 @@
 #define XIAM_H
 
 #include "types.h"
+#include "predfit.h"
 
 /* XIAM is intentionally a self-contained backend.  It reads and writes its
  * native .xi/.xo files and presents one XIAM Hamiltonian per input file. */
@@ -25,6 +26,11 @@ void xiam_render(AppState *state);
  * per-Hamiltonian concentration is therefore a direct multiplier of the
  * SPCAT intensity printed in the .xo catalogue. */
 double xiam_hamiltonian_concentration(const AppState *state, int hamiltonian_id);
+/* One broadened trace per simulated XIAM Hamiltonian, in its own colour.  A
+ * XIAM model resolves its torsional and hyperfine states internally, so the
+ * trace covers the whole model rather than one state. */
+int xiam_plot_traces(const AppState *state, PredfitSpeciesTrace *out, int max);
+SDL_Color xiam_trace_color(const AppState *state, int hamiltonian_id);
 int xiam_set_hamiltonian_concentration(AppState *state, int hamiltonian_id,
                                        double concentration);
 void xiam_apply_concentrations(AppState *state);
