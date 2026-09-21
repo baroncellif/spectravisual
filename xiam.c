@@ -25,8 +25,19 @@
 
 #define XIAM_DIR_NAME ".xiam"
 #define XIAM_SOURCE_MAX 255
-/* The workspace mirrors Pred&Fit Advanced page for page. */
+/* The workspace mirrors Pred&Fit Advanced page for page, and sits on the same
+ * chrome: predfit.c's ADV_* constants, repeated here because both windows are
+ * meant to line up when they are open side by side. */
 #define XIAM_TAB_COUNT 6
+#define XIAM_PAD        18
+#define XIAM_HEADER_H   42
+#define XIAM_TAB_Y      48
+#define XIAM_TAB_H      30
+#define XIAM_CONTENT_Y  92
+#define XIAM_FOOTER_H   46
+#define XIAM_NAV_W     270
+#define XIAM_MIN_W    1120
+#define XIAM_MIN_H     620
 /* Block V symmetries plus block VI states: a generous bound on what one
  * native input declares, active records and commented-out ones together. */
 #define MAX_XIAM_STATE_ROWS 128
@@ -1461,9 +1472,9 @@ void xiam_dispose(AppState *s) {
 void xiam_open(AppState *s) {
     if (!s) return; XiamState *x=&s->xiam;
     if (x->window) { SDL_RaiseWindow(x->window); return; }
-    x->window=SDL_CreateWindow("XIAM — native Hamiltonian workspace",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1300,800,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
+    x->window=SDL_CreateWindow("XIAM — native Hamiltonian workspace",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1300,820,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
     if (!x->window) { snprintf(x->status,sizeof(x->status),"Could not open XIAM window."); return; }
-    SDL_SetWindowMinimumSize(x->window,900,560); x->renderer=SDL_CreateRenderer(x->window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
+    SDL_SetWindowMinimumSize(x->window,XIAM_MIN_W,XIAM_MIN_H); x->renderer=SDL_CreateRenderer(x->window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
     if (!x->renderer) { SDL_DestroyWindow(x->window); x->window=NULL; snprintf(x->status,sizeof(x->status),"Could not create XIAM renderer."); return; }
     SDL_SetRenderDrawBlendMode(x->renderer,SDL_BLENDMODE_BLEND); x->window_id=SDL_GetWindowID(x->window); x->open=1;
 }
@@ -2262,13 +2273,14 @@ static int xiam_pick_fit_destination(char *out, size_t size) {
  * in the Hamiltonians and Simulation pages. */
 typedef struct {
     int w, h, row_h, rows_visible;
-    SDL_Rect tab[XIAM_TAB_COUNT], nav, nav_rows, table, rows, footer;
+    SDL_Rect tab[XIAM_TAB_COUNT], caption, subcaption, nav, nav_rows, table, rows, footer;
     SDL_Rect btn_a, btn_b, btn_c, btn_d;
     /* The sidebar is on every page, and it manages the project: the same
        pulsantiera as Pred&Fit's, plus the two .xi-specific actions. */
     SDL_Rect nav_up, nav_down, nav_open, nav_reload, nav_rename, nav_duplicate, nav_delete;
     int nav_rows_visible;
     /* Parameters: the run-control strip pushes its own table down. */
+    SDL_Rect fmin, fmax, temp, conc, jmax, axis, unc;
     SDL_Rect param_table, param_rows;
     int param_rows_visible;
     /* States: the block II control record above its own table. */
@@ -2283,14 +2295,16 @@ typedef struct {
 static XiamUI xiam_ui(XiamState *x) {
     XiamUI u; memset(&u, 0, sizeof(u));
     SDL_GetWindowSize(x->window, &u.w, &u.h);
-    if (u.w < 900) u.w = 900;
-    if (u.h < 560) u.h = 560;
-    const int tab_y = 52, tab_h = 30;
+    /* The control strip of Parameters is wider than Pred&Fit's PAR option
+       line, so the workspace needs a wider minimum before anything in the
+       footer would slide under the uncertainty field. */
+    if (u.w < XIAM_MIN_W) u.w = XIAM_MIN_W;
+    if (u.h < XIAM_MIN_H) u.h = XIAM_MIN_H;
     const int widths[XIAM_TAB_COUNT] = {124, 84, 92, 88, 130, 116};
-    int tx = 18;
-    for (int i = 0; i < XIAM_TAB_COUNT; i++) { u.tab[i] = (SDL_Rect){tx, tab_y, widths[i], tab_h}; tx += widths[i] + 10; }
-    u.footer = (SDL_Rect){0, u.h - 60, u.w, 60};
-    u.nav = (SDL_Rect){18, 112, 270, u.footer.y - 124};
+    int tx = XIAM_PAD - 2;
+    for (int i = 0; i < XIAM_TAB_COUNT; i++) { u.tab[i] = (SDL_Rect){tx, XIAM_TAB_Y, widths[i], XIAM_TAB_H}; tx += widths[i] + 7; }
+    u.footer = (SDL_Rect){0, u.h - XIAM_FOOTER_H, u.w, XIAM_FOOTER_H};
+    u.nav = (SDL_Rect){XIAM_PAD, XIAM_CONTENT_Y, XIAM_NAV_W, u.footer.y - XIAM_CONTENT_Y - 10};
     u.nav_rows = (SDL_Rect){u.nav.x + 2, u.nav.y + 32, u.nav.w - 4, u.nav.h - 238};
     if (u.nav_rows.h < 27) u.nav_rows.h = 27;
     u.nav_up = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 200, (u.nav.w - 26) / 2, 26};
@@ -2300,13 +2314,23 @@ static XiamUI xiam_ui(XiamState *x) {
     u.nav_rename = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 96, (u.nav.w - 26) / 2, 26};
     u.nav_duplicate = (SDL_Rect){u.nav_rename.x + u.nav_rename.w + 6, u.nav_rename.y, u.nav_rename.w, 26};
     u.nav_delete = (SDL_Rect){u.nav.x + 10, u.nav.y + u.nav.h - 62, u.nav.w - 20, 26};
-    u.table = (SDL_Rect){306, 140, u.w - 324, u.footer.y - 152};
+    int content_x = XIAM_PAD + XIAM_NAV_W + 12;
+    u.caption = (SDL_Rect){content_x, XIAM_CONTENT_Y, u.w - content_x - XIAM_PAD, 18};
+    u.subcaption = (SDL_Rect){content_x, XIAM_CONTENT_Y + 16, u.caption.w, 16};
+    u.table = (SDL_Rect){content_x, XIAM_CONTENT_Y + 38, u.caption.w, u.footer.y - XIAM_CONTENT_Y - 48};
     u.rows = (SDL_Rect){u.table.x + 1, u.table.y + 33, u.table.w - 2, u.table.h - 35};
     u.row_h = 27; u.rows_visible = u.rows.h / u.row_h;
     if (u.rows_visible < 1) u.rows_visible = 1;
     u.nav_rows_visible = u.nav_rows.h / u.row_h;
     if (u.nav_rows_visible < 1) u.nav_rows_visible = 1;
 
+    u.fmin = (SDL_Rect){u.table.x,       u.table.y + 22, 130, 28};
+    u.fmax = (SDL_Rect){u.table.x + 140, u.table.y + 22, 130, 28};
+    u.temp = (SDL_Rect){u.table.x + 280, u.table.y + 22, 105, 28};
+    u.conc = (SDL_Rect){u.table.x + 395, u.table.y + 22,  90, 28};
+    u.jmax = (SDL_Rect){u.table.x + 495, u.table.y + 22,  75, 28};
+    u.axis = (SDL_Rect){u.table.x + 580, u.table.y + 22, 210, 28};
+    u.unc  = (SDL_Rect){u.w - XIAM_PAD - 300, u.footer.y + 8, 300, 30};
     u.param_table = (SDL_Rect){u.table.x, u.table.y + 64, u.table.w, u.table.h - 64};
     u.param_rows  = (SDL_Rect){u.param_table.x + 1, u.param_table.y + 31,
                                u.param_table.w - 2, u.param_table.h - 33};
@@ -2335,10 +2359,10 @@ static XiamUI xiam_ui(XiamState *x) {
     u.fit_obs_rows_visible = (u.table.y + u.table.h - u.split - 34) / u.row_h;
     if (u.fit_obs_rows_visible < 1) u.fit_obs_rows_visible = 1;
 
-    u.btn_a = (SDL_Rect){306, u.footer.y + 10, 150, 34};
-    u.btn_b = (SDL_Rect){466, u.footer.y + 10, 150, 34};
-    u.btn_c = (SDL_Rect){626, u.footer.y + 10, 150, 34};
-    u.btn_d = (SDL_Rect){786, u.footer.y + 10, 168, 34};
+    u.btn_a = (SDL_Rect){content_x, u.footer.y + 8, 150, 30};
+    u.btn_b = (SDL_Rect){u.btn_a.x + u.btn_a.w + 10, u.footer.y + 8, 150, 30};
+    u.btn_c = (SDL_Rect){u.btn_b.x + u.btn_b.w + 10, u.footer.y + 8, 150, 30};
+    u.btn_d = (SDL_Rect){u.btn_c.x + u.btn_c.w + 10, u.footer.y + 8, 168, 30};
     return u;
 }
 
@@ -2473,6 +2497,19 @@ static int xiam_line_unc_text_x(const XiamUI *u, const XiamState *x, const Assig
     return u->table.x + u->table.w * 84 / 100 - ui_text_w(UI_FONT_MONO_SM, prefix);
 }
 
+/* Pred&Fit prints the page title and, beside it, what the last run said.
+ * Every XIAM page does the same through here, with the page's own
+ * explanation on the line below. */
+static void xiam_page_caption(SDL_Renderer *r, const XiamState *x, const XiamUI *u,
+                              const char *title, const char *explain, SDL_Color explain_c) {
+    ui_text(r, UI_FONT_SANS, title, u->caption.x, u->caption.y, UI_ACCENT_TEXT);
+    int at = u->caption.x + ui_text_w(UI_FONT_SANS, title) + 20;
+    const char *status = x->status[0] ? x->status : NULL;
+    if (status && at < u->caption.x + u->caption.w - 60)
+        ui_text(r, UI_FONT_MONO_SM, status, at, u->caption.y + 2, UI_TEXT);
+    if (explain) ui_text(r, UI_FONT_SANS_SM, explain, u->subcaption.x, u->subcaption.y, explain_c);
+}
+
 static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u,
                                   int mx, int my, int down) {
     ui_fill(r, u->nav, UI_INPUT); ui_frame(r, u->nav, UI_LINE);
@@ -2517,14 +2554,10 @@ static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u
 static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
                                    const XiamUI *u, int mx, int my, int down) {
     char b[256];
-    ui_text(r, UI_FONT_SANS, "Parameters — native XIAM values and fit directives", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, "Every frequency is shown in MHz; quadrupole values are XIAM / 2, like SPFIT.", u->table.x, 128, UI_DIM);
-    SDL_Rect fmin = {u->table.x, u->table.y + 22, 130, 28};
-    SDL_Rect fmax = {u->table.x + 140, u->table.y + 22, 130, 28};
-    SDL_Rect temp = {u->table.x + 280, u->table.y + 22, 105, 28};
-    SDL_Rect conc = {u->table.x + 395, u->table.y + 22, 90, 28};
-    SDL_Rect jmax = {u->table.x + 495, u->table.y + 22, 75, 28};
-    SDL_Rect axis = {u->table.x + 580, u->table.y + 22, 210, 28};
+    xiam_page_caption(r, x, u, "Parameters — native XIAM values and fit directives",
+                      "Every frequency is shown in MHz; quadrupole values are XIAM / 2, like SPFIT.", UI_DIM);
+    SDL_Rect fmin = u->fmin, fmax = u->fmax, temp = u->temp;
+    SDL_Rect conc = u->conc, jmax = u->jmax, axis = u->axis;
     ui_text(r, UI_FONT_SANS_SM, "F min / MHz", fmin.x, fmin.y - 15, UI_FAINT);
     ui_text(r, UI_FONT_SANS_SM, "F max / MHz", fmax.x, fmax.y - 15, UI_FAINT);
     ui_text(r, UI_FONT_SANS_SM, "T / K", temp.x, temp.y - 15, UI_FAINT);
@@ -2576,26 +2609,29 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
         snprintf(unc, sizeof(unc), ".xi uncertainty: %.8g MHz", x->line_error_mhz > 0.0 ? x->line_error_mhz : 0.010);
         ui_text(r, UI_FONT_SANS_SM,
                 x->edit_param == XIAM_EDIT_LINE_DEFAULT ? x->edit_buf : unc,
-                u->w - 18 - 290, u->footer.y + 19,
+                u->unc.x + 10, u->footer.y + 17,
                 x->edit_param == XIAM_EDIT_LINE_DEFAULT ? UI_ACCENT_TEXT : UI_DIM);
     }
-    ui_text(r, UI_FONT_SANS_SM,
-            x->edit_param == XIAM_EDIT_PARAM_NAME
+    {
+        const char *hint = x->edit_param == XIAM_EDIT_PARAM_NAME
                 ? "Enter applies the native keyword · Esc cancels · × comments the declaration out"
                 : x->axis_convention == 1 ? "Prolate mapping: x/y/z = b/c/a; chi_z = aa; chi_- = bb-cc."
                 : x->axis_convention == 2 ? "Oblate mapping: x/y/z = a/b/c; chi_z = cc; chi_- = aa-bb."
-                : "Axis mapping unresolved: choose prolate or oblate before interpreting x/y/z labels.",
-            u->btn_d.x, u->footer.y + 19,
-            x->edit_param == XIAM_EDIT_PARAM_NAME ? UI_ACCENT_TEXT : x->axis_convention ? UI_DIM : UI_WARN);
+                : "Axis mapping unresolved: choose prolate or oblate before interpreting x/y/z labels.";
+        int at = u->btn_c.x + u->btn_c.w + 16;
+        if (at + ui_text_w(UI_FONT_SANS_SM, hint) < u->unc.x)
+            ui_text(r, UI_FONT_SANS_SM, hint, at, u->footer.y + 17,
+                    x->edit_param == XIAM_EDIT_PARAM_NAME ? UI_ACCENT_TEXT
+                        : x->axis_convention ? UI_DIM : UI_WARN);
+    }
     (void)s;
 }
 
 static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
                               const XiamUI *u, int mx, int my, int down) {
     char b[256]; int enabled = 0, total = xiam_assignment_count(s, &enabled);
-    ui_text(r, UI_FONT_SANS, "Assigned transitions — click a row to include/exclude it from the XIAM fit", u->table.x, 112, UI_ACCENT_TEXT);
     snprintf(b, sizeof(b), "%d / %d selected; observed frequency and uncertainty are editable in MHz.", enabled, total);
-    ui_text(r, UI_FONT_SANS_SM, b, u->table.x, 128, UI_DIM);
+    xiam_page_caption(r, x, u, "Assigned transitions — click a row to include/exclude it from the XIAM fit", b, UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int qns_right = u->table.x + u->table.w * 35 / 100;
     int obs_right = u->table.x + u->table.w * 55 / 100;
@@ -2630,14 +2666,16 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
     SDL_RenderSetClipRect(r, NULL);
     ui_button(r, u->btn_a, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_b, "Fit selected rows", -1, enabled ? UI_BTN_PRIMARY : UI_BTN_QUIET, 0, mx, my, down);
-    ui_text(r, UI_FONT_SANS_SM, "× removes the transition from this in-memory XIAM project and its saved assignment list.", u->btn_c.x, u->footer.y + 19, UI_FAINT);
+    ui_text(r, UI_FONT_SANS_SM, "× removes the transition from this in-memory XIAM project and its saved assignment list.", u->btn_c.x, u->footer.y + 17, UI_FAINT);
 }
 
 static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
                                 const XiamUI *u, int mx, int my, int down) {
     char b[256];
-    ui_text(r, UI_FONT_SANS, "XIAM fitting output — fitted constants and residuals for the active Hamiltonian", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, x->fit_output_path[0] ? x->fit_output_path : "No XIAM fit report yet. Select assignments in Lines, then run Fit.", u->table.x, 128, x->fit_output_path[0] ? UI_DIM : UI_FAINT);
+    xiam_page_caption(r, x, u, "XIAM fitting output — fitted constants and residuals for the active Hamiltonian",
+                      x->fit_output_path[0] ? x->fit_output_path
+                                            : "No XIAM fit report yet. Select assignments in Lines, then run Fit.",
+                      x->fit_output_path[0] ? UI_DIM : UI_FAINT);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int split = u->split;
     int param_value_right = u->table.x + u->table.w * 57 / 100;
@@ -2711,7 +2749,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_button(r, u->btn_b, "Undo fit", -1, UI_BTN_QUIET, 0, can_undo ? mx : -999, my, down);
     ui_button(r, u->btn_c, "Predict updated model", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_button(r, u->btn_d, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
-    int lx = u->btn_d.x + u->btn_d.w + 24, ly = u->footer.y + 20;
+    int lx = u->btn_d.x + u->btn_d.w + 24, ly = u->footer.y + 17;
     const char *band[4] = {"0-1.5", "1.5-2.5", "2.5-4", ">4 sigma"};
     double mid[4] = {0.5, 2.0, 3.2, 5.0};
     for (int i = 0; i < 4; i++) {
@@ -2724,11 +2762,9 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
 static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
                                const XiamUI *u, int mx, int my, int down) {
     char b[256];
-    ui_text(r, UI_FONT_SANS, "States — block II controls, block V symmetries and block VI torsional states",
-            u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM,
-            "Tunnelling and hyperfine states stay inside their XIAM Hamiltonian; USE comments the native record out.",
-            u->table.x, 128, UI_DIM);
+    xiam_page_caption(r, x, u, "States — block II controls, block V symmetries and block VI torsional states",
+                      "Tunnelling and hyperfine states stay inside their XIAM Hamiltonian; USE comments the native record out.",
+                      UI_DIM);
     for (int i = 0; i < 10; i++) {
         SDL_Rect cell = u->state_cell[i];
         int editing = x->edit_param == XIAM_EDIT_CONTROL && x->edit_control == i;
@@ -2778,15 +2814,16 @@ static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
     ui_text(r, UI_FONT_SANS_SM,
             "ints is the run mode and is regenerated on every run · a value shown dim follows XIAM's own default",
-            u->btn_d.x, u->footer.y + 19, UI_FAINT);
+            u->btn_d.x, u->footer.y + 17, UI_FAINT);
     (void)s;
 }
 
 static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI *u,
                                      int mx, int my, int down) {
     char b[256];
-    ui_text(r, UI_FONT_SANS, "Hamiltonians — each row is one independent native .xi model", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, "Tunnelling and hyperfine states remain inside their XIAM Hamiltonian; they are not Pickett-like species.", u->table.x, 128, UI_DIM);
+    xiam_page_caption(r, x, u, "Hamiltonians — each row is one independent native .xi model",
+                      "Open, reorder, rename, duplicate and remove a model in the sidebar; this page saves and imports the project.",
+                      UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int temp_right = u->table.x + u->table.w * 72 / 100;
     int conc_right = u->table.x + u->table.w * 84 / 100;
@@ -2814,14 +2851,15 @@ static void xiam_render_hamiltonians(SDL_Renderer *r, XiamState *x, const XiamUI
             x->session_dirty
                 ? "Unsaved changes: nothing is written to .fit until Save session."
                 : "Import reads every name.xi (and its name.xo) from .fit/load; open, reorder and remove are in the sidebar.",
-            u->btn_d.x, u->footer.y + 19, x->session_dirty ? UI_ACCENT_TEXT : UI_FAINT);
+            u->btn_d.x, u->footer.y + 17, x->session_dirty ? UI_ACCENT_TEXT : UI_FAINT);
 }
 
 static void xiam_render_simulation(SDL_Renderer *r, AppState *s, XiamState *x, const XiamUI *u,
                                    int mx, int my, int down) {
     char b[256]; int checked = 0;
-    ui_text(r, UI_FONT_SANS, "Simulation — checked native XIAM Hamiltonians are calculated and overlaid together", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, "One XIAM run per .xi; concentration is the native intensity multiplier (edit it in Parameters).", u->table.x, 128, UI_DIM);
+    xiam_page_caption(r, x, u, "Simulation — checked native XIAM Hamiltonians are calculated and overlaid together",
+                      "One XIAM run per .xi; concentration is the native intensity multiplier (edit it in Parameters).",
+                      UI_DIM);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int trace_x = u->table.x + u->table.w * 40 / 100;
     static const double mu_at[3] = {0.47, 0.58, 0.69};
@@ -2872,7 +2910,7 @@ static void xiam_render_simulation(SDL_Renderer *r, AppState *s, XiamState *x, c
             s->predfit.species_trace_mode != TRACE_SUM
                 ? "With broadening on, each checked model is drawn in its own colour (also in the Broadening panel)."
                 : "One XIAM run per checked .xi; the catalogues are shown in one plot.",
-            u->btn_d.x + u->btn_d.w + 16, u->footer.y + 19, UI_FAINT);
+            u->btn_d.x + u->btn_d.w + 16, u->footer.y + 17, UI_FAINT);
 }
 
 int xiam_handle_event(AppState *s, const SDL_Event *e) {
@@ -3032,7 +3070,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         return 1;
     }
     if (x->active_tab == 0) {
-        SDL_Rect fmin = {u.table.x, u.table.y + 22, 130, 28}, fmax = {u.table.x + 140, u.table.y + 22, 130, 28}, temp = {u.table.x + 280, u.table.y + 22, 105, 28}, conc = {u.table.x + 395, u.table.y + 22, 90, 28}, jmax = {u.table.x + 495, u.table.y + 22, 75, 28}, axis = {u.table.x + 580, u.table.y + 22, 210, 28};
+        SDL_Rect fmin = u.fmin, fmax = u.fmax, temp = u.temp, conc = u.conc, jmax = u.jmax, axis = u.axis;
         if (point_in_rect(px, py, fmin)) { xiam_edit_begin(x, XIAM_EDIT_FMIN); return 1; }
         if (point_in_rect(px, py, fmax)) { xiam_edit_begin(x, XIAM_EDIT_FMAX); return 1; }
         if (point_in_rect(px, py, temp)) { xiam_edit_begin(x, XIAM_EDIT_TEMP); return 1; }
@@ -3073,8 +3111,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_c)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         /* The uncertainty a newly written .xi datum is given, in the same
            corner Pred&Fit keeps the .lin one. */
-        SDL_Rect unc = {u.w - 18 - 300, u.footer.y + 10, 300, 34};
-        if (point_in_rect(px, py, unc)) { xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
+        if (point_in_rect(px, py, u.unc)) { xiam_edit_commit(s); xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
     } else if (x->active_tab == 1) {
         if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 36) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
@@ -3441,8 +3478,9 @@ void xiam_render(AppState *s) {
     int ww = 0, dw = 0, dh = 0; SDL_GetWindowSize(x->window, &ww, &dh); SDL_GetRendererOutputSize(r, &dw, &dh); if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
     XiamUI u = xiam_ui(x); xiam_clamp_scrolls(s, &u); xiam_store_active(x);
     SDL_SetRenderDrawColor(r, 19, 20, 22, 255); SDL_RenderClear(r);
-    ui_fill(r, (SDL_Rect){0, 0, u.w, 42}, UI_TITLEBAR); ui_text(r, UI_FONT_TITLE, "XIAM — native Hamiltonian workspace", 18, 12, UI_TEXT);
-    ui_hline(r, 0, u.w, 98, UI_LINE); ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
+    ui_fill(r, (SDL_Rect){0, 0, u.w, XIAM_HEADER_H}, UI_TITLEBAR);
+    ui_text(r, UI_FONT_TITLE, "XIAM — native Hamiltonian workspace", XIAM_PAD, 12, UI_TEXT);
+    ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
     /* Page for page the same workspace as Pred&Fit Advanced. */
     const char *tabs[XIAM_TAB_COUNT] = {"Parameters", "Lines", "Fitting", "States", "Hamiltonians", "Simulation"};
     int mx = 0, my = 0, down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
@@ -3455,6 +3493,8 @@ void xiam_render(AppState *s) {
     else if (x->active_tab == 3) xiam_render_states(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 4) xiam_render_hamiltonians(r, x, &u, mx, my, down);
     else xiam_render_simulation(r, s, x, &u, mx, my, down);
-    ui_text(r, UI_FONT_SANS_SM, x->status[0] ? x->status : "Open a .xi input to begin a native XIAM project.", 18, u.h - 24, UI_TEXT);
+    if (!x->status[0])
+        ui_text(r, UI_FONT_SANS_SM, "Open a .xi input to begin a native XIAM project.",
+                XIAM_PAD, u.footer.y + 17, UI_FAINT);
     SDL_RenderPresent(r);
 }

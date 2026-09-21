@@ -1388,6 +1388,54 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* The two workspaces are meant to line up when they are open side by side:
+ * same title bar, same tab row, same content top, same footer and the same
+ * button row inside it.  XIAM's used its own magic numbers. */
+static int test_xiam_window_matches_predfit_chrome(void) {
+    AppState *s = new_state();
+    CHECK_INT("stesso margine laterale", XIAM_PAD, ADV_PAD);
+    CHECK_INT("stessa barra del titolo", XIAM_HEADER_H, ADV_HEADER_H);
+    CHECK_INT("stessa riga di schede", XIAM_TAB_Y, ADV_TAB_Y);
+    CHECK_INT("stessa altezza delle schede", XIAM_TAB_H, ADV_TAB_H);
+    CHECK_INT("stesso inizio del contenuto", XIAM_CONTENT_Y, ADV_CONTENT_Y);
+    CHECK_INT("stessa altezza del piede", XIAM_FOOTER_H, ADV_FOOTER_H);
+    CHECK_INT("stesso numero di schede", XIAM_TAB_COUNT, 6);
+
+    XiamUI xu = xiam_ui(&s->xiam);
+    AdvUI au = adv_ui(s, 0);
+    CHECK_INT("le schede iniziano alla stessa altezza", xu.tab[0].y, au.tab[0].y);
+    CHECK_INT("e sono alte uguale", xu.tab[0].h, au.tab[0].h);
+    CHECK_INT("la didascalia parte alla stessa altezza", xu.caption.y, au.caption.y);
+    CHECK_INT("il piede occupa la stessa fascia", xu.h - xu.footer.y, au.h - au.footer.y);
+    CHECK_INT("i pulsanti stanno nello stesso punto del piede",
+              xu.btn_a.y - xu.footer.y, au.btn_a.y - au.footer.y);
+    CHECK_INT("e sono alti uguale", xu.btn_a.h, au.btn_a.h);
+    CHECK_INT("la barra laterale parte alla stessa altezza", xu.nav.y, au.project_nav.y);
+    CHECK_INT("e finisce alla stessa distanza dal piede",
+              xu.footer.y - (xu.nav.y + xu.nav.h), au.footer.y - (au.project_nav.y + au.project_nav.h));
+    CHECK(xu.table.x > xu.nav.x + xu.nav.w, "la tabella sta a destra della barra laterale");
+    CHECK_INT("la tabella finisce al margine destro", xu.w - (xu.table.x + xu.table.w), XIAM_PAD);
+
+    /* Every page of the workspace derives its rows from that geometry. */
+    CHECK(xu.rows_visible >= 1 && xu.param_rows_visible >= 1 && xu.state_rows_visible >= 1 &&
+          xu.nav_rows_visible >= 1 && xu.fit_param_rows_visible >= 1 && xu.fit_obs_rows_visible >= 1,
+          "ogni tabella della finestra mostra almeno una riga");
+    /* The Parameters control strip has one geometry, shared by the renderer
+       and the click handler. */
+    CHECK(xu.fmin.w > 0 && xu.axis.x > xu.jmax.x,
+          "la striscia di controllo dei Parameters e' derivata una volta sola");
+    CHECK(xu.axis.x + xu.axis.w <= xu.table.x + xu.table.w,
+          "la striscia sta dentro la tabella anche alla larghezza minima");
+    CHECK(xu.param_table.y > xu.axis.y + xu.axis.h, "la tabella sta sotto la striscia");
+    /* At the minimum width nothing in the footer may slide under the
+       uncertainty field, and that field ends at the right margin. */
+    CHECK_INT("il campo incertezza finisce al margine destro",
+              xu.w - (xu.unc.x + xu.unc.w), XIAM_PAD);
+    CHECK(xu.btn_c.x + xu.btn_c.w < xu.unc.x,
+          "i pulsanti del piede non finiscono sotto il campo incertezza");
+    DONE();
+}
+
 /* Pred&Fit's Simulation page has a colour swatch per trace, the three dipole
  * checkboxes and the Traces button.  XIAM's had only the SIM checkbox, so a
  * mixed or multi-model plot drew every native model in the same profile
@@ -4906,6 +4954,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_window_matches_predfit_chrome", test_xiam_window_matches_predfit_chrome},
     {"test_xiam_simulation_traces_and_dipoles", test_xiam_simulation_traces_and_dipoles},
     {"test_xiam_states_tab_edits_blocks_ii_v_vi", test_xiam_states_tab_edits_blocks_ii_v_vi},
     {"test_xiam_undo_fit_restores_the_parameters", test_xiam_undo_fit_restores_the_parameters},
