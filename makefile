@@ -74,14 +74,14 @@ $(TARGET): $(OBJS) $(CXXOBJS)
 	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -c $< -o $@
 
 # --- Regression suite (docs/audit/PIANO-FIX.md) ---
-# tests/test_audit.c #includes main.c, controller.c and predfit.c, so it is
-# linked against every other source except the ImGui renderer, which the tests
-# never use (tests/plotgpu_stub.c).  `make test` builds and runs all of it;
-# `./tests/test_audit <name>` runs a single test.
+# tests/test_audit.c #includes main.c, controller.c, predfit.c and xiam.c, so
+# it is linked against every other source except the ImGui renderer, which the
+# tests never use (tests/plotgpu_stub.c).  `make test` builds and runs all of
+# it; `./tests/test_audit <name>` runs a single test.
 TEST_BIN  = tests/test_audit
-TEST_SRCS = loader.c algorithms.c layout.c settings.c ui_icons.c intensity_fit.c intensity_window.c view.c xiam.c tests/plotgpu_stub.c
+TEST_SRCS = loader.c algorithms.c layout.c settings.c ui_icons.c intensity_fit.c intensity_window.c view.c tests/plotgpu_stub.c
 
-$(TEST_BIN): tests/test_audit.c main.c controller.c predfit.c $(TEST_SRCS) $(HDRS)
+$(TEST_BIN): tests/test_audit.c main.c controller.c predfit.c xiam.c $(TEST_SRCS) $(HDRS)
 	$(CC) -g -O0 -Wall -Wno-unused-function $(SDL_CFLAGS) -I. -DSV_TESTS_DIR='"$(CURDIR)/tests"' \
 	    -o $@ tests/test_audit.c $(TEST_SRCS) $(SDL_LDFLAGS) $(LDFLAGS)
 

@@ -24,6 +24,8 @@
 
 #define XIAM_DIR_NAME ".xiam"
 #define XIAM_SOURCE_MAX 255
+/* The workspace mirrors Pred&Fit Advanced page for page. */
+#define XIAM_TAB_COUNT 5
 
 enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_TEMP = -4, XIAM_EDIT_JMAX = -5,
@@ -1500,34 +1502,92 @@ static int xiam_pick_fit_destination(char *out, size_t size) {
     return 0;
 }
 
+/* Every rectangle the XIAM workspace draws is derived here, exactly like
+ * Pred&Fit's AdvUI.  The renderer, the wheel handler and the click handler all
+ * read the same geometry: a table whose scroll limit was computed from a
+ * different row count than the one being drawn is how rows became unreachable
+ * in the Hamiltonians and Simulation pages. */
 typedef struct {
     int w, h, row_h, rows_visible;
-    SDL_Rect tab[5], nav, nav_rows, table, rows, footer;
-    SDL_Rect btn_a, btn_b, btn_c;
+    SDL_Rect tab[XIAM_TAB_COUNT], nav, nav_rows, table, rows, footer;
+    SDL_Rect btn_a, btn_b, btn_c, btn_d;
+    int nav_rows_visible;
+    /* Parameters: the run-control strip pushes its own table down. */
+    SDL_Rect param_table, param_rows;
+    int param_rows_visible;
+    /* Fitting: fitted constants above, residuals below. */
+    int split;
+    SDL_Rect fit_param_rows, fit_obs_rows;
+    int fit_param_rows_visible, fit_obs_rows_visible;
 } XiamUI;
 
 static XiamUI xiam_ui(XiamState *x) {
     XiamUI u; memset(&u, 0, sizeof(u));
     SDL_GetWindowSize(x->window, &u.w, &u.h);
+    if (u.w < 900) u.w = 900;
+    if (u.h < 560) u.h = 560;
     const int tab_y = 52, tab_h = 30;
-    const int widths[5] = {130, 92, 100, 138, 124};
+    const int widths[XIAM_TAB_COUNT] = {130, 92, 100, 138, 124};
     int tx = 18;
-    for (int i = 0; i < 5; i++) { u.tab[i] = (SDL_Rect){tx, tab_y, widths[i], tab_h}; tx += widths[i] + 10; }
+    for (int i = 0; i < XIAM_TAB_COUNT; i++) { u.tab[i] = (SDL_Rect){tx, tab_y, widths[i], tab_h}; tx += widths[i] + 10; }
     u.footer = (SDL_Rect){0, u.h - 60, u.w, 60};
     u.nav = (SDL_Rect){18, 112, 270, u.footer.y - 124};
     u.nav_rows = (SDL_Rect){u.nav.x + 2, u.nav.y + 32, u.nav.w - 4, u.nav.h - 106};
     u.table = (SDL_Rect){306, 140, u.w - 324, u.footer.y - 152};
     u.rows = (SDL_Rect){u.table.x + 1, u.table.y + 33, u.table.w - 2, u.table.h - 35};
     u.row_h = 27; u.rows_visible = u.rows.h / u.row_h;
+    if (u.rows_visible < 1) u.rows_visible = 1;
+    u.nav_rows_visible = u.nav_rows.h / u.row_h;
+    if (u.nav_rows_visible < 1) u.nav_rows_visible = 1;
+
+    u.param_table = (SDL_Rect){u.table.x, u.table.y + 64, u.table.w, u.table.h - 64};
+    u.param_rows  = (SDL_Rect){u.param_table.x + 1, u.param_table.y + 31,
+                               u.param_table.w - 2, u.param_table.h - 33};
+    u.param_rows_visible = u.param_rows.h / u.row_h;
+    if (u.param_rows_visible < 1) u.param_rows_visible = 1;
+
+    u.split = u.table.y + (u.table.h * 38) / 100;
+    u.fit_param_rows = (SDL_Rect){u.table.x + 1, u.table.y + 33,
+                                  u.table.w - 2, u.split - u.table.y - 35};
+    u.fit_param_rows_visible = (u.split - (u.table.y + 33) - 2) / u.row_h;
+    if (u.fit_param_rows_visible < 1) u.fit_param_rows_visible = 1;
+    u.fit_obs_rows = (SDL_Rect){u.table.x + 1, u.split + 32, u.table.w - 2,
+                                u.table.y + u.table.h - u.split - 34};
+    u.fit_obs_rows_visible = (u.table.y + u.table.h - u.split - 34) / u.row_h;
+    if (u.fit_obs_rows_visible < 1) u.fit_obs_rows_visible = 1;
+
     u.btn_a = (SDL_Rect){306, u.footer.y + 10, 150, 34};
     u.btn_b = (SDL_Rect){466, u.footer.y + 10, 150, 34};
     u.btn_c = (SDL_Rect){626, u.footer.y + 10, 150, 34};
+    u.btn_d = (SDL_Rect){786, u.footer.y + 10, 168, 34};
     return u;
 }
 
 static int xiam_scroll_limit(int total, int visible) {
     int max_scroll = total - visible;
     return max_scroll > 0 ? max_scroll : 0;
+}
+
+/* One clamp for every list in the workspace, applied before drawing and
+ * before acting on a click.  A scroll offset can otherwise survive a window
+ * resize, a deleted row or a Hamiltonian removal and leave the page blank. */
+static void xiam_clamp_scrolls(AppState *s, const XiamUI *u) {
+    XiamState *x = &s->xiam;
+    int assignments = xiam_assignment_count(s, NULL);
+    int *scroll[] = {&x->nav_scroll, &x->params_scroll, &x->lines_scroll,
+                     &x->fit_params_scroll, &x->fitting_scroll,
+                     &x->hamiltonians_scroll, &x->simulation_scroll};
+    int limit[] = {xiam_scroll_limit(x->n_hamiltonians, u->nav_rows_visible),
+                   xiam_scroll_limit(x->n_params, u->param_rows_visible),
+                   xiam_scroll_limit(assignments, u->rows_visible),
+                   xiam_scroll_limit(xiam_fitted_parameter_count(x), u->fit_param_rows_visible),
+                   xiam_scroll_limit(assignments, u->fit_obs_rows_visible),
+                   xiam_scroll_limit(x->n_hamiltonians, u->rows_visible),
+                   xiam_scroll_limit(x->n_hamiltonians, u->rows_visible)};
+    for (size_t i = 0; i < sizeof(scroll) / sizeof(scroll[0]); i++) {
+        if (*scroll[i] < 0) *scroll[i] = 0;
+        if (*scroll[i] > limit[i]) *scroll[i] = limit[i];
+    }
 }
 
 static const char *xiam_axis_button_text(const XiamState *x) {
@@ -1573,16 +1633,23 @@ static void xiam_render_navigator(SDL_Renderer *r, XiamState *x, const XiamUI *u
     ui_fill(r, u->nav, UI_INPUT); ui_frame(r, u->nav, UI_LINE);
     ui_text(r, UI_FONT_MONO_SM, "XIAM HAMILTONIANS", u->nav.x + 10, u->nav.y + 10, UI_DIM);
     SDL_RenderSetClipRect(r, &u->nav_rows);
-    for (int i = 0; i < x->n_hamiltonians; i++) {
-        int y = u->nav_rows.y + i * u->row_h;
+    for (int visible = 0; visible < u->nav_rows_visible; visible++) {
+        int i = x->nav_scroll + visible;
+        if (i >= x->n_hamiltonians) break;
+        int y = u->nav_rows.y + visible * u->row_h;
         SDL_Rect row = {u->nav_rows.x, y, u->nav_rows.w, u->row_h - 2};
         if (i == x->active_hamiltonian) ui_fill(r, row, UI_ACCENT_SOFT);
-        else if (i & 1) ui_fill(r, row, UI_CHROME);
+        else if (visible & 1) ui_fill(r, row, UI_CHROME);
         char b[160]; snprintf(b, sizeof(b), "H%d  %s", i + 1, x->hamiltonian[i].name);
         ui_text(r, UI_FONT_SANS_SM, b, row.x + 10, row.y + 6,
                 i == x->active_hamiltonian ? UI_ACCENT_TEXT : UI_TEXT);
     }
     SDL_RenderSetClipRect(r, NULL);
+    if (x->n_hamiltonians > u->nav_rows_visible) {
+        char b[64];
+        snprintf(b, sizeof(b), "%d of %d", u->nav_rows_visible, x->n_hamiltonians);
+        ui_text_right(r, UI_FONT_SANS_SM, b, u->nav.x + u->nav.w - 10, u->nav.y + 10, UI_FAINT);
+    }
     ui_button(r, (SDL_Rect){u->nav.x + 10, u->nav.y + u->nav.h - 66, u->nav.w - 20, 28},
               "+ Open .xi Hamiltonian", -1, UI_BTN_PRIMARY, 0, mx, my, down);
     ui_button(r, (SDL_Rect){u->nav.x + 10, u->nav.y + u->nav.h - 32, u->nav.w - 20, 24},
@@ -1611,8 +1678,7 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     snprintf(b, sizeof(b), "%.8g", x->concentration); ui_field_ex(r, conc, NULL, x->edit_param == XIAM_EDIT_CONCENTRATION ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_CONCENTRATION, x->edit_caret, x->edit_anchor);
     snprintf(b, sizeof(b), "%d", x->max_j); ui_field_ex(r, jmax, NULL, x->edit_param == XIAM_EDIT_JMAX ? x->edit_buf : b, NULL, x->edit_param == XIAM_EDIT_JMAX, x->edit_caret, x->edit_anchor);
     ui_button(r, axis, xiam_axis_button_text(x), -1, UI_BTN_QUIET, 0, mx, my, down);
-    SDL_Rect table = {u->table.x, u->table.y + 64, u->table.w, u->table.h - 64};
-    SDL_Rect rows = {table.x + 1, table.y + 31, table.w - 2, table.h - 33};
+    SDL_Rect table = u->param_table, rows = u->param_rows;
     ui_fill(r, table, UI_INPUT); ui_frame(r, table, UI_LINE);
     int value_right = table.x + table.w * 52 / 100;
     int error_right = table.x + table.w * 71 / 100;
@@ -1623,7 +1689,7 @@ static void xiam_render_parameters(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text(r, UI_FONT_MONO_SM, "FIT (click cycles)", table.x + table.w * 73 / 100, table.y + 9, UI_DIM);
     ui_hline(r, table.x + 2, table.x + table.w - 2, rows.y - 3, UI_LINE);
     SDL_RenderSetClipRect(r, &rows);
-    for (int visible = 0; visible < rows.h / u->row_h; visible++) {
+    for (int visible = 0; visible < u->param_rows_visible; visible++) {
         int i = x->params_scroll + visible; if (i >= x->n_params) break;
         int y = rows.y + visible * u->row_h; SDL_Rect row = {rows.x, y, rows.w, u->row_h - 2};
         if (visible & 1) ui_fill(r, row, UI_CHROME);
@@ -1686,7 +1752,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text(r, UI_FONT_SANS, "XIAM fitting output — fitted constants and residuals for the active Hamiltonian", u->table.x, 112, UI_ACCENT_TEXT);
     ui_text(r, UI_FONT_SANS_SM, x->fit_output_path[0] ? x->fit_output_path : "No XIAM fit report yet. Select assignments in Lines, then run Fit.", u->table.x, 128, x->fit_output_path[0] ? UI_DIM : UI_FAINT);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
-    int split = u->table.y + (u->table.h * 38) / 100;
+    int split = u->split;
     int param_value_right = u->table.x + u->table.w * 57 / 100;
     int param_error_right = u->table.x + u->table.w * 82 / 100;
     int param_error_decimal = u->table.x + u->table.w * 77 / 100;
@@ -1694,7 +1760,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text_right(r, UI_FONT_MONO_SM, "VALUE / MHz", param_value_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "EST. ERROR", param_error_right, u->table.y + 9, UI_DIM);
     int y = u->table.y + 33;
-    int param_rows = (split - y - 2) / u->row_h;
+    int param_rows = u->fit_param_rows_visible;
     int param_total = xiam_fitted_parameter_count(x);
     for (int visible = 0; visible < param_rows; visible++) {
         int pi = xiam_fitted_parameter_index(x, x->fit_params_scroll + visible); if (pi < 0) break;
@@ -1720,7 +1786,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", calc_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "/UNC", sigma_right, split + 10, UI_DIM);
-    int first = x->fitting_scroll, max_rows = (u->table.y + u->table.h - split - 34) / u->row_h;
+    int first = x->fitting_scroll, max_rows = u->fit_obs_rows_visible;
     for (int visible = 0; visible < max_rows; visible++) {
         int ai = xiam_assignment_index(s, first + visible); if (ai < 0) break;
         Assignment *a = &s->assignments[ai]; int ry = split + 32 + visible * u->row_h;
@@ -1839,38 +1905,32 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
     }
     if (e->type == SDL_KEYDOWN && e->key.windowID == id && e->key.keysym.sym == SDLK_ESCAPE) { xiam_close(s); return 1; }
     XiamUI u = xiam_ui(x);
+    xiam_clamp_scrolls(s, &u);
     if (e->type == SDL_MOUSEWHEEL && e->wheel.windowID == id) {
         int mx, my; SDL_GetMouseState(&mx, &my); int delta = -e->wheel.y * 3;
-        if (x->active_tab == 0) { x->params_scroll += delta; if (x->params_scroll < 0) x->params_scroll = 0; int lim = xiam_scroll_limit(x->n_params, (u.rows.h - 64) / u.row_h); if (x->params_scroll > lim) x->params_scroll = lim; }
-        else if (x->active_tab == 1) { x->lines_scroll += delta; if (x->lines_scroll < 0) x->lines_scroll = 0; int lim = xiam_scroll_limit(xiam_assignment_count(s, NULL), u.rows_visible); if (x->lines_scroll > lim) x->lines_scroll = lim; }
+        /* The sidebar is on every page, so it takes the wheel wherever the
+           pointer sits over it, before the page's own table. */
+        if (point_in_rect(mx, my, u.nav)) x->nav_scroll += delta;
+        else if (x->active_tab == 0) x->params_scroll += delta;
+        else if (x->active_tab == 1) x->lines_scroll += delta;
         else if (x->active_tab == 2) {
-            int split = u.table.y + (u.table.h * 38) / 100;
-            if (my < split) {
-                int y = u.table.y + 33;
-                int visible = (split - y - 2) / u.row_h;
-                x->fit_params_scroll += delta; if (x->fit_params_scroll < 0) x->fit_params_scroll = 0;
-                int lim = xiam_scroll_limit(xiam_fitted_parameter_count(x), visible);
-                if (x->fit_params_scroll > lim) x->fit_params_scroll = lim;
-            } else {
-                int visible = (u.table.y + u.table.h - split - 34) / u.row_h;
-                x->fitting_scroll += delta; if (x->fitting_scroll < 0) x->fitting_scroll = 0;
-                int lim = xiam_scroll_limit(xiam_assignment_count(s, NULL), visible);
-                if (x->fitting_scroll > lim) x->fitting_scroll = lim;
-            }
+            if (my < u.split) x->fit_params_scroll += delta;
+            else x->fitting_scroll += delta;
         }
-        else if (x->active_tab == 3) { x->hamiltonians_scroll += delta; if (x->hamiltonians_scroll < 0) x->hamiltonians_scroll = 0; }
-        else { x->simulation_scroll += delta; if (x->simulation_scroll < 0) x->simulation_scroll = 0; }
-        (void)mx; (void)my; return 1;
+        else if (x->active_tab == 3) x->hamiltonians_scroll += delta;
+        else x->simulation_scroll += delta;
+        xiam_clamp_scrolls(s, &u);
+        return 1;
     }
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != id) return 0;
     int px = e->button.x, py = e->button.y;
-    for (int i = 0; i < 5; i++) if (point_in_rect(px, py, u.tab[i])) { xiam_edit_commit(s); x->active_tab = i; x->delete_hamiltonian_id = 0; return 1; }
+    for (int i = 0; i < XIAM_TAB_COUNT; i++) if (point_in_rect(px, py, u.tab[i])) { xiam_edit_commit(s); x->active_tab = i; x->delete_hamiltonian_id = 0; return 1; }
     SDL_Rect nav_open = {u.nav.x + 10, u.nav.y + u.nav.h - 66, u.nav.w - 20, 28};
     SDL_Rect nav_reload = {u.nav.x + 10, u.nav.y + u.nav.h - 32, u.nav.w - 20, 24};
     if (point_in_rect(px, py, nav_open)) { char path[512]; if (xiam_pick_input(path, sizeof(path))) xiam_load_input_file(s, path); return 1; }
     if (point_in_rect(px, py, nav_reload)) { xiam_reload_active_input(s); return 1; }
     if (point_in_rect(px, py, u.nav_rows)) {
-        int i = (py - u.nav_rows.y) / u.row_h;
+        int i = x->nav_scroll + (py - u.nav_rows.y) / u.row_h;
         if (i >= 0 && i < x->n_hamiltonians) xiam_select_hamiltonian(x, i);
         return 1;
     }
@@ -1882,7 +1942,7 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, conc)) { xiam_edit_begin(x, XIAM_EDIT_CONCENTRATION); return 1; }
         if (point_in_rect(px, py, jmax)) { xiam_edit_begin(x, XIAM_EDIT_JMAX); return 1; }
         if (point_in_rect(px, py, axis)) { x->axis_override = (x->axis_override + 1) % 3; xiam_update_axis_convention(x); xiam_store_active(x); xiam_mark_session_dirty(s); return 1; }
-        SDL_Rect rows = {u.table.x + 1, u.table.y + 95, u.table.w - 2, u.table.h - 97};
+        SDL_Rect rows = u.param_rows;
         if (point_in_rect(px, py, rows)) { int i = x->params_scroll + (py - rows.y) / u.row_h; if (i >= 0 && i < x->n_params) { if (px >= u.table.x + u.table.w * 72 / 100) { x->params[i].fit_method = (x->params[i].fit_method + 1) % 4; xiam_mark_session_dirty(s); } else xiam_edit_begin(x, i); xiam_store_active(x); } return 1; }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; xiam_edit_commit(s); if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_edit_commit(s); xiam_calculate(s); return 1; }
@@ -2109,14 +2169,14 @@ void xiam_render(AppState *s) {
     if (!s || !s->xiam.open || !s->xiam.renderer) return;
     XiamState *x = &s->xiam; SDL_Renderer *r = x->renderer;
     int ww = 0, dw = 0, dh = 0; SDL_GetWindowSize(x->window, &ww, &dh); SDL_GetRendererOutputSize(r, &dw, &dh); if (ww > 0 && dw > 0) SDL_RenderSetScale(r, (float)dw / (float)ww, (float)dw / (float)ww);
-    XiamUI u = xiam_ui(x); xiam_store_active(x);
+    XiamUI u = xiam_ui(x); xiam_clamp_scrolls(s, &u); xiam_store_active(x);
     SDL_SetRenderDrawColor(r, 19, 20, 22, 255); SDL_RenderClear(r);
     ui_fill(r, (SDL_Rect){0, 0, u.w, 42}, UI_TITLEBAR); ui_text(r, UI_FONT_TITLE, "XIAM — native Hamiltonian workspace", 18, 12, UI_TEXT);
     ui_hline(r, 0, u.w, 98, UI_LINE); ui_hline(r, 0, u.w, u.footer.y, UI_LINE);
-    const char *tabs[5] = {"Parameters", "Lines", "Fitting", "Hamiltonians", "Simulation"};
+    const char *tabs[XIAM_TAB_COUNT] = {"Parameters", "Lines", "Fitting", "Hamiltonians", "Simulation"};
     int mx = 0, my = 0, down = (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     if (SDL_GetMouseFocus() != x->window) mx = my = -999;
-    for (int i = 0; i < 5; i++) ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, x->active_tab == i, mx, my, down);
+    for (int i = 0; i < XIAM_TAB_COUNT; i++) ui_button(r, u.tab[i], tabs[i], -1, UI_BTN_QUIET, x->active_tab == i, mx, my, down);
     xiam_render_navigator(r, x, &u, mx, my, down);
     if (x->active_tab == 0) xiam_render_parameters(r, s, x, &u, mx, my, down);
     else if (x->active_tab == 1) xiam_render_lines(r, s, x, &u, mx, my, down);

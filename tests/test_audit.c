@@ -2,7 +2,7 @@
  * Regression suite of the audit (docs/audit/PIANO-FIX.md).
  *
  * Built like docs/audit/repro/harness.c: the real translation units main.c,
- * controller.c and predfit.c are #included, so the app's static functions
+ * controller.c, predfit.c and xiam.c are #included, so the app's static functions
  * (set_predictions, handle_mouse_down, assign_selected_predictions,
  * write_inputs, ...) run exactly as in the app.  The other .c files are linked
  * unchanged; only the ImGui line renderer is replaced (tests/plotgpu_stub.c).
@@ -31,6 +31,10 @@
 #undef main
 #include "controller.c"
 #include "predfit.c"
+/* The XIAM workspace is #included for the same reason as predfit.c: its page
+   geometry, its source-block editing and its project management are static,
+   and the tests have to exercise exactly the code the window runs. */
+#include "xiam.c"
 
 #ifndef SV_TESTS_DIR
 #error "compile with -DSV_TESTS_DIR=\"<repository>/tests\" (makefile target test)"
@@ -1381,6 +1385,61 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
         CHECK_DBL("BJ del report misto", s->xiam.params[bj].value_ghz, 0.215066122, 1e-12);
         CHECK_DBL("errore BJ del report misto", s->xiam.params[bj].error_ghz, 0.000000171, 1e-15);
     }
+    DONE();
+}
+
+/* Every list of the XIAM workspace is clamped on the geometry the renderer
+ * actually draws.  Before this, the parameter limit was computed on a row
+ * count 64 pixels taller than the drawn table, the Hamiltonians and Simulation
+ * pages had no upper limit at all, and the sidebar had no scroll: past nine
+ * open models its rows could not be reached. */
+static int test_xiam_scroll_limits_follow_the_rendered_rows(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "modello XIAM caricato");
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_2v3_pred.xi"), "secondo modello XIAM caricato");
+    XiamState *x = &s->xiam;
+    XiamUI u = xiam_ui(x);
+
+    CHECK(u.w >= 900 && u.h >= 560, "la geometria minima della finestra e' quella di Pred&Fit: %dx%d", u.w, u.h);
+    CHECK(u.param_rows_visible >= 1 && u.nav_rows_visible >= 1 && u.fit_obs_rows_visible >= 1,
+          "ogni tabella mostra almeno una riga");
+
+    /* The renderer draws exactly param_rows_visible parameter rows. */
+    x->params_scroll = x->n_params + 500;
+    x->nav_scroll = 999;
+    x->hamiltonians_scroll = 999;
+    x->simulation_scroll = 999;
+    x->lines_scroll = 999;
+    x->fit_params_scroll = 999;
+    x->fitting_scroll = 999;
+    xiam_clamp_scrolls(s, &u);
+    CHECK_INT("limite dei parametri = righe disegnate",
+              x->params_scroll, xiam_scroll_limit(x->n_params, u.param_rows_visible));
+    CHECK_INT("il navigatore e' limitato", x->nav_scroll,
+              xiam_scroll_limit(x->n_hamiltonians, u.nav_rows_visible));
+    CHECK_INT("la scheda Hamiltonians e' limitata", x->hamiltonians_scroll,
+              xiam_scroll_limit(x->n_hamiltonians, u.rows_visible));
+    CHECK_INT("la scheda Simulation e' limitata", x->simulation_scroll,
+              xiam_scroll_limit(x->n_hamiltonians, u.rows_visible));
+    CHECK_INT("le righe di Lines sono limitate", x->lines_scroll,
+              xiam_scroll_limit(xiam_assignment_count(s, NULL), u.rows_visible));
+    CHECK_INT("le costanti di Fitting sono limitate", x->fit_params_scroll,
+              xiam_scroll_limit(xiam_fitted_parameter_count(x), u.fit_param_rows_visible));
+    CHECK_INT("i residui di Fitting sono limitati", x->fitting_scroll,
+              xiam_scroll_limit(xiam_assignment_count(s, NULL), u.fit_obs_rows_visible));
+
+    /* Two Hamiltonians fit in every page, so no list may scroll at all. */
+    CHECK_INT("con due H il navigatore non scorre", x->nav_scroll, 0);
+    CHECK_INT("con due H la scheda Hamiltonians non scorre", x->hamiltonians_scroll, 0);
+
+    x->params_scroll = -7;
+    xiam_clamp_scrolls(s, &u);
+    CHECK_INT("uno scroll negativo torna a zero", x->params_scroll, 0);
+
+    /* The parameter row the renderer puts last must still be a real row. */
+    int last = xiam_scroll_limit(x->n_params, u.param_rows_visible) + u.param_rows_visible - 1;
+    CHECK(x->n_params <= u.param_rows_visible || last == x->n_params - 1,
+          "l'ultima riga raggiungibile e' l'ultimo parametro: %d di %d", last, x->n_params);
     DONE();
 }
 
@@ -4134,6 +4193,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_scroll_limits_follow_the_rendered_rows", test_xiam_scroll_limits_follow_the_rendered_rows},
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_hamiltonians_keep_independent_concentrations", test_xiam_hamiltonians_keep_independent_concentrations},
     {"test_xiam_session_roundtrip", test_xiam_session_roundtrip},

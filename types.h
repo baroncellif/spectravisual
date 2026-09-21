@@ -458,6 +458,7 @@ typedef struct {
     int fit_params_scroll;
     int hamiltonians_scroll;
     int simulation_scroll;
+    int nav_scroll;            /* the always-present Hamiltonian sidebar */
     int delete_hamiltonian_id; /* a second click confirms removal */
     int edit_assignment;       /* assignment currently edited in Lines, or -1 */
     int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
