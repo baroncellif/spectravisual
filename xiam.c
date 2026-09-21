@@ -147,7 +147,23 @@ static int xiam_known_control(const char *name) {
 }
 
 static int xiam_find_parameter(const XiamState *x, const char *name) {
-    for (int i = 0; x && i < x->n_params; i++) if (xiam_equal(x->params[i].name, name)) return i;
+    /* Native XIAM identifiers are case-sensitive: DJ/dj and DK/dk are
+       distinct centrifugal-distortion constants.  A case-insensitive lookup
+       merged those rows, rewrote the wrong molecular value and emitted two
+       fit directives for one uppercase parameter on the next run. */
+    for (int i = 0; x && i < x->n_params; i++)
+        if (!strcmp(x->params[i].name, name)) return i;
+    /* XIAM's report may print the explicit first-top suffix while a supplied
+       input spells the same native parameter without it.  This is the only
+       safe normalisation: preserve letter case for the actual keyword. */
+    if (name) {
+        size_t n = strlen(name);
+        if (n > 2 && name[n - 2] == '_' && name[n - 1] == '1') {
+            for (int i = 0; x && i < x->n_params; i++)
+                if (strlen(x->params[i].name) == n - 2 &&
+                    !strncmp(x->params[i].name, name, n - 2)) return i;
+        }
+    }
     return -1;
 }
 
@@ -176,6 +192,7 @@ static void xiam_store_active(XiamState *x) {
     h->simulate_excluded = x->simulate_excluded; h->loaded = x->loaded;
     snprintf(h->input_path, sizeof(h->input_path), "%s", x->input_path);
     snprintf(h->output_path, sizeof(h->output_path), "%s", x->output_path);
+    snprintf(h->fit_output_path, sizeof(h->fit_output_path), "%s", x->fit_output_path);
     snprintf(h->work_dir, sizeof(h->work_dir), "%s", x->work_dir);
     memcpy(h->source_lines, x->source_lines, sizeof(h->source_lines)); h->n_source_lines = x->n_source_lines;
     memcpy(h->params, x->params, sizeof(h->params)); h->n_params = x->n_params;
@@ -194,6 +211,7 @@ static void xiam_restore_active(XiamState *x, int index) {
     x->active_hamiltonian = index; x->simulate_excluded = h->simulate_excluded; x->loaded = h->loaded;
     snprintf(x->input_path, sizeof(x->input_path), "%s", h->input_path);
     snprintf(x->output_path, sizeof(x->output_path), "%s", h->output_path);
+    snprintf(x->fit_output_path, sizeof(x->fit_output_path), "%s", h->fit_output_path);
     snprintf(x->work_dir, sizeof(x->work_dir), "%s", h->work_dir);
     memcpy(x->source_lines, h->source_lines, sizeof(x->source_lines)); x->n_source_lines = h->n_source_lines;
     memcpy(x->params, h->params, sizeof(x->params)); x->n_params = h->n_params;
@@ -204,13 +222,13 @@ static void xiam_restore_active(XiamState *x, int index) {
     x->axis_override = h->axis_override;
     snprintf(x->status, sizeof(x->status), "%s", h->status);
     snprintf(x->diagnostics, sizeof(x->diagnostics), "%s", h->diagnostics);
-    x->params_scroll = x->lines_scroll = x->assignments_scroll = x->fitting_scroll = 0;
+    x->params_scroll = x->lines_scroll = x->assignments_scroll = x->fitting_scroll = x->fit_params_scroll = 0;
 }
 
 static void xiam_clear_active(XiamState *x) {
     if (!x) return;
     x->loaded = 0; x->running = 0; x->simulate_excluded = 0;
-    x->input_path[0] = x->output_path[0] = x->work_dir[0] = '\0';
+    x->input_path[0] = x->output_path[0] = x->fit_output_path[0] = x->work_dir[0] = '\0';
     x->n_source_lines = x->n_params = 0; x->spin = x->spin2 = 0; x->model_id = 0;
     x->max_j = 30; x->fmin_mhz = 0.0; x->fmax_mhz = 10000.0; x->temperature_k = 1.0;
     x->has_freq = x->has_ints = x->has_j = 0;
@@ -591,6 +609,11 @@ static int xiam_import_source_assignments(AppState *s) {
     if (!s || !s->xiam.loaded) return 0;
     XiamState *x = &s->xiam;
     int block = 0, imported = 0, changed = 0;
+    /* Do not collapse repeated observations.  A source .xi can contain the
+       same transition and even the same observed value more than once; XIAM
+       treats each occurrence as an independent weighted datum.  Marking a
+       record as consumed also makes a reload idempotent. */
+    unsigned char matched[MAX_ASSIGNMENTS] = {0};
     for (int line_no = 0; line_no < x->n_source_lines; line_no++) {
         char work[256], lower[256];
         snprintf(work, sizeof(work), "%s", x->source_lines[line_no]);
@@ -611,12 +634,18 @@ static int xiam_import_source_assignments(AppState *s) {
         int found = -1;
         for (int i = 0; i < s->n_assignments; i++) {
             Assignment *a = &s->assignments[i];
-            if (a->hamiltonian_id == x->model_id && xiam_same_input_transition(&a->pred, &p)) {
+            /* A Block VIII file can intentionally contain several measured
+               occurrences of the same transition.  They are independent
+               weighted observations in XIAM, not duplicate GUI rows. */
+            if (!matched[i] && a->hamiltonian_id == x->model_id && xiam_same_input_transition(&a->pred, &p) &&
+                fabs(a->exp_freq - observed) < 1e-7 &&
+                fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10) {
                 found = i;
                 break;
             }
         }
         if (found >= 0) {
+            matched[found] = 1;
             Assignment *a = &s->assignments[found];
             a->exp_freq = observed;
             a->line_error_mhz = uncertainty;
@@ -626,13 +655,15 @@ static int xiam_import_source_assignments(AppState *s) {
                 a->pred = p;
             changed++;
         } else if (s->n_assignments < MAX_ASSIGNMENTS) {
-            Assignment *a = &s->assignments[s->n_assignments++];
+            int index = s->n_assignments++;
+            Assignment *a = &s->assignments[index];
             memset(a, 0, sizeof(*a));
             a->pred = p;
             a->exp_freq = observed;
             a->line_error_mhz = uncertainty;
             a->fit_enabled = 1;
             a->hamiltonian_id = x->model_id;
+            matched[index] = 1;
             imported++;
         }
     }
@@ -672,7 +703,8 @@ static int xiam_runtime_control(const char *key) {
     return xiam_equal(key, "ncyc") || xiam_equal(key, "nzyk") || xiam_equal(key, "ncycl") ||
            xiam_equal(key, "ints") || xiam_equal(key, "freq") ||
            xiam_equal(key, "freq_l") || xiam_equal(key, "freq_h") ||
-           xiam_equal(key, "temp");
+           xiam_equal(key, "temp") || xiam_equal(key, "eval") ||
+           xiam_equal(key, "limit");
 }
 
 static void xiam_write_runtime_controls(FILE *fp, const XiamState *x, int fitting) {
@@ -685,6 +717,14 @@ static void xiam_write_runtime_controls(FILE *fp, const XiamState *x, int fittin
     fprintf(fp, " freq_l %.12g\n", x->fmin_mhz / 1000.0);
     fprintf(fp, " freq_h %.12g\n", x->fmax_mhz / 1000.0);
     fprintf(fp, " temp %.12g\n", x->temperature_k);
+    if (!fitting) {
+        /* A fitting template often has `eval 0` (or no card at all).  A
+           post-fit prediction must explicitly ask XIAM to enumerate lines;
+           -10 retains weak native-SPCAT transitions just like the supplied
+           prediction examples instead of silently applying XIAM's 0.1 cut. */
+        fprintf(fp, " eval 1\n");
+        fprintf(fp, " limit -10\n");
+    }
 }
 
 static void xiam_write_runtime_j(FILE *fp, const XiamState *x) {
@@ -718,9 +758,50 @@ static int xiam_assignment_count(const AppState *s, int *enabled) {
     return total;
 }
 
+static int xiam_fitted_parameter_count(const XiamState *x) {
+    int count = 0;
+    for (int i = 0; x && i < x->n_params; i++)
+        if (x->params[i].fit_method || x->params[i].error_ghz != 0.0) count++;
+    return count;
+}
+
+static int xiam_fitted_parameter_index(const XiamState *x, int ordinal) {
+    if (!x || ordinal < 0) return -1;
+    int seen = 0;
+    for (int i = 0; i < x->n_params; i++) {
+        if (!x->params[i].fit_method && x->params[i].error_ghz == 0.0) continue;
+        if (seen++ == ordinal) return i;
+    }
+    return -1;
+}
+
+/* Match one native Block VIII line to one editable Assignment.  We retain a
+ * line byte-for-byte whenever it has not been edited: this preserves all
+ * XIAM-specific optional syntax and, critically, the multiplicity/order of
+ * weighted observations.  Newly created or edited assignments are emitted
+ * through xiam_write_assignment below. */
+static int xiam_find_source_assignment(const AppState *s, const XiamState *x,
+                                       const PredLine *source, double observed,
+                                       double uncertainty, const unsigned char *used) {
+    int fallback = -1;
+    if (!s || !x || !source) return -1;
+    for (int i = 0; i < s->n_assignments; i++) {
+        const Assignment *a = &s->assignments[i];
+        if ((used && used[i]) || a->pred.backend != PRED_BACKEND_XIAM ||
+            a->hamiltonian_id != x->model_id ||
+            !xiam_same_input_transition(&a->pred, source)) continue;
+        if (fabs(a->exp_freq - observed) < 1e-7 &&
+            fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10)
+            return i;
+        if (fallback < 0) fallback = i;
+    }
+    return fallback;
+}
+
 static int xiam_write_input(AppState *s, const char *path, int fitting) {
     XiamState *x = &s->xiam; FILE *fp = fopen(path, "w"); if (!fp) return 0;
     int wrote_fit_choices = 0, wrote_controls = 0, wrote_j = 0, source_block = 0;
+    unsigned char source_assignment_used[MAX_ASSIGNMENTS] = {0};
     for (int i = 0; i < x->n_source_lines; i++) {
         char current[256], key[64] = "", *at;
         snprintf(current, sizeof(current), "%s", x->source_lines[i]); at = xiam_ltrim(current);
@@ -759,7 +840,29 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
         if (!xiam_is_comment(at)) sscanf(at, "%63s", key);
         if (!xiam_is_comment(at) && xiam_runtime_control(key)) continue;
         if (!xiam_is_comment(at) && source_block == 7 && xiam_equal(key, "J")) continue;
-        if (fitting && xiam_line_is_transition(current)) { fprintf(fp, "\\%s\n", current); continue; }
+        if (fitting && source_block == 8 && xiam_line_is_transition(current)) {
+            PredLine source; double observed = 0.0, uncertainty = 0.010;
+            if (xiam_parse_input_transition_line(at, &source, &observed, &uncertainty)) {
+                int ai = xiam_find_source_assignment(s, x, &source, observed, uncertainty,
+                                                      source_assignment_used);
+                if (ai >= 0) {
+                    Assignment *a = &s->assignments[ai];
+                    source_assignment_used[ai] = 1;
+                    if (a->fit_enabled) {
+                        /* Exact match: native spelling/order survives.  The
+                           fallback represents a user-edited datum. */
+                        if (fabs(a->exp_freq - observed) < 1e-7 &&
+                            fabs((a->line_error_mhz > 0.0 ? a->line_error_mhz : 0.010) - uncertainty) < 1e-10)
+                            fprintf(fp, "%s\n", x->source_lines[i]);
+                        else xiam_write_assignment(fp, a);
+                    } else fprintf(fp, "\\%s\n", current);
+                    continue;
+                }
+            }
+            /* A malformed/unowned source record must never reach an
+               automatically generated fit unnoticed. */
+            fprintf(fp, "\\%s\n", current); continue;
+        }
         int pi = -1; for (int k = 0; k < x->n_params; k++) if (x->params[k].source_line == i) { pi = k; break; }
         if (pi >= 0) { char changed[512]; xiam_replace_number(changed, sizeof(changed), x->source_lines[i], x->params[pi].value_ghz); fprintf(fp, "%s\n", changed); continue; }
         int fit_pi = -1; for (int k = 0; k < x->n_params; k++) if (x->params[k].fit_source_line == i) { fit_pi = k; break; }
@@ -775,7 +878,11 @@ static int xiam_write_input(AppState *s, const char *path, int fitting) {
         if (!wrote_fit_choices) xiam_write_fit_choices(fp, x);
         int n = 0; for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) n++;
         fprintf(fp, "\\ SpectraVisual XIAM fit assignments (%d selected)\n", n);
-        for (int i = 0; i < s->n_assignments; i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) xiam_write_assignment(fp, &s->assignments[i]);
+        for (int i = 0; i < s->n_assignments; i++)
+            if (!source_assignment_used[i] && s->assignments[i].fit_enabled &&
+                s->assignments[i].pred.backend == PRED_BACKEND_XIAM &&
+                s->assignments[i].hamiltonian_id == x->model_id)
+                xiam_write_assignment(fp, &s->assignments[i]);
     }
     int bad = ferror(fp) || fclose(fp) != 0; return !bad;
 }
@@ -801,7 +908,9 @@ static int xiam_run(AppState *s, int fitting) {
     if (!s->settings.xiam_path[0] || access(s->settings.xiam_path, X_OK) != 0) { snprintf(x->status,sizeof(x->status),"Set the executable XIAM-2NQ v0.44 path in Settings."); return 0; }
     if (fitting) { int n = 0; for (int i=0;i<s->n_assignments;i++) if (s->assignments[i].fit_enabled && s->assignments[i].pred.backend == PRED_BACKEND_XIAM && s->assignments[i].hamiltonian_id == x->model_id) n++; if (!n) { snprintf(x->status,sizeof(x->status),"Select and assign at least one prediction from this .xi model before fitting."); return 0; } }
     if (!xiam_prepare_work_dir(s)) return 0;
-    char in[700], out[700]; xiam_work_file(x,"model.xi",in,sizeof(in)); xiam_work_file(x,"model.xo",out,sizeof(out));
+    char in[700], out[700];
+    xiam_work_file(x, fitting ? "fit.xi" : "prediction.xi", in, sizeof(in));
+    xiam_work_file(x, fitting ? "fit.xo" : "prediction.xo", out, sizeof(out));
     if (!xiam_write_input(s, in, fitting)) { snprintf(x->status,sizeof(x->status),"Cannot write XIAM input: %s",strerror(errno)); return 0; }
     pid_t pid = fork();
     if (pid < 0) { snprintf(x->status,sizeof(x->status),"Cannot start XIAM: %s",strerror(errno)); return 0; }
@@ -812,9 +921,10 @@ static int xiam_run(AppState *s, int fitting) {
         char *const argv[] = {s->settings.xiam_path, NULL}; execv(s->settings.xiam_path, argv); _exit(127);
     }
     int status = 0; if (waitpid(pid, &status, 0) < 0) { snprintf(x->status,sizeof(x->status),"XIAM wait failed: %s",strerror(errno)); return 0; }
-    snprintf(x->output_path, sizeof(x->output_path), "%s", out);
+    if (fitting) snprintf(x->fit_output_path, sizeof(x->fit_output_path), "%s", out);
+    else snprintf(x->output_path, sizeof(x->output_path), "%s", out);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || xiam_fatal_output(out,x->diagnostics,sizeof(x->diagnostics))) {
-        snprintf(x->status,sizeof(x->status),"XIAM did not complete; see retained model.xo diagnostics."); return 0;
+        snprintf(x->status,sizeof(x->status),"XIAM did not complete; see retained %s diagnostics.", fitting ? "fit.xo" : "prediction.xo"); return 0;
     }
     return 1;
 }
@@ -903,7 +1013,7 @@ int xiam_load_output_file(AppState *s, const char *path) {
     int fit_parameters = s->xiam.loaded ? xiam_parse_fit_parameters(&s->xiam,path) : 0;
     if (!xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) {
         if (fit_parameters) {
-            snprintf(s->xiam.output_path,sizeof(s->xiam.output_path),"%s",path);
+            snprintf(s->xiam.fit_output_path,sizeof(s->xiam.fit_output_path),"%s",path);
             snprintf(s->xiam.status,sizeof(s->xiam.status),"Loaded %d fitted XIAM parameters; this .xo contains no native prediction list.",fit_parameters);
             xiam_store_active(&s->xiam);
             return 1;
@@ -936,9 +1046,24 @@ int xiam_calculate(AppState *s) {
 
 int xiam_fit(AppState *s) {
     if (!xiam_run(s,1)) return 0;
-    xiam_parse_fit_parameters(&s->xiam,s->xiam.output_path);
-    snprintf(s->xiam.status,sizeof(s->xiam.status),"Fit completed; updated XIAM parameters are now used for the refreshed prediction.");
-    int ok = xiam_calculate(s); xiam_store_active(&s->xiam); return ok;
+    int updated = xiam_parse_fit_parameters(&s->xiam, s->xiam.fit_output_path);
+    if (!updated) {
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "XIAM completed but no fitted-parameter report was recognised; see %s.",
+                 s->xiam.fit_output_path);
+        xiam_store_active(&s->xiam);
+        return 0;
+    }
+    int predicted = xiam_calculate(s);
+    if (predicted)
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "Fit completed (%d constants); fit.xo is retained and the updated MHz prediction is refreshed.", updated);
+    else
+        snprintf(s->xiam.status, sizeof(s->xiam.status),
+                 "Fit completed (%d constants); fit.xo is retained, but the updated prediction could not be read.", updated);
+    xiam_store_active(&s->xiam);
+    /* The fit itself is valid even if the optional catalogue refresh fails. */
+    return 1;
 }
 
 static int xiam_reload_active_input(AppState *s) {
@@ -1269,22 +1394,27 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
                                 const XiamUI *u, int mx, int my, int down) {
     char b[256];
     ui_text(r, UI_FONT_SANS, "XIAM fitting output — fitted constants and residuals for the active Hamiltonian", u->table.x, 112, UI_ACCENT_TEXT);
-    ui_text(r, UI_FONT_SANS_SM, x->output_path[0] ? x->output_path : "No XIAM .xo result yet. Select assignments in Lines, then run Fit.", u->table.x, 128, x->output_path[0] ? UI_DIM : UI_FAINT);
+    ui_text(r, UI_FONT_SANS_SM, x->fit_output_path[0] ? x->fit_output_path : "No XIAM fit report yet. Select assignments in Lines, then run Fit.", u->table.x, 128, x->fit_output_path[0] ? UI_DIM : UI_FAINT);
     ui_fill(r, u->table, UI_INPUT); ui_frame(r, u->table, UI_LINE);
     int split = u->table.y + (u->table.h * 38) / 100;
     ui_text(r, UI_FONT_MONO_SM, "FITTED PARAMETERS", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "VALUE / MHz", u->table.x + u->table.w * 36 / 100, u->table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "EST. ERROR", u->table.x + u->table.w * 62 / 100, u->table.y + 9, UI_DIM);
-    int y = u->table.y + 33, shown = 0;
-    for (int i = 0; i < x->n_params && y + u->row_h < split; i++) {
-        XiamParameter *p = &x->params[i]; if (!p->fit_method && p->error_ghz == 0.0) continue;
-        if (shown++ & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, y, u->table.w - 2, u->row_h - 2}, UI_CHROME);
+    int y = u->table.y + 33;
+    int param_rows = (split - y - 2) / u->row_h;
+    int param_total = xiam_fitted_parameter_count(x);
+    for (int visible = 0; visible < param_rows; visible++) {
+        int pi = xiam_fitted_parameter_index(x, x->fit_params_scroll + visible); if (pi < 0) break;
+        XiamParameter *p = &x->params[pi];
+        if ((x->fit_params_scroll + visible) & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, y, u->table.w - 2, u->row_h - 2}, UI_CHROME);
         ui_text(r, UI_FONT_MONO_SM, p->name, u->table.x + 12, y + 6, UI_TEXT);
         snprintf(b, sizeof(b), "%.12g", xiam_display_value(p)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 36 / 100, y + 6, UI_TEXT);
         snprintf(b, sizeof(b), "%.6g", xiam_display_error(p)); ui_text(r, UI_FONT_MONO_SM, b, u->table.x + u->table.w * 62 / 100, y + 6, p->error_ghz ? UI_DIM : UI_FAINT);
         y += u->row_h;
     }
-    if (!shown) ui_text(r, UI_FONT_SANS_SM, "No fitted parameter report yet.", u->table.x + 12, y + 6, UI_FAINT);
+    if (!param_total) ui_text(r, UI_FONT_SANS_SM, "No fitted parameter report yet.", u->table.x + 12, y + 6, UI_FAINT);
+    else if (param_total > param_rows)
+        ui_text_right(r, UI_FONT_SANS_SM, "scroll", u->table.x + u->table.w - 12, u->table.y + 9, UI_FAINT);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, split, UI_LINE);
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, split + 10, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "QNS", u->table.x + u->table.w * 10 / 100, split + 10, UI_DIM);
@@ -1381,7 +1511,21 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         int mx, my; SDL_GetMouseState(&mx, &my); int delta = -e->wheel.y * 3;
         if (x->active_tab == 0) { x->params_scroll += delta; if (x->params_scroll < 0) x->params_scroll = 0; int lim = xiam_scroll_limit(x->n_params, (u.rows.h - 64) / u.row_h); if (x->params_scroll > lim) x->params_scroll = lim; }
         else if (x->active_tab == 1) { x->lines_scroll += delta; if (x->lines_scroll < 0) x->lines_scroll = 0; int lim = xiam_scroll_limit(xiam_assignment_count(s, NULL), u.rows_visible); if (x->lines_scroll > lim) x->lines_scroll = lim; }
-        else if (x->active_tab == 2) { x->fitting_scroll += delta; if (x->fitting_scroll < 0) x->fitting_scroll = 0; }
+        else if (x->active_tab == 2) {
+            int split = u.table.y + (u.table.h * 38) / 100;
+            if (my < split) {
+                int y = u.table.y + 33;
+                int visible = (split - y - 2) / u.row_h;
+                x->fit_params_scroll += delta; if (x->fit_params_scroll < 0) x->fit_params_scroll = 0;
+                int lim = xiam_scroll_limit(xiam_fitted_parameter_count(x), visible);
+                if (x->fit_params_scroll > lim) x->fit_params_scroll = lim;
+            } else {
+                int visible = (u.table.y + u.table.h - split - 34) / u.row_h;
+                x->fitting_scroll += delta; if (x->fitting_scroll < 0) x->fitting_scroll = 0;
+                int lim = xiam_scroll_limit(xiam_assignment_count(s, NULL), visible);
+                if (x->fitting_scroll > lim) x->fitting_scroll = lim;
+            }
+        }
         else if (x->active_tab == 3) { x->hamiltonians_scroll += delta; if (x->hamiltonians_scroll < 0) x->hamiltonians_scroll = 0; }
         else { x->simulation_scroll += delta; if (x->simulation_scroll < 0) x->simulation_scroll = 0; }
         (void)mx; (void)my; return 1;

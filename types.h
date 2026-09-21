@@ -412,6 +412,9 @@ typedef struct {
     int loaded;
     char input_path[512];
     char output_path[512];
+    /* A fit report has no prediction records, so it must not share the
+       prediction pathname that is refreshed immediately after a fit. */
+    char fit_output_path[512];
     char work_dir[512];
     char source_lines[MAX_XIAM_SOURCE_LINES][256];
     int n_source_lines;
@@ -452,6 +455,7 @@ typedef struct {
     int lines_scroll;
     int assignments_scroll;
     int fitting_scroll;
+    int fit_params_scroll;
     int hamiltonians_scroll;
     int simulation_scroll;
     int delete_hamiltonian_id; /* a second click confirms removal */
@@ -463,6 +467,7 @@ typedef struct {
     char edit_buf[96];
     char input_path[512];
     char output_path[512];
+    char fit_output_path[512];
     char work_dir[512];
     char source_lines[MAX_XIAM_SOURCE_LINES][256];
     int n_source_lines;

@@ -1278,7 +1278,9 @@ static int test_xiam_imports_block_viii_and_saves_fit_input(void) {
               "finestra MHz convertita nei controlli XIAM GHz");
         CHECK(strstr(text, "temp 4.2") != NULL && strstr(text, "J 17") != NULL,
               "temperatura e Jmax della GUI salvati");
-        CHECK(strstr(text, "Err 0.02") != NULL, "errore individuale XIAM riscritto");
+        const char *native_obs = strstr(text, "7662.194");
+        CHECK(native_obs && strstr(native_obs, "Err"),
+              "errore individuale XIAM conservato/riprodotto");
         free(text);
     }
 
@@ -1408,6 +1410,48 @@ static int test_xiam_v044_fit_when_configured(void) {
     CHECK(xiam_fit(s), "fit e previsione aggiornati con XIAM v0.44");
     CHECK(s->n_pred > 100, "fit XIAM rigenera la previsione nativa");
     if (bj >= 0) CHECK(s->xiam.params[bj].error_ghz >= 0.0, "report XIAM aggiorna errore BJ");
+    DONE();
+}
+
+/* Exercise the same route used by the XIAM window with a realistic quick fit:
+ * start from the published v6 result, offset every active fit parameter by
+ * one percent, then run twice.  The first fit must recover the reference and
+ * the second must be a stable refinement, never another large displacement. */
+static int test_xiam_v6_consecutive_fit_when_configured(void) {
+    const char *program = getenv("SV_XIAM_V044");
+    if (!program || !program[0]) SKIP("SV_XIAM_V044 non configurato");
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "input v6 letto");
+    CHECK_INT("tutte le osservazioni Block VIII v6 restano distinte", s->n_assignments, 622);
+    CHECK(xiam_load_output_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xo"), "risultato v6 di riferimento letto");
+    snprintf(s->settings.xiam_path, sizeof(s->settings.xiam_path), "%s", program);
+    double reference[MAX_XIAM_PARAMS], first[MAX_XIAM_PARAMS];
+    int active[MAX_XIAM_PARAMS], n_active = 0;
+    for (int i = 0; i < s->xiam.n_params; i++) {
+        if (!s->xiam.params[i].fit_method) continue;
+        active[n_active] = i; reference[n_active] = s->xiam.params[i].value_ghz;
+        s->xiam.params[i].value_ghz *= 1.01;
+        n_active++;
+    }
+    CHECK(n_active > 8, "v6 espone tutti i parametri di fit attesi (%d)", n_active);
+    CHECK(xiam_save_fit_file(s, work_path("v6_perturbed_fit.xi")), "input v6 perturbato esportato per audit");
+    CHECK(xiam_fit(s), "primo fit v6 dopo perturbazione dell'1%%");
+    CHECK(s->xiam.fit_output_path[0] != '\0', "report nativo fit.xo trattenuto");
+    CHECK(s->xiam.output_path[0] != '\0' && s->n_pred > 100,
+          "previsione MHz aggiornata e mantenuta dopo il fit");
+    for (int k = 0; k < n_active; k++) first[k] = s->xiam.params[active[k]].value_ghz;
+    CHECK(xiam_fit(s), "secondo fit v6 consecutivo");
+    for (int k = 0; k < n_active; k++) {
+        const XiamParameter *p = &s->xiam.params[active[k]];
+        double scale = fabs(reference[k]) > 1e-12 ? fabs(reference[k]) : 1e-12;
+        double recovered = fabs(first[k] - reference[k]) / scale;
+        double sequential = fabs(p->value_ghz - first[k]) / scale;
+        fprintf(g_tlog, "    v6 %-8s ref=% .12g fit1=% .12g fit2=% .12g recover=%.4g repeat=%.4g\n",
+                p->name, reference[k], first[k], p->value_ghz, recovered, sequential);
+        CHECK(isfinite(p->value_ghz), "v6 %s: il secondo fit deve restare finito", p->name);
+        CHECK(recovered < 0.002, "v6 %s: il primo fit deve recuperare il riferimento (%.4g)", p->name, recovered);
+        CHECK(sequential < 0.002, "v6 %s: un secondo fit non deve divergere (%.4g)", p->name, sequential);
+    }
     DONE();
 }
 
@@ -3608,6 +3652,7 @@ static const Test TESTS[] = {
     {"test_xiam_project_keeps_independent_hamiltonians", test_xiam_project_keeps_independent_hamiltonians},
     {"test_xiam_v044_runner_when_configured", test_xiam_v044_runner_when_configured},
     {"test_xiam_v044_fit_when_configured", test_xiam_v044_fit_when_configured},
+    {"test_xiam_v6_consecutive_fit_when_configured", test_xiam_v6_consecutive_fit_when_configured},
     {"test_blend_pair_survives_reload",        test_blend_pair_survives_reload},
     {"test_save_skips_invalid_nqn",            test_save_skips_invalid_nqn},
     {"test_reload_reports_collisions",         test_reload_reports_collisions},
