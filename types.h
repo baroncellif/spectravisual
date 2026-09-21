@@ -435,6 +435,15 @@ typedef struct {
     char diagnostics[8192];
 } XiamHamiltonian;
 
+/* The constants of one model as they were before a fit ran.  XIAM rewrites
+ * them in place from its report, so Undo fit needs the previous set, exactly
+ * like Pred&Fit's pre-fit snapshot. */
+typedef struct {
+    int model_id;
+    int n_params;
+    XiamParameter params[MAX_XIAM_PARAMS];
+} XiamFitSnapshot;
+
 /* A separate, one-Hamiltonian XIAM workspace.  It retains the input text so
  * directives XIAM knows but SpectraVisual does not are never discarded.
  * The legacy-looking fields below are the active Hamiltonian projection;
@@ -463,6 +472,9 @@ typedef struct {
     int edit_assignment;       /* assignment currently edited in Lines, or -1 */
     int edit_name_row;         /* parameter whose native name is edited, or -1 */
     int edit_hamiltonian_row;  /* Hamiltonian renamed in the sidebar, or -1 */
+    int hover_line;            /* assignment under the pointer, or -1 */
+    XiamFitSnapshot *history;  /* pre-fit constants, newest last */
+    int history_count, history_capacity;
     int edit_assignment_field; /* 0=observed MHz, 1=uncertainty MHz */
     int session_dirty;
     int session_loading_hamiltonian; /* session parser's current H, or -1 */

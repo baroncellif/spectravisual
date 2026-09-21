@@ -1130,6 +1130,7 @@ void xiam_init(AppState *s) {
     s->xiam.edit_assignment = -1;
     s->xiam.edit_name_row = -1;
     s->xiam.edit_hamiltonian_row = -1;
+    s->xiam.hover_line = -1;
     s->xiam.active_hamiltonian = -1;
     s->xiam.active_tab = 0;
     s->xiam.max_j = 30;
@@ -1143,7 +1144,13 @@ void xiam_close(AppState *s) {
     xiam_store_active(x);
     x->renderer=NULL; x->window=NULL; x->window_id=0; x->open=0; x->edit_param=XIAM_EDIT_NONE;
 }
-void xiam_dispose(AppState *s) { xiam_close(s); }
+void xiam_dispose(AppState *s) {
+    xiam_close(s);
+    if (!s) return;
+    free(s->xiam.history);
+    s->xiam.history = NULL;
+    s->xiam.history_count = s->xiam.history_capacity = 0;
+}
 
 void xiam_open(AppState *s) {
     if (!s) return; XiamState *x=&s->xiam;
@@ -1352,13 +1359,74 @@ int xiam_calculate(AppState *s) {
     return ok;
 }
 
+/* One entry per fit, tagged with its model: the newest entry of the active
+ * Hamiltonian is what Undo fit restores, so a project with several .xi models
+ * cannot undo one model's fit into another's constants. */
+static int xiam_push_fit_snapshot(AppState *s) {
+    XiamState *x = &s->xiam;
+    if (x->history_count == x->history_capacity) {
+        int capacity = x->history_capacity ? x->history_capacity * 2 : 4;
+        XiamFitSnapshot *grown = realloc(x->history, (size_t)capacity * sizeof(*grown));
+        if (!grown) {
+            snprintf(x->status, sizeof(x->status), "Cannot reserve XIAM fit-history memory.");
+            return 0;
+        }
+        x->history = grown;
+        x->history_capacity = capacity;
+    }
+    XiamFitSnapshot *snap = &x->history[x->history_count++];
+    snap->model_id = x->model_id;
+    snap->n_params = x->n_params;
+    memcpy(snap->params, x->params, sizeof(snap->params));
+    return 1;
+}
+
+/* Restoring by native name, not by row: a constant added or removed after the
+ * fit must not shift the previous values onto the wrong keywords. */
+static int xiam_undo_last_fit(AppState *s) {
+    if (!s) return 0;
+    XiamState *x = &s->xiam;
+    int at = -1;
+    for (int i = x->history_count - 1; i >= 0; i--)
+        if (x->history[i].model_id == x->model_id) { at = i; break; }
+    if (at < 0) {
+        snprintf(x->status, sizeof(x->status), "No earlier fit state for this Hamiltonian in this session.");
+        return 0;
+    }
+    const XiamFitSnapshot *snap = &x->history[at];
+    int restored = 0;
+    for (int i = 0; i < snap->n_params; i++) {
+        int pi = xiam_find_parameter(x, snap->params[i].name);
+        if (pi < 0) continue;
+        x->params[pi].value_ghz = snap->params[i].value_ghz;
+        x->params[pi].error_ghz = snap->params[i].error_ghz;
+        restored++;
+    }
+    for (int i = at; i + 1 < x->history_count; i++) x->history[i] = x->history[i + 1];
+    x->history_count--;
+    x->fit_output_path[0] = '\0';
+    xiam_update_axis_convention(x);
+    xiam_store_active(x);
+    xiam_mark_session_dirty(s);
+    int predicted = xiam_calculate(s);
+    snprintf(x->status, sizeof(x->status),
+             predicted ? "Restored the constants of %d parameters from before the fit; prediction refreshed."
+                       : "Restored the constants of %d parameters from before the fit; run Predict to refresh the catalogue.",
+             restored);
+    xiam_store_active(x);
+    return 1;
+}
+
 int xiam_fit(AppState *s) {
-    if (!xiam_run(s,1)) return 0;
+    if (!xiam_push_fit_snapshot(s)) return 0;
+    if (!xiam_run(s,1)) { s->xiam.history_count--; return 0; }
     int updated = xiam_parse_fit_parameters(&s->xiam, s->xiam.fit_output_path);
     if (!updated) {
         snprintf(s->xiam.status, sizeof(s->xiam.status),
                  "XIAM completed but no fitted-parameter report was recognised; see %s.",
                  s->xiam.fit_output_path);
+        /* Nothing was rewritten, so there is nothing to undo. */
+        s->xiam.history_count--;
         xiam_store_active(&s->xiam);
         return 0;
     }
@@ -2172,7 +2240,8 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         int ai = xiam_assignment_index(s, x->lines_scroll + visible); if (ai < 0) break;
         Assignment *a = &s->assignments[ai]; int y = u->rows.y + visible * u->row_h;
         SDL_Rect row = {u->rows.x, y, u->rows.w, u->row_h - 2};
-        if (visible & 1) ui_fill(r, row, UI_CHROME);
+        if (ai == x->hover_line) ui_fill(r, row, UI_RAISED);
+        else if (visible & 1) ui_fill(r, row, UI_CHROME);
         ui_text(r, UI_FONT_MONO_SM, a->fit_enabled ? "[x]" : "[ ]", row.x + 11, y + 6, a->fit_enabled ? UI_OK : UI_FAINT);
         xiam_format_transition(&a->pred, b, sizeof(b)); ui_text_right(r, UI_FONT_MONO_SM, b, qns_right, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM);
         if (x->edit_param == XIAM_EDIT_LINE_OBS && x->edit_assignment == ai)
@@ -2234,7 +2303,8 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     for (int visible = 0; visible < max_rows; visible++) {
         int ai = xiam_assignment_index(s, first + visible); if (ai < 0) break;
         Assignment *a = &s->assignments[ai]; int ry = split + 32 + visible * u->row_h;
-        if (visible & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, u->table.w - 2, u->row_h - 2}, UI_CHROME);
+        if (ai == x->hover_line) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, u->table.w - 2, u->row_h - 2}, UI_RAISED);
+        else if (visible & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, u->table.w - 2, u->row_h - 2}, UI_CHROME);
         double calc = xiam_assignment_calculated(s, a);
         int have_report = x->fit_output_path[0] != '\0';
         int have_residual = have_report && a->fit_enabled && calc != 0.0;
@@ -2256,11 +2326,18 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         } else {
             ui_text(r, UI_FONT_MONO_SM, "not in refreshed catalogue", obs_right + 16, ry + 6, UI_DIM);
         }
+        ui_draw_icon(r, UI_ICON_CLOSE,
+                     (SDL_Rect){u->table.x + u->table.w - 26, ry + (u->row_h - 2 - 14) / 2, 14, 14},
+                     UI_DANGER_TEXT);
     }
+    ui_text(r, UI_FONT_MONO_SM, "DEL", u->table.x + u->table.w - 32, split + 10, UI_DIM);
     ui_button(r, u->btn_a, "Fit", -1, UI_BTN_PRIMARY, 0, mx, my, down);
-    ui_button(r, u->btn_b, "Predict updated model", -1, UI_BTN_QUIET, 0, mx, my, down);
-    ui_button(r, u->btn_c, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
-    int lx = u->btn_c.x + u->btn_c.w + 24, ly = u->footer.y + 20;
+    int can_undo = 0;
+    for (int i = 0; i < x->history_count; i++) if (x->history[i].model_id == x->model_id) can_undo = 1;
+    ui_button(r, u->btn_b, "Undo fit", -1, UI_BTN_QUIET, 0, can_undo ? mx : -999, my, down);
+    ui_button(r, u->btn_c, "Predict updated model", -1, UI_BTN_QUIET, 0, mx, my, down);
+    ui_button(r, u->btn_d, "Save fit .xi…", -1, UI_BTN_QUIET, 0, mx, my, down);
+    int lx = u->btn_d.x + u->btn_d.w + 24, ly = u->footer.y + 20;
     const char *band[4] = {"0-1.5", "1.5-2.5", "2.5-4", ">4 sigma"};
     double mid[4] = {0.5, 2.0, 3.2, 5.0};
     for (int i = 0; i < 4; i++) {
@@ -2447,6 +2524,14 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         xiam_clamp_scrolls(s, &u);
         return 1;
     }
+    if (e->type == SDL_MOUSEMOTION && e->motion.windowID == id) {
+        x->hover_line = -1;
+        if (x->active_tab == 1 && point_in_rect(e->motion.x, e->motion.y, u.rows))
+            x->hover_line = xiam_assignment_index(s, x->lines_scroll + (e->motion.y - u.rows.y) / u.row_h);
+        else if (x->active_tab == 2 && point_in_rect(e->motion.x, e->motion.y, u.fit_obs_rows))
+            x->hover_line = xiam_assignment_index(s, x->fitting_scroll + (e->motion.y - u.fit_obs_rows.y) / u.row_h);
+        return 1;
+    }
     if (e->type != SDL_MOUSEBUTTONDOWN || e->button.windowID != id) return 0;
     int px = e->button.x, py = e->button.y;
     for (int i = 0; i < XIAM_TAB_COUNT; i++) if (point_in_rect(px, py, u.tab[i])) { xiam_edit_commit(s); x->active_tab = i; x->delete_hamiltonian_id = 0; return 1; }
@@ -2531,9 +2616,25 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_fit(s); return 1; }
     } else if (x->active_tab == 2) {
+        /* Fitting and Lines are two views of the same rows, so the residual
+           table includes and removes an observation the same way. */
+        if (point_in_rect(px, py, u.fit_obs_rows)) {
+            int ai = xiam_assignment_index(s, x->fitting_scroll + (py - u.fit_obs_rows.y) / u.row_h);
+            if (ai >= 0) {
+                if (px >= u.table.x + u.table.w - 30) xiam_delete_assignment(s, ai);
+                else {
+                    s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled;
+                    save_assignments(s);
+                    xiam_mark_session_dirty(s);
+                }
+                xiam_clamp_scrolls(s, &u);
+            }
+            return 1;
+        }
         if (point_in_rect(px, py, u.btn_a)) { xiam_fit(s); return 1; }
-        if (point_in_rect(px, py, u.btn_b)) { xiam_calculate(s); return 1; }
-        if (point_in_rect(px, py, u.btn_c)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
+        if (point_in_rect(px, py, u.btn_b)) { xiam_undo_last_fit(s); return 1; }
+        if (point_in_rect(px, py, u.btn_c)) { xiam_calculate(s); return 1; }
+        if (point_in_rect(px, py, u.btn_d)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
     } else if (x->active_tab == 3) {
         if (point_in_rect(px, py, u.rows)) { int i = x->hamiltonians_scroll + (py - u.rows.y) / u.row_h; if (i >= 0 && i < x->n_hamiltonians) { xiam_select_hamiltonian(x, i); x->delete_hamiltonian_id = 0; } return 1; }
         if (point_in_rect(px, py, u.btn_a)) {
@@ -2600,6 +2701,7 @@ void xiam_write_session(AppState *s, FILE *fp) {
 void xiam_session_begin(AppState *s) {
     if (!s) return;
     if (s->xiam.window) xiam_close(s);
+    free(s->xiam.history);
     memset(&s->xiam, 0, sizeof(s->xiam));
     xiam_init(s);
     s->xiam.session_loading_hamiltonian = -1;

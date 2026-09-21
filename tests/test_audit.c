@@ -1388,6 +1388,68 @@ static int test_xiam_mixed_fit_and_prediction_output_keeps_report(void) {
     DONE();
 }
 
+/* Pred&Fit's Fitting page has "Undo fit"; XIAM's had no way back at all, and
+ * XIAM rewrites its constants in place from the report.  The pre-fit set is
+ * restored by native name, per Hamiltonian. */
+static int test_xiam_undo_fit_restores_the_parameters(void) {
+    AppState *s = new_state();
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "primo modello XIAM caricato");
+    XiamState *x = &s->xiam;
+    int first_id = x->model_id;
+
+    int bj = xiam_find_parameter(x, "BJ"), dj = xiam_find_parameter(x, "DJ");
+    CHECK(bj >= 0 && dj >= 0, "BJ e DJ presenti");
+    if (bj < 0 || dj < 0) DONE();
+    double bj0 = x->params[bj].value_ghz, dj0 = x->params[dj].value_ghz;
+
+    CHECK(!xiam_undo_last_fit(s), "senza fit non c'e' nulla da annullare");
+    CHECK(strstr(x->status, "No earlier fit state") != NULL, "diagnostica esplicita: %s", x->status);
+
+    /* What a fit does: snapshot, then rewrite the constants from the report. */
+    CHECK(xiam_push_fit_snapshot(s), "stato pre-fit registrato");
+    x->params[bj].value_ghz = 0.3;  x->params[bj].error_ghz = 1e-7;
+    x->params[dj].value_ghz = 5e-7; x->params[dj].error_ghz = 2e-9;
+
+    /* A constant added after the fit must survive the undo untouched: this is
+       why the snapshot is restored by name and not row by row. */
+    int added = xiam_add_parameter(s);
+    CHECK(added >= 0, "costante aggiunta dopo il fit");
+    x->edit_name_row = added;
+    xiam_edit_begin(x, XIAM_EDIT_PARAM_NAME);
+    snprintf(x->edit_buf, sizeof(x->edit_buf), "HJK");
+    x->edit_caret = x->edit_anchor = (int)strlen(x->edit_buf);
+    xiam_edit_commit(s);
+    int hjk = xiam_find_parameter(x, "HJK");
+    CHECK(hjk >= 0, "la costante aggiunta si trova");
+    if (hjk >= 0) x->params[hjk].value_ghz = 1.25e-8;
+
+    CHECK(xiam_undo_last_fit(s), "il fit viene annullato");
+    bj = xiam_find_parameter(x, "BJ"); dj = xiam_find_parameter(x, "DJ");
+    hjk = xiam_find_parameter(x, "HJK");
+    CHECK(bj >= 0 && dj >= 0 && hjk >= 0, "le costanti sono ancora tutte presenti");
+    if (bj < 0 || dj < 0 || hjk < 0) DONE();
+    CHECK_DBL("BJ torna al valore pre-fit", x->params[bj].value_ghz, bj0, 1e-15);
+    CHECK_DBL("DJ torna al valore pre-fit", x->params[dj].value_ghz, dj0, 1e-18);
+    CHECK_DBL("l'errore di BJ torna a quello pre-fit", x->params[bj].error_ghz, 0.0, 1e-18);
+    CHECK_DBL("la costante aggiunta dopo il fit non viene toccata",
+              x->params[hjk].value_ghz, 1.25e-8, 1e-20);
+    CHECK_INT("il report di fit annullato non resta esposto", (int)strlen(x->fit_output_path), 0);
+
+    CHECK(!xiam_undo_last_fit(s), "un solo annullamento per un solo fit");
+
+    /* The history belongs to the Hamiltonian it was taken on. */
+    CHECK(xiam_push_fit_snapshot(s), "nuovo stato pre-fit sul primo modello");
+    x->params[bj].value_ghz = 0.9;
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/2n_v3_fit.xi"), "secondo modello caricato");
+    CHECK(x->model_id != first_id, "il secondo modello e' un altro proprietario");
+    CHECK(!xiam_undo_last_fit(s), "il secondo modello non annulla il fit del primo");
+    CHECK(xiam_load_input_file(s, SV_TESTS_DIR "/../xiam_examples/v6_fit.xi"), "ritorno al primo modello");
+    CHECK(xiam_undo_last_fit(s), "il primo modello annulla il proprio fit");
+    bj = xiam_find_parameter(x, "BJ");
+    if (bj >= 0) CHECK_DBL("e recupera il proprio BJ", x->params[bj].value_ghz, bj0, 1e-15);
+    DONE();
+}
+
 /* Pred&Fit's Hamiltonians page saves the session, restores it, and imports
  * every model from .fit/load.  XIAM's page had only open/reload/remove, all
  * three of which now live in the sidebar, and xiam_import_load_dir could not
@@ -4549,6 +4611,7 @@ static const Test TESTS[] = {
     {"test_xiam_fit_report_updates_parameters", test_xiam_fit_report_updates_parameters},
     {"test_xiam_rejects_legacy_workspace_input", test_xiam_rejects_legacy_workspace_input},
     {"test_xiam_mixed_fit_and_prediction_output_keeps_report", test_xiam_mixed_fit_and_prediction_output_keeps_report},
+    {"test_xiam_undo_fit_restores_the_parameters", test_xiam_undo_fit_restores_the_parameters},
     {"test_xiam_hamiltonians_tab_saves_and_imports", test_xiam_hamiltonians_tab_saves_and_imports},
     {"test_xiam_navigator_manages_the_project", test_xiam_navigator_manages_the_project},
     {"test_xiam_field_editor_matches_predfit", test_xiam_field_editor_matches_predfit},
