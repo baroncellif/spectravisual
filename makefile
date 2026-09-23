@@ -1,6 +1,7 @@
 # --- Compiler and Project Name ---
 CC = gcc
 TARGET = spectravisual
+UNAME_S := $(shell uname -s)
 
 # --- Source and Object Files ---
 SRCS = main.c view.c controller.c algorithms.c layout.c loader.c intensity_fit.c intensity_window.c predfit.c settings.c ui_icons.c xiam.c
@@ -62,7 +63,9 @@ all: $(TARGET)
 # Link the object files into the executable
 $(TARGET): $(OBJS) $(CXXOBJS)
 	$(CXX) $(OBJS) $(CXXOBJS) -o $(TARGET) $(SDL_LDFLAGS) $(LDFLAGS)
+ifeq ($(UNAME_S),Darwin)
 	codesign --force --sign - $(TARGET)
+endif
 	@echo "Build successful! Run with: ./$(TARGET) exp.csv pred.cat"
 
 # Compile source files into object files
@@ -97,7 +100,7 @@ clean:
 run: $(TARGET)
 	./$(TARGET) exp.csv pred.cat
 
-# There is no deploy step: the binary on the PATH is ./spectravisual in this
-# folder, and the link rule above already signs it.
+# There is no deploy step: the binary is ./spectravisual in this folder.
+# On macOS the link rule also applies an ad-hoc signature.
 
 .PHONY: all clean run test
