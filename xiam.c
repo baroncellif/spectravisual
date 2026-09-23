@@ -625,16 +625,36 @@ static void xiam_adopt_prediction(AppState *s, PredLine *rows, int n, double lo,
     s->error_message[0] = '\0';
 }
 
-static int xiam_fatal_output(const char *path, char *diag, size_t diag_size) {
+/* `fitting` selects a second, more reliable failure signal on top of the
+ * literal error text below.  XIAM-2NQ's Fortran source guards dozens of
+ * numerical/input conditions with a bare `stop '<message>'` (e.g. the SVD
+ * going singular mid-fit: "SVDSYDC: Error in hdiag (sydsycd)"), and a bare
+ * Fortran STOP exits with status 0 — invisible to the caller's exit-code
+ * check.  Enumerating every one of those messages is a losing game, and a
+ * blanket "contains the word error" match false-positives on legitimate
+ * output ("Errors of fitted linear combinations" prints on every successful
+ * fit).  What a completed fit always prints, and a fit that stopped early
+ * never does, is its closing "Parameters and Errors" report — so for a
+ * fitting run, never seeing that report is treated as fatal regardless of
+ * which of XIAM's own guards produced it. */
+static int xiam_fatal_output(const char *path, char *diag, size_t diag_size, int fitting) {
     FILE *fp = fopen(path, "rb"); if (!fp) return 1;
-    char line[512]; int fatal = 0; size_t used = 0;
+    char line[512]; int fatal = 0, reached_report = 0; size_t used = 0;
     if (diag_size) diag[0] = '\0';
     while (fgets(line, sizeof(line), fp)) {
         char low[512]; xiam_lower(low, sizeof(low), line);
         if (strstr(low, "input error") || strstr(low, "fatal error") || strstr(low, "segmentation")) fatal = 1;
+        if (strstr(line, "Parameters") && strstr(line, "Errors")) reached_report = 1;
         if (fatal && used + strlen(line) + 1 < diag_size) { strcpy(diag + used, line); used += strlen(line); }
     }
-    fclose(fp); return fatal;
+    fclose(fp);
+    if (fitting && !fatal && !reached_report) {
+        fatal = 1;
+        snprintf(diag, diag_size,
+                 "XIAM stopped before reporting fitted parameters (likely a numerical "
+                 "failure such as a singular fit matrix); see the retained fit.xo.");
+    }
+    return fatal;
 }
 
 static void xiam_replace_number(char *out, size_t size, const char *line, double value) {
@@ -685,6 +705,17 @@ static int xiam_block_end(const XiamState *x, int wanted) {
         char *at = xiam_ltrim(work);
         xiam_lower(lower, sizeof(lower), at);
         if (xiam_is_comment(at)) {
+            /* XIAM itself ends a block at the blank line following its
+               content (xiam_write_input relies on the same rule for block
+               II).  The decorative "\----" separator that introduces the
+               next block's heading is not part of the current block, even
+               though it is a non-blank comment: stop here, before it, so a
+               newly inserted line lands inside the wanted block rather than
+               after XIAM's own terminator. */
+            if (!*at) {
+                if (block == wanted && tail >= 0) break;
+                continue;
+            }
             /* Longest Roman numeral first: II is a prefix of III, VII of VIII. */
             int heading = strstr(lower, "block viii") ? 8 : strstr(lower, "block vii") ? 7 :
                           strstr(lower, "block vi") ? 6 : strstr(lower, "block v") ? 5 :
@@ -696,12 +727,139 @@ static int xiam_block_end(const XiamState *x, int wanted) {
                 else if (tail >= 0) break;     /* the wanted block has ended */
                 continue;
             }
-            if (block == wanted && *at) tail = i;
+            if (block == wanted) tail = i;
             continue;
         }
         if (block == wanted) tail = i;
     }
     return tail < 0 ? -1 : tail + 1;
+}
+
+/* Block III in the native XIAM-2NQ (Sven Herbers) source's own parstr table:
+ * rotation, D-type CD, H-type CD, quadrupole, top-top, spin-rotation,
+ * dipole, then per-top internal rotation.  A constant named after XIAM starts
+ * unranked ("NEW"); it only snaps into this order once it is renamed to a
+ * keyword XIAM recognises. */
+static const char *const XIAM_CANONICAL_ORDER[] = {
+    "BJ", "BK", "B-",
+    "DJ", "DJK", "DK", "dj", "dk",
+    "H_J", "HJK", "HKJ", "H_K", "h_j", "hjk", "h_k",
+    "chi_z", "chi-", "chi_xy", "chi_xz", "chi_yz",
+    "F12", "Vss", "Vcc",
+    "C+", "C_z", "C-",
+    "mu_x", "mu_y", "mu_z",
+    "V1n", "V2n", "F", "rho", "beta", "gamma",
+    "Dpi2J", "Dpi2K", "Dpi2-", "Dc3J", "F0", "epsil", "delta",
+};
+#define XIAM_CANONICAL_ORDER_N ((int)(sizeof(XIAM_CANONICAL_ORDER) / sizeof(XIAM_CANONICAL_ORDER[0])))
+
+/* Case-sensitive: XIAM tells DJ from dj, and H_K from h_k, by case alone. A
+ * trailing "_<digit>" (a top/state suffix, e.g. "V1n_2") is matched on its
+ * base keyword and ranked just after the bare/"_1" form of the same name. */
+static int xiam_canonical_rank(const char *name) {
+    if (!name || !*name) return INT_MAX;
+    char base[48]; size_t n = strlen(name); int suffix = 0;
+    if (n >= 2 && name[n - 2] == '_' && isdigit((unsigned char)name[n - 1])) {
+        suffix = name[n - 1] - '0'; n -= 2;
+    }
+    if (n >= sizeof(base)) n = sizeof(base) - 1;
+    memcpy(base, name, n); base[n] = '\0';
+    for (int i = 0; i < XIAM_CANONICAL_ORDER_N; i++)
+        if (!strcmp(base, XIAM_CANONICAL_ORDER[i])) return i * 8 + suffix;
+    return INT_MAX;
+}
+
+/* Relocate one source line to index `to` (counted as if `from` were already
+ * removed), fixing up every parameter's source_line/fit_source_line so each
+ * still points at the line it actually owns. Mirrors xiam_source_insert_line's
+ * index bookkeeping, but for a move instead of a fresh insertion. */
+static void xiam_source_move_line(XiamState *x, int from, int to) {
+    if (!x || from < 0 || from >= x->n_source_lines) return;
+    if (to < 0) to = 0;
+    if (to > x->n_source_lines - 1) to = x->n_source_lines - 1;
+    if (from == to) return;
+    char moved[256]; snprintf(moved, sizeof(moved), "%s", x->source_lines[from]);
+    int dir = to > from ? 1 : -1;
+    for (int i = from; i != to; i += dir)
+        memcpy(x->source_lines[i], x->source_lines[i + dir], sizeof(x->source_lines[0]));
+    snprintf(x->source_lines[to], sizeof(x->source_lines[0]), "%s", moved);
+    for (int k = 0; k < x->n_params; k++) {
+        int *idx[2] = { &x->params[k].source_line, &x->params[k].fit_source_line };
+        for (int j = 0; j < 2; j++) {
+            if (*idx[j] == from) { *idx[j] = to; continue; }
+            if (dir > 0) { if (*idx[j] > from && *idx[j] <= to) (*idx[j])--; }
+            else         { if (*idx[j] < from && *idx[j] >= to) (*idx[j])++; }
+        }
+    }
+}
+
+/* Keep the on-screen table in the same order as the file: a plain insertion
+ * sort by source_line, stable, cheap enough for a parameter table's size. */
+static void xiam_resort_parameters(XiamState *x) {
+    for (int i = 1; i < x->n_params; i++) {
+        XiamParameter key = x->params[i];
+        int j = i - 1;
+        while (j >= 0 && x->params[j].source_line > key.source_line) {
+            x->params[j + 1] = x->params[j]; j--;
+        }
+        x->params[j + 1] = key;
+    }
+}
+
+/* Move a just-(re)named constant's Block III declaration next to its
+ * canonical neighbours, so adding constants in any order still leaves the
+ * generated .xi — and the parameter table above it — in a logical sequence
+ * rather than piling new ones up at the block's tail. */
+static void xiam_reposition_parameter(XiamState *x, int row) {
+    if (!x || row < 0 || row >= x->n_params) return;
+    int from = x->params[row].source_line;
+    int rank = xiam_canonical_rank(x->params[row].name);
+    if (from < 0 || from >= x->n_source_lines || rank == INT_MAX) return;
+    /* A restored session can carry a params[] row whose declaration was
+       since commented out (deleted); never shuffle a disabled line around
+       as if it were live. */
+    if (xiam_is_comment(x->source_lines[from])) return;
+    int lower_line = -1, lower_rank = -1, higher_line = -1, higher_rank = INT_MAX;
+    for (int k = 0; k < x->n_params; k++) {
+        if (k == row) continue;
+        int line = x->params[k].source_line;
+        int r = xiam_canonical_rank(x->params[k].name);
+        if (line < 0 || line >= x->n_source_lines || r == INT_MAX ||
+            xiam_is_comment(x->source_lines[line])) continue;
+        if (r < rank && r > lower_rank) { lower_rank = r; lower_line = line; }
+        if (r > rank && r < higher_rank) { higher_rank = r; higher_line = line; }
+    }
+    int to = higher_line >= 0 ? higher_line : lower_line >= 0 ? lower_line + 1 : from;
+    if (to > from) to--; /* removing `from` first shifts a later target back by one */
+    xiam_source_move_line(x, from, to);
+    xiam_resort_parameters(x);
+}
+
+/* Repair a whole hamiltonian at once: used when restoring a session saved
+ * before this ordering existed (or any other already-scrambled .xi), so a
+ * constant misplaced by the old bug straightens out on load instead of
+ * needing to be deleted and re-added by hand.  One pass only fixes each
+ * constant against its *current* neighbours, so it is repeated until a pass
+ * makes no move, the same way repeated bubble passes converge on a sort. */
+static void xiam_reposition_all_parameters(XiamState *x) {
+    if (!x) return;
+    int n = x->n_params;
+    if (n > MAX_XIAM_PARAMS) n = MAX_XIAM_PARAMS;
+    if (n <= 0) return;
+    char names[MAX_XIAM_PARAMS][48];
+    for (int i = 0; i < n; i++) snprintf(names[i], sizeof(names[i]), "%s", x->params[i].name);
+    for (int pass = 0; pass < n; pass++) {
+        int moved = 0;
+        for (int i = 0; i < n; i++) {
+            int row = xiam_find_parameter(x, names[i]);
+            if (row < 0) continue;
+            int before = x->params[row].source_line;
+            xiam_reposition_parameter(x, row);
+            row = xiam_find_parameter(x, names[i]);
+            if (row >= 0 && x->params[row].source_line != before) moved = 1;
+        }
+        if (!moved) break;
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1410,7 +1568,7 @@ static int xiam_run(AppState *s, int fitting) {
     int status = 0; if (waitpid(pid, &status, 0) < 0) { snprintf(x->status,sizeof(x->status),"XIAM wait failed: %s",strerror(errno)); return 0; }
     if (fitting) snprintf(x->fit_output_path, sizeof(x->fit_output_path), "%s", out);
     else snprintf(x->output_path, sizeof(x->output_path), "%s", out);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || xiam_fatal_output(out,x->diagnostics,sizeof(x->diagnostics))) {
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || xiam_fatal_output(out,x->diagnostics,sizeof(x->diagnostics),fitting)) {
         snprintf(x->status,sizeof(x->status),"XIAM did not complete; see retained %s diagnostics.", fitting ? "fit.xo" : "prediction.xo"); return 0;
     }
     return 1;
@@ -2141,6 +2299,7 @@ static void xiam_edit_commit(AppState *s) {
                          p->fit_method == 2 ? "dqu" : p->fit_method == 3 ? "dqx" : "fit", wanted);
                 snprintf(x->source_lines[p->fit_source_line], sizeof(x->source_lines[0]), "%s", changed);
             }
+            xiam_reposition_parameter(x, row);
             xiam_update_axis_convention(x);
             snprintf(x->status, sizeof(x->status), "Renamed the constant to %s.", wanted);
         }
@@ -3439,6 +3598,11 @@ void xiam_session_finalize(AppState *s) {
         x->axis_override = override; x->axis_auto_convention = automatic; x->axis_convention = axis;
         x->simulate_excluded = excluded;
         xiam_update_axis_convention(x);
+        /* A session saved before constants were kept in canonical order (or
+           any other already-scrambled .xi) straightens out right here, once
+           per hamiltonian, instead of requiring every stray constant to be
+           deleted and re-added by hand. */
+        xiam_reposition_all_parameters(x);
         xiam_store_active(x);
     }
     int active = x->session_active_hamiltonian;
