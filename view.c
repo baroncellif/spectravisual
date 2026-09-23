@@ -190,7 +190,9 @@ static int pred_line_state(const PredLine *q) { return q->n_qn >= 4 ? q->M1l : 0
 /* The colour drawn for one assignment marker: flat by default, or matching
    the colour of its owning species' broadened trace when that option is on. */
 static SDL_Color assignment_marker_color(const AppState *state, const Assignment *a) {
-    if (!state->settings.assigned_color_by_species || a->hamiltonian_id <= 0)
+    /* 0 means no owner; XIAM's own ids are negative (see
+       xiam_model_id_from_path), so only 0 - not "<= 0" - means "skip". */
+    if (!state->settings.assigned_color_by_species || a->hamiltonian_id == 0)
         return state->settings.assigned_color;
     if (a->pred.backend == PRED_BACKEND_XIAM)
         return xiam_trace_color(state, a->hamiltonian_id);
