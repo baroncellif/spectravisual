@@ -436,6 +436,27 @@ static SDL_FPoint *plot_buf(int n) {
     return g_plot_buf;
 }
 
+/* Scratch "a marker already claimed this screen column" flags, grown once and
+   reused every frame.  Assigned-line markers are semi-transparent, so many
+   transitions that land on the same column at a busy zoom level would
+   otherwise blend on top of each other and read as a solid, oversaturated
+   blob instead of one marker at the configured opacity; the first marker to
+   reach a column keeps it and later ones at that column are skipped. */
+static unsigned char *g_marker_cols = NULL;
+static int            g_marker_cols_cap = 0;
+
+static unsigned char *marker_cols(int n) {
+    if (n < 1) n = 1;
+    if (n > g_marker_cols_cap) {
+        unsigned char *grown = (unsigned char *)realloc(g_marker_cols, (size_t)n);
+        if (!grown) return NULL;
+        g_marker_cols = grown;
+        g_marker_cols_cap = n;
+    }
+    memset(g_marker_cols, 0, (size_t)n);
+    return g_marker_cols;
+}
+
 /* The pointer as seen by the window this renderer draws.  SDL reports it
    relative to whichever window has the mouse, so with two viewers open the
    crosshair and hover state of one would otherwise be drawn from the other's
@@ -657,13 +678,27 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
     if (state->n_assignments > 0) {
         int marker_top = l->exp_y + 4;
         int marker_bottom = l->exp_y + l->exp_h - 4;
+        unsigned char *cols = marker_cols(l->exp_w);
+        int half = state->settings.assigned_width / 2;
 
         for (int i = 0; i < state->n_assignments; i++) {
             double f = state->assignments[i].exp_freq + state->exp_offset;   // displayed shifted
             if (f < state->vxmin || f > state->vxmax) continue;
 
-            SDL_Color ac = assignment_marker_color(state, &state->assignments[i]);
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
+            if (cols) {
+                int col = px - l->exp_x;
+                if (col < 0) col = 0;
+                if (col >= l->exp_w) col = l->exp_w - 1;
+                int lo = col - half < 0 ? 0 : col - half;
+                int hi = col + half >= l->exp_w ? l->exp_w - 1 : col + half;
+                int claimed = 0;
+                for (int c = lo; c <= hi; c++) if (cols[c]) { claimed = 1; break; }
+                if (claimed) continue;
+                for (int c = lo; c <= hi; c++) cols[c] = 1;
+            }
+
+            SDL_Color ac = assignment_marker_color(state, &state->assignments[i]);
             SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, assignment_marker_alpha(state, 130));
             ui_thick_line(ren, px, marker_top, px, marker_bottom, state->settings.assigned_width);
             SDL_Rect cap = {px - 2, marker_top, 5, 5};
@@ -962,12 +997,24 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
         // Draw assigned-frequency dots in the prediction pane as a compact locator.
         if (state->n_assignments > 0) {
             int marker_y = l->pred_y + l->pred_h - 5;
+            unsigned char *cols = marker_cols(l->pred_w);
 
             for (int i=0; i<state->n_assignments; i++) {
                 double f = state->assignments[i].exp_freq;
                 if (f < state->pvxmin || f > state->pvxmax) continue;
 
                 int px = l->pred_x + (f - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
+                if (cols) {
+                    int col = px - l->pred_x;
+                    if (col < 0) col = 0;
+                    if (col >= l->pred_w) col = l->pred_w - 1;
+                    int lo = col - 2 < 0 ? 0 : col - 2;
+                    int hi = col + 2 >= l->pred_w ? l->pred_w - 1 : col + 2;
+                    int claimed = 0;
+                    for (int c = lo; c <= hi; c++) if (cols[c]) { claimed = 1; break; }
+                    if (claimed) continue;
+                    for (int c = lo; c <= hi; c++) cols[c] = 1;
+                }
 
                 SDL_Color ac2 = assignment_marker_color(state, &state->assignments[i]);
                 SDL_SetRenderDrawColor(ren, ac2.r, ac2.g, ac2.b, assignment_marker_alpha(state, 200));
