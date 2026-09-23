@@ -1306,8 +1306,6 @@ static void preview_record_sources(IntensityFitWindow *w, const AppState *s) {
     w->preview_src_pred = s->pred_lines;
     w->preview_src_n_pred = s->n_pred;
     w->preview_src_pred_max = s->pred_global_max;
-    w->preview_src_lin = s->lin_data;
-    w->preview_src_n_lin = s->n_lin_data;
     w->preview_src_n_assignments = s->n_assignments;
     w->preview_src_n_spectra = s->n_spectra;
     for (int i = 0; i < MAX_SPECTRA; i++) {
@@ -1322,7 +1320,6 @@ static int preview_sources_changed(const IntensityFitWindow *w, const AppState *
     if (w->preview_generation != w->result_generation) return 1;
     if (w->preview_src_pred != s->pred_lines || w->preview_src_n_pred != s->n_pred) return 1;
     if (w->preview_src_pred_max != s->pred_global_max) return 1;
-    if (w->preview_src_lin != s->lin_data || w->preview_src_n_lin != s->n_lin_data) return 1;
     if (w->preview_src_n_assignments != s->n_assignments) return 1;
     if (w->preview_src_n_spectra != s->n_spectra) return 1;
     for (int i = 0; i < s->n_spectra; i++)

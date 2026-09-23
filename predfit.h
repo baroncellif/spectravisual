@@ -62,6 +62,9 @@ typedef struct {
 
 int predfit_plot_species(const AppState *state, PredfitSpeciesTrace *out, int max);
 SDL_Color predfit_species_color(const PickettSpecies *species, int fallback_index);
+/* Same colour, found by Hamiltonian id and state index instead of walking the
+   current plot.  Alpha 0 when that Hamiltonian/state does not exist. */
+SDL_Color predfit_species_color_for(const AppState *state, int hamiltonian_id, int state_index);
 void predfit_adopt_simulation(AppState *state);
 int predfit_move_hamiltonian(AppState *state, int index, int delta);
 int predfit_move_species(AppState *state, int index, int delta);

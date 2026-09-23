@@ -9,7 +9,6 @@
 #define MAX_PEAKS 10000
 #define MAX_ASSIGNMENTS 5000
 #define MAX_SELECTED 100
-#define MAX_LIN_POINTS 50000 // New constant for LIN file
 #define MAX_SPECTRA 8         // max simultaneously loaded experimental spectra
 #define MAX_PENDING_LOADS 32  // files/actions waiting to be opened, in FIFO order
 #define MAX_PICKETT_PARAMS 128
@@ -260,8 +259,6 @@ typedef struct {
     const PredLine *preview_src_pred;
     int preview_src_n_pred;
     double preview_src_pred_max;
-    const double *preview_src_lin;
-    int preview_src_n_lin;
     int preview_src_n_assignments;
     int preview_src_n_spectra;
     const Point *preview_src_raw[MAX_SPECTRA];
@@ -527,6 +524,7 @@ typedef struct {
     int  stick_opacity;                  /* percent, predicted sticks            */
     SDL_Color peak_color;                /* found peaks                      */
     SDL_Color assigned_color;            /* already-assigned frequencies     */
+    int  assigned_color_by_species;      /* colour each marker by its owning species instead */
     SDL_Color bar_color;                 /* the movable bar                  */
     SDL_Color cursor_color;              /* pointer crosshair and readout    */
     int  show_grid;
@@ -691,6 +689,7 @@ struct AppState {
     Point *current_pts;
     int n_pts;
     int data_loaded;
+    int aux_loaded;           // assignments.txt/exclusions read at least once
     int verbose;
     int show_help;
     int export_requested;
@@ -702,10 +701,6 @@ struct AppState {
     PredLine *pred_lines;
     int n_pred;
     double pred_global_max;
-
-    // NEW: Assigned LIN Data
-    double *lin_data;
-    int n_lin_data;
 
     // Ranges
     double xmin, xmax, ymin, ymax; 

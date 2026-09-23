@@ -2869,6 +2869,29 @@ int predfit_plot_species(const AppState *s, PredfitSpeciesTrace *out, int max) {
     return n;
 }
 
+/* The colour of one Pickett state's broadened trace, found by Hamiltonian id
+   and state index rather than by walking the current plot - used to colour an
+   assignment marker like its owning species even when nothing is simulated
+   right now.  Alpha 0 means no such Hamiltonian/state exists. */
+SDL_Color predfit_species_color_for(const AppState *s, int hamiltonian_id, int state_index) {
+    SDL_Color none = {0, 0, 0, 0};
+    if (!s || hamiltonian_id <= 0) return none;
+    const PredFitState *p = &s->predfit;
+    int h = hamiltonian_index_by_id(p, hamiltonian_id);
+    if (h < 0) return none;
+    const PredFitSnapshot *m = h == p->active_hamiltonian ? NULL : &p->hamiltonian[h].model;
+    int n_states = m ? m->n_species : p->n_species;
+    for (int k = 0; k < n_states; k++) {
+        const PickettSpecies *sp = m ? &m->species[k] : &p->species[k];
+        if (sp->state_index == state_index) return predfit_species_color(sp, k);
+    }
+    if (n_states > 0) {
+        const PickettSpecies *sp = m ? &m->species[0] : &p->species[0];
+        return predfit_species_color(sp, 0);
+    }
+    return none;
+}
+
 /* After an action that changed a model, refresh the plot the way it was
    built: the whole simulation when several models share it, the active
    Hamiltonian alone otherwise. */

@@ -76,6 +76,7 @@ void settings_restore_defaults(AppState *s) {
     d->stick_opacity   = 100;
     d->peak_color      = UI_WARN;
     d->assigned_color  = UI_OK;
+    d->assigned_color_by_species = 0;
     d->bar_color       = UI_WARN;
     d->cursor_color    = UI_ACCENT;
     d->show_grid = 1;
@@ -139,6 +140,7 @@ int settings_save(AppState *s) {
     write_color(fp, "profile_color", d->profile_color);
     write_color(fp, "peak_color", d->peak_color);
     write_color(fp, "assigned_color", d->assigned_color);
+    fprintf(fp, "assigned_color_by_species %d\n", d->assigned_color_by_species);
     write_color(fp, "bar_color", d->bar_color);
     write_color(fp, "cursor_color", d->cursor_color);
     fprintf(fp, "show_grid %d\n", d->show_grid);
@@ -207,6 +209,7 @@ static void settings_load(AppState *s) {
         else if (!strcmp(key, "profile_color"))    read_color(value, &d->profile_color);
         else if (!strcmp(key, "peak_color"))       read_color(value, &d->peak_color);
         else if (!strcmp(key, "assigned_color"))   read_color(value, &d->assigned_color);
+        else if (!strcmp(key, "assigned_color_by_species")) d->assigned_color_by_species = atoi(value) != 0;
         else if (!strcmp(key, "bar_color"))        read_color(value, &d->bar_color);
         else if (!strcmp(key, "cursor_color"))     read_color(value, &d->cursor_color);
         else if (!strcmp(key, "nav_pan_px"))           d->nav_pan_px = atof(value);
@@ -422,7 +425,8 @@ typedef enum {
     /* plot */
     ID_TRACE_WIDTH, ID_TRACE_OPACITY, ID_TRACE_PALETTE, ID_PRED_WIDTH, ID_STICK_OPACITY,
     ID_PROFILE_WIDTH, ID_PROFILE_OPACITY, ID_PROFILE_COLOR,
-    ID_BLEND_MARKS, ID_PEAK_COLOR, ID_ASSIGNED_COLOR, ID_BAR_COLOR, ID_CURSOR_COLOR,
+    ID_BLEND_MARKS, ID_PEAK_COLOR, ID_ASSIGNED_COLOR, ID_ASSIGNED_BY_SPECIES,
+    ID_BAR_COLOR, ID_CURSOR_COLOR,
     ID_BG, ID_GRID, ID_LEGEND, ID_PEAK_LABELS,
     /* navigation */
     ID_PAN_PX, ID_ZOOM_FACTOR, ID_INT_FACTOR, ID_BAR_PX, ID_FAST_MULT,
@@ -532,6 +536,7 @@ static int *toggle_value(AppState *s, int id) {
         case ID_GRID:        return &s->settings.show_grid;
         case ID_LEGEND:      return &s->settings.show_legend;
         case ID_PEAK_LABELS: return &s->settings.show_peak_labels;
+        case ID_ASSIGNED_BY_SPECIES: return &s->settings.assigned_color_by_species;
         default:             return NULL;
     }
 }
@@ -632,6 +637,7 @@ static int build_controls(AppState *s, SCtl *out, int max, int w, int h) {
         HEAD("Markers");
         PUSH(SC_COLOR, ID_PEAK_COLOR,     "Found peaks",    NULL, 56, SETTINGS_ROW);
         PUSH(SC_COLOR, ID_ASSIGNED_COLOR, "Assigned lines", NULL, 56, SETTINGS_ROW);
+        PUSH(SC_TOGGLE, ID_ASSIGNED_BY_SPECIES, "Colour assigned lines by species", NULL, 30, SETTINGS_ROW);
         PUSH(SC_COLOR, ID_BAR_COLOR,      "Bar",            NULL, 56, SETTINGS_ROW);
         PUSH(SC_COLOR, ID_CURSOR_COLOR,   "Cursor readout", NULL, 56, SETTINGS_ROW);
         y += 6;

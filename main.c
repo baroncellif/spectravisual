@@ -211,25 +211,18 @@ static void append_error_message(AppState *state, const char *note) {
 }
 
 static void ensure_aux_loaded(AppState *state) {
-    if (state->lin_data) return;
-    state->lin_data = malloc(sizeof(double) * MAX_LIN_POINTS);
-    if (!state->lin_data) return;
-    if (state->n_assignments == 0)
-    {
-        char path[600], note[512];
-        AssignmentFileReport report;
-        settings_data_file(state, "assignments.txt", path, sizeof(path));
-        load_assignments_file(path, state->assignments, &state->n_assignments, &report);
-        assignment_file_message(&report, path, note, sizeof(note));
-        if (note[0]) append_error_message(state, note);
-        /* Pred&Fit's temporary inclusion choices are separate from the
-           complete assignment list, and must apply even when a user opens a
-           catalogue directly instead of restoring model.cat. */
-        predfit_load_exclusions(state);
-    }
-    char f[512];
-    if (find_assigned_frequency_file(f, sizeof(f)))
-        state->n_lin_data = read_assigned_frequencies(f, state->lin_data, MAX_LIN_POINTS);
+    if (state->n_assignments != 0 || state->aux_loaded) return;
+    state->aux_loaded = 1;
+    char path[600], note[512];
+    AssignmentFileReport report;
+    settings_data_file(state, "assignments.txt", path, sizeof(path));
+    load_assignments_file(path, state->assignments, &state->n_assignments, &report);
+    assignment_file_message(&report, path, note, sizeof(note));
+    if (note[0]) append_error_message(state, note);
+    /* Pred&Fit's temporary inclusion choices are separate from the
+       complete assignment list, and must apply even when a user opens a
+       catalogue directly instead of restoring model.cat. */
+    predfit_load_exclusions(state);
 }
 
 static void spec_basename(const char *path, char *out, int n) {
@@ -246,18 +239,16 @@ static void free_dataset(AppState *state) {
     state->n_spectra = 0;
     state->active_spec = -1;
     free(state->pred_lines);
-    free(state->lin_data);
     state->pred_lines = NULL;
-    state->lin_data = NULL;
     state->raw_pts = NULL;
     state->smooth_pts = NULL;
     state->current_pts = NULL;
     state->n_pts = 0;
     state->n_pred = 0;
-    state->n_lin_data = 0;
     state->n_peaks = 0;
     state->n_selected = 0;
     state->n_assignments = 0;
+    state->aux_loaded = 0;
     state->data_loaded = 0;
 }
 
