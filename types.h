@@ -525,6 +525,8 @@ typedef struct {
     SDL_Color peak_color;                /* found peaks                      */
     SDL_Color assigned_color;            /* already-assigned frequencies     */
     int  assigned_color_by_species;      /* colour each marker by its owning species instead */
+    int  assigned_opacity;               /* percent, assigned-line markers       */
+    int  assigned_width;                 /* assigned-line marker width, 1..5 px  */
     SDL_Color bar_color;                 /* the movable bar                  */
     SDL_Color cursor_color;              /* pointer crosshair and readout    */
     int  show_grid;

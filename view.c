@@ -201,11 +201,12 @@ static SDL_Color assignment_marker_color(const AppState *state, const Assignment
 }
 
 /* A marker layer (the ghost line, its solid cap, the compact locator dot) is
-   drawn at a fixed proportion of full opacity; scaling that proportion by the
-   alpha configured for Assigned lines keeps the user's chosen opacity in
-   effect however assignment_marker_color() picked its colour. */
+   drawn at a fixed proportion of full strength; scaling that proportion by
+   the user's "Assigned lines" opacity setting keeps it in effect however
+   assignment_marker_color() picked its colour. */
 static Uint8 assignment_marker_alpha(const AppState *state, int base) {
-    return (Uint8)(base * state->settings.assigned_color.a / 255);
+    int pct = state->settings.assigned_opacity > 0 ? state->settings.assigned_opacity : 100;
+    return (Uint8)(base * pct / 100);
 }
 
 static int broad_line_included(const BroadCfg *c, const PredLine *q) {
@@ -664,7 +665,7 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
             SDL_Color ac = assignment_marker_color(state, &state->assignments[i]);
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
             SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, assignment_marker_alpha(state, 130));
-            SDL_RenderDrawLine(ren, px, marker_top, px, marker_bottom);
+            ui_thick_line(ren, px, marker_top, px, marker_bottom, state->settings.assigned_width);
             SDL_Rect cap = {px - 2, marker_top, 5, 5};
             SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, assignment_marker_alpha(state, 255));
             SDL_RenderFillRect(ren, &cap);

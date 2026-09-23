@@ -77,6 +77,8 @@ void settings_restore_defaults(AppState *s) {
     d->peak_color      = UI_WARN;
     d->assigned_color  = UI_OK;
     d->assigned_color_by_species = 0;
+    d->assigned_opacity = 100;
+    d->assigned_width   = 1;
     d->bar_color       = UI_WARN;
     d->cursor_color    = UI_ACCENT;
     d->show_grid = 1;
@@ -141,6 +143,8 @@ int settings_save(AppState *s) {
     write_color(fp, "peak_color", d->peak_color);
     write_color(fp, "assigned_color", d->assigned_color);
     fprintf(fp, "assigned_color_by_species %d\n", d->assigned_color_by_species);
+    fprintf(fp, "assigned_opacity %d\n", d->assigned_opacity);
+    fprintf(fp, "assigned_width %d\n", d->assigned_width);
     write_color(fp, "bar_color", d->bar_color);
     write_color(fp, "cursor_color", d->cursor_color);
     fprintf(fp, "show_grid %d\n", d->show_grid);
@@ -210,6 +214,8 @@ static void settings_load(AppState *s) {
         else if (!strcmp(key, "peak_color"))       read_color(value, &d->peak_color);
         else if (!strcmp(key, "assigned_color"))   read_color(value, &d->assigned_color);
         else if (!strcmp(key, "assigned_color_by_species")) d->assigned_color_by_species = atoi(value) != 0;
+        else if (!strcmp(key, "assigned_opacity")) d->assigned_opacity = atoi(value);
+        else if (!strcmp(key, "assigned_width"))   d->assigned_width = atoi(value);
         else if (!strcmp(key, "bar_color"))        read_color(value, &d->bar_color);
         else if (!strcmp(key, "cursor_color"))     read_color(value, &d->cursor_color);
         else if (!strcmp(key, "nav_pan_px"))           d->nav_pan_px = atof(value);
@@ -426,6 +432,7 @@ typedef enum {
     ID_TRACE_WIDTH, ID_TRACE_OPACITY, ID_TRACE_PALETTE, ID_PRED_WIDTH, ID_STICK_OPACITY,
     ID_PROFILE_WIDTH, ID_PROFILE_OPACITY, ID_PROFILE_COLOR,
     ID_BLEND_MARKS, ID_PEAK_COLOR, ID_ASSIGNED_COLOR, ID_ASSIGNED_BY_SPECIES,
+    ID_ASSIGNED_OPACITY, ID_ASSIGNED_WIDTH,
     ID_BAR_COLOR, ID_CURSOR_COLOR,
     ID_BG, ID_GRID, ID_LEGEND, ID_PEAK_LABELS,
     /* navigation */
@@ -470,6 +477,8 @@ static int *int_value(AppState *s, int id) {
         case ID_STICK_OPACITY:   return &s->settings.stick_opacity;
         case ID_PROFILE_WIDTH:   return &s->settings.profile_width;
         case ID_PROFILE_OPACITY: return &s->settings.profile_opacity;
+        case ID_ASSIGNED_OPACITY: return &s->settings.assigned_opacity;
+        case ID_ASSIGNED_WIDTH:   return &s->settings.assigned_width;
         case ID_PF_SIG:          return &s->settings.def_pf_sig;
         case ID_PF_NOISE:        return &s->settings.def_pf_noise;
         case ID_AVG_WINDOW:      return &s->settings.def_avg_window;
@@ -503,9 +512,9 @@ typedef struct { double lo, hi, step; int decimals; const char *unit; } Range;
 
 static Range range_of(int id) {
     switch (id) {
-        case ID_TRACE_WIDTH: case ID_PRED_WIDTH: case ID_PROFILE_WIDTH:
+        case ID_TRACE_WIDTH: case ID_PRED_WIDTH: case ID_PROFILE_WIDTH: case ID_ASSIGNED_WIDTH:
                                 return (Range){1, 5, 1, 0, "px"};
-        case ID_TRACE_OPACITY: case ID_STICK_OPACITY: case ID_PROFILE_OPACITY:
+        case ID_TRACE_OPACITY: case ID_STICK_OPACITY: case ID_PROFILE_OPACITY: case ID_ASSIGNED_OPACITY:
                                 return (Range){10, 100, 5, 0, "%"};
         case ID_PAN_PX:         return (Range){5, 600, 5, 0, "px"};
         case ID_BAR_PX:         return (Range){0.5, 50, 0.5, 1, "px"};
@@ -638,6 +647,8 @@ static int build_controls(AppState *s, SCtl *out, int max, int w, int h) {
         PUSH(SC_COLOR, ID_PEAK_COLOR,     "Found peaks",    NULL, 56, SETTINGS_ROW);
         PUSH(SC_COLOR, ID_ASSIGNED_COLOR, "Assigned lines", NULL, 56, SETTINGS_ROW);
         PUSH(SC_TOGGLE, ID_ASSIGNED_BY_SPECIES, "Colour assigned lines by species", NULL, 30, SETTINGS_ROW);
+        NUM(ID_ASSIGNED_WIDTH,   "Assigned lines width");
+        NUM(ID_ASSIGNED_OPACITY, "Assigned lines opacity");
         PUSH(SC_COLOR, ID_BAR_COLOR,      "Bar",            NULL, 56, SETTINGS_ROW);
         PUSH(SC_COLOR, ID_CURSOR_COLOR,   "Cursor readout", NULL, 56, SETTINGS_ROW);
         y += 6;
