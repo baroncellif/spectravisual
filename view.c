@@ -200,6 +200,14 @@ static SDL_Color assignment_marker_color(const AppState *state, const Assignment
     return c.a > 0 ? c : state->settings.assigned_color;
 }
 
+/* A marker layer (the ghost line, its solid cap, the compact locator dot) is
+   drawn at a fixed proportion of full opacity; scaling that proportion by the
+   alpha configured for Assigned lines keeps the user's chosen opacity in
+   effect however assignment_marker_color() picked its colour. */
+static Uint8 assignment_marker_alpha(const AppState *state, int base) {
+    return (Uint8)(base * state->settings.assigned_color.a / 255);
+}
+
 static int broad_line_included(const BroadCfg *c, const PredLine *q) {
     if (!c->one_state) return 1;
     if (q->hamiltonian_id != c->hamiltonian_id) return 0;
@@ -655,14 +663,14 @@ static void draw_spectrum_view(SDL_Renderer *ren, TTF_Font *font, AppState *stat
 
             SDL_Color ac = assignment_marker_color(state, &state->assignments[i]);
             int px = l->exp_x + (f - state->vxmin) / (state->vxmax - state->vxmin) * l->exp_w;
-            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, 130);
+            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, assignment_marker_alpha(state, 130));
             SDL_RenderDrawLine(ren, px, marker_top, px, marker_bottom);
             SDL_Rect cap = {px - 2, marker_top, 5, 5};
-            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, 255);
+            SDL_SetRenderDrawColor(ren, ac.r, ac.g, ac.b, assignment_marker_alpha(state, 255));
             SDL_RenderFillRect(ren, &cap);
         }
     }
-    
+
     // Draw Found Peaks
     for (int ip = 0; ip < state->n_peaks; ip++) {
         double pkx = state->peaks[ip].x;            // true frequency
@@ -961,7 +969,7 @@ static void draw_prediction_view(SDL_Renderer *ren, TTF_Font *font, AppState *st
                 int px = l->pred_x + (f - state->pvxmin)/(state->pvxmax - state->pvxmin) * l->pred_w;
 
                 SDL_Color ac2 = assignment_marker_color(state, &state->assignments[i]);
-                SDL_SetRenderDrawColor(ren, ac2.r, ac2.g, ac2.b, 200);
+                SDL_SetRenderDrawColor(ren, ac2.r, ac2.g, ac2.b, assignment_marker_alpha(state, 200));
                 // Draw small 5x5 rect as "circle"
                 SDL_Rect r = {px-2, marker_y-2, 5, 5};
                 SDL_RenderFillRect(ren, &r);
