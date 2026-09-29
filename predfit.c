@@ -2899,17 +2899,22 @@ static int refresh_prediction(AppState *s) {
     return s->predfit.n_simulated > 0 ? predfit_simulate(s) : predfit_calculate_all_species(s);
 }
 
-int predfit_fit(AppState *s) {
+/* Runs SPFIT once against whichever Hamiltonian is currently active in p.
+   Returns 1 on success, -1 when it has no assignments to fit (status already
+   explains why), 0 on any other failure (status already explains that too). */
+static int fit_active_hamiltonian(AppState *s) {
     PredFitState *p = &s->predfit;
     int owned_assignments = 0;
     for (int i = 0; i < s->n_assignments; i++)
         if (assignment_belongs_to_active_hamiltonian(s, &s->assignments[i])) owned_assignments++;
-    if (owned_assignments == 0) { snprintf(p->status, sizeof(p->status), "Assign lines to this Hamiltonian before running SPFIT."); return 0; }
+    if (owned_assignments == 0) {
+        snprintf(p->status, sizeof(p->status), "Assign lines to this Hamiltonian before running SPFIT.");
+        return -1;
+    }
     if (!ensure_model_catalog(s)) return 0;
     predfit_publish_shared_state(s);
     if (!push_fit_snapshot(s)) return 0;
     if (!write_inputs(s, 1)) { p->history_count--; return 0; }
-    char cat_path[600];
     if (!have_program(s->settings.spfit_path) || !have_program(s->settings.spcat_path)) {
         snprintf(p->status, sizeof(p->status), "Set the SPFIT and SPCAT programs in Settings > Paths.");
         p->history_count--;
@@ -2918,19 +2923,85 @@ int predfit_fit(AppState *s) {
     if (!run_program(s->settings.spfit_path, p->work_dir, p, "SPFIT")) { p->history_count--; return 0; }
     report_invalidate();
     import_fitted_parameters(p);
-    if (p->n_simulated > 0) {
-        /* The plot holds several models: refresh them all instead of
-           replacing the simulation with this one Hamiltonian. */
-        if (!predfit_simulate(s)) return 0;
-    } else {
-        if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT after fit")) return 0;
-        work_file(p,"model.cat",cat_path,sizeof(cat_path));
-        app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
-        p->generated_catalog_pending = 1;
-    }
-    snprintf(p->status, sizeof(p->status), "SPFIT complete; refreshed SPCAT prediction.");
-    fit_summary(p, p->status, sizeof(p->status));
     return 1;
+}
+
+int predfit_fit(AppState *s) {
+    PredFitState *p = &s->predfit;
+    int active_count = 0;
+    for (int h = 0; h < p->n_hamiltonians; h++)
+        if (!p->hamiltonian[h].simulate_excluded) active_count++;
+
+    if (active_count <= 1) {
+        int r = fit_active_hamiltonian(s);
+        if (r <= 0) return 0;
+        char cat_path[600];
+        if (p->n_simulated > 0) {
+            /* The plot holds several models: refresh them all instead of
+               replacing the simulation with this one Hamiltonian. */
+            if (!predfit_simulate(s)) return 0;
+        } else {
+            if (!run_program(s->settings.spcat_path, p->work_dir, p, "SPCAT after fit")) return 0;
+            work_file(p,"model.cat",cat_path,sizeof(cat_path));
+            app_enqueue_pending_load(s, PENDING_LOAD_CATALOG, cat_path, 1);
+            p->generated_catalog_pending = 1;
+        }
+        snprintf(p->status, sizeof(p->status), "SPFIT complete; refreshed SPCAT prediction.");
+        fit_summary(p, p->status, sizeof(p->status));
+        return 1;
+    }
+
+    /* Several Hamiltonians are checked in Simulation: fit every one of them in
+       turn instead of only whichever happens to be open in Advanced right now. */
+    const int started = p->active_hamiltonian;
+    PredFitSnapshot started_snap;
+    int have_started_snap = 0;
+    int fitted = 0, failed = 0, skipped = 0;
+    char failure[200] = "";
+    for (int h = 0; h < p->n_hamiltonians; h++) {
+        if (p->hamiltonian[h].simulate_excluded) continue;
+        store_active_hamiltonian(p);
+        p->active_hamiltonian = h;
+        restore_active_model(p, &p->hamiltonian[h].model);
+        predfit_refresh_work_dir(s);
+        p->history_count = 0;   /* undo is scoped to whichever H is active, like a manual switch */
+        int r = fit_active_hamiltonian(s);
+        if (r == 1) {
+            fitted++;
+            store_active_hamiltonian(p);
+            if (h == started) { started_snap = p->history[0]; have_started_snap = 1; }
+        } else if (r == -1) {
+            skipped++;
+        } else {
+            failed++;
+            if (!failure[0]) snprintf(failure, sizeof(failure), "%s: %s", p->hamiltonian[h].name, p->status);
+        }
+    }
+    store_active_hamiltonian(p);
+    p->active_hamiltonian = started;
+    restore_active_model(p, &p->hamiltonian[started].model);
+    predfit_refresh_work_dir(s);
+    /* Leave the model back on screen individually undoable, exactly as a
+       single Cmd+F on it alone would have. */
+    p->history_count = have_started_snap ? 1 : 0;
+    if (have_started_snap) p->history[0] = started_snap;
+
+    if (fitted == 0) {
+        snprintf(p->status, sizeof(p->status), "Nothing fitted - %s",
+                 failure[0] ? failure : "no active Hamiltonian has assignments.");
+        return 0;
+    }
+    if (!refresh_prediction(s)) return 0;
+    if (failed || skipped)
+        snprintf(p->status, sizeof(p->status),
+                 "SPFIT complete for %d Hamiltonian%s; %d failed, %d skipped%s%s",
+                 fitted, fitted == 1 ? "" : "s", failed, skipped,
+                 failure[0] ? " - " : "", failure);
+    else
+        snprintf(p->status, sizeof(p->status),
+                 "SPFIT complete for %d Hamiltonian%s; refreshed SPCAT prediction.",
+                 fitted, fitted == 1 ? "" : "s");
+    return fitted;
 }
 
 int predfit_undo_last_fit(AppState *s) {
