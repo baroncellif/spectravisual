@@ -52,7 +52,11 @@ static const signed char ICON_DATA[UI_ICON_COUNT][64] = {
     /* EYE: filled by code */
     { STOP },
     /* GEAR: filled by code */
-    { STOP }
+    { STOP },
+    /* UP: solid triangle drawn as three edges */
+    { 8,3, 13,11, 3,11, 8,3, STOP },
+    /* DOWN: solid triangle drawn as three edges */
+    { 8,13, 3,5, 13,5, 8,13, STOP }
 };
 
 static void stroke_icon(SDL_Renderer *ren, const signed char *d, int ox, int oy) {

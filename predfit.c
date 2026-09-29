@@ -3477,6 +3477,21 @@ static void add_parameter(PredFitState *p) {
     advanced_begin_edit(p, p->n_param - 1, 0);
 }
 
+/* Swaps a parameter row with its neighbour so the list can be put in whatever
+   order the user wants in the .par - SPFIT does not care about parameter
+   order, but a hand-built list is easier to read grouped by ladder/term. */
+static int move_parameter(PredFitState *p, int row, int delta) {
+    int to = row + delta;
+    if (row < 0 || row >= p->n_param || to < 0 || to >= p->n_param) return 0;
+    PickettParameter moved = p->param[row];
+    p->param[row] = p->param[to];
+    p->param[to] = moved;
+    if (p->advanced_edit_param == row)      p->advanced_edit_param = to;
+    else if (p->advanced_edit_param == to)  p->advanced_edit_param = row;
+    p->session_dirty = 1;
+    return 1;
+}
+
 /* Removing a row keeps the table contiguous, so the fit inputs written from it
    never carry a stale parameter. */
 static void delete_parameter(PredFitState *p, int row) {
@@ -4222,12 +4237,16 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(x, y, u.rows)) {
             int row = p->advanced_param_scroll + (y - u.rows.y) / u.row_h;
             if (row >= 0 && row < p->n_param) {
+                int up_x = u.table.x + u.table.w - 82, down_x = u.table.x + u.table.w - 58;
                 int del_x = u.table.x + u.table.w - 32;
-                if (x >= del_x)                             delete_parameter(p, row);
+                if (x >= up_x && x < up_x + 20)             move_parameter(p, row, -1);
+                else if (x >= down_x && x < down_x + 20)    move_parameter(p, row, 1);
+                else if (x >= del_x)                        delete_parameter(p, row);
                 else if (x < adv_col(u.table, 0.11))        advanced_begin_edit(p, row, 0);
                 else if (x >= adv_col(u.table, 0.56) &&
                          x <  adv_col(u.table, 0.80))       advanced_begin_edit(p, row, 1);
-                else if (x >= adv_col(u.table, 0.80))       advanced_begin_edit(p, row, 2);
+                else if (x >= adv_col(u.table, 0.80) &&
+                         x <  up_x)                         advanced_begin_edit(p, row, 2);
             }
             return 1;
         }
@@ -4507,7 +4526,7 @@ void predfit_render_advanced(AppState *s) {
             SDL_Rect value_cell = {adv_col(u.table, 0.56) - 4, y + 2,
                                    adv_col(u.table, 0.80) - adv_col(u.table, 0.56) - 6, u.row_h - 6};
             SDL_Rect error_cell = {adv_col(u.table, 0.80) - 4, y + 2,
-                                   u.table.x + u.table.w - 38 - adv_col(u.table, 0.80), u.row_h - 6};
+                                   u.table.x + u.table.w - 88 - adv_col(u.table, 0.80), u.row_h - 6};
             if (editing && p->advanced_edit_col == 0) { ui_fill(r, id_cell, UI_INPUT); ui_frame(r, id_cell, UI_ACCENT); }
             if (editing && p->advanced_edit_col == 1) { ui_fill(r, value_cell, UI_INPUT); ui_frame(r, value_cell, UI_ACCENT); }
             if (editing && p->advanced_edit_col == 2) { ui_fill(r, error_cell, UI_INPUT); ui_frame(r, error_cell, UI_ACCENT); }
@@ -4525,6 +4544,10 @@ void predfit_render_advanced(AppState *s) {
             adv_cell_text(r, UI_FONT_MONO, p, editing && p->advanced_edit_col == 2, b,
                           adv_col(u.table, 0.80), ty, editing && p->advanced_edit_col == 2 ? UI_ACCENT_TEXT : UI_TEXT);
 
+            SDL_Rect up   = {u.table.x + u.table.w - 82, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            SDL_Rect down = {u.table.x + u.table.w - 58, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            ui_draw_icon(r, UI_ICON_UP,   up,   actual > 0 ? UI_DIM : UI_FAINT);
+            ui_draw_icon(r, UI_ICON_DOWN, down, actual < p->n_param - 1 ? UI_DIM : UI_FAINT);
             SDL_Rect del = {u.table.x + u.table.w - 32, y + (u.row_h - 2 - 22) / 2, 22, 22};
             ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del.x + 5, del.y + 5, 12, 12}, UI_DANGER_TEXT);
         }
