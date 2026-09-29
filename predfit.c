@@ -2922,6 +2922,7 @@ static int fit_active_hamiltonian(AppState *s) {
     }
     if (!run_program(s->settings.spfit_path, p->work_dir, p, "SPFIT")) { p->history_count--; return 0; }
     report_invalidate();
+    p->advanced_paramline_scroll = 0;
     import_fitted_parameters(p);
     return 1;
 }
@@ -4000,6 +4001,13 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
             if (p->advanced_project_scroll > limit) p->advanced_project_scroll = limit;
             return 1;
         }
+        if (p->advanced_tab == 2 && point_in_rect(mx, my, u.params)) {
+            p->advanced_paramline_scroll -= e->wheel.y;
+            if (p->advanced_paramline_scroll < 0) p->advanced_paramline_scroll = 0;
+            int limit = adv_scroll_limit(g_report.n_param_lines, u.param_rows_visible);
+            if (p->advanced_paramline_scroll > limit) p->advanced_paramline_scroll = limit;
+            return 1;
+        }
         int *scroll = p->advanced_tab == 0 ? &p->advanced_param_scroll :
                       p->advanced_tab == 3 ? &p->advanced_species_scroll :
                       (p->advanced_tab == 4 || p->advanced_tab == 5) ? &p->advanced_project_scroll
@@ -4665,16 +4673,25 @@ void predfit_render_advanced(AppState *s) {
         ui_frame(r, u.params, UI_LINE);
         ui_text(r, UI_FONT_MONO_SM, "FITTED PARAMETERS      N / ID / LABEL / VALUE(EST. ERROR) / CHANGE THIS ITERATION",
                 u.params.x + 10, u.params.y + 8, UI_DIM);
+        {
+            int limit = adv_scroll_limit(g_report.n_param_lines, u.param_rows_visible);
+            if (p->advanced_paramline_scroll > limit) p->advanced_paramline_scroll = limit;
+        }
         for (int i = 0; i < u.param_rows_visible; i++) {
             int y = u.params.y + 26 + i * 18;
-            if (i < g_report.n_param_lines)
-                ui_text(r, UI_FONT_MONO_SM, g_report.param_line[i], u.params.x + 10, y, UI_TEXT);
+            int actual = p->advanced_paramline_scroll + i;
+            if (actual < g_report.n_param_lines)
+                ui_text(r, UI_FONT_MONO_SM, g_report.param_line[actual], u.params.x + 10, y, UI_TEXT);
             else if (g_report.n_param_lines == 0 && i == 0)
                 ui_text(r, UI_FONT_MONO_SM, "no SPFIT run in .fit yet", u.params.x + 10, y, UI_FAINT);
         }
         if (g_report.n_param_lines > u.param_rows_visible) {
-            snprintf(b, sizeof(b), "+%d more — enlarge the window",
-                     g_report.n_param_lines - u.param_rows_visible);
+            snprintf(b, sizeof(b), "%d-%d of %d — scroll to see more",
+                     p->advanced_paramline_scroll + 1,
+                     p->advanced_paramline_scroll + (u.param_rows_visible < g_report.n_param_lines - p->advanced_paramline_scroll
+                                                      ? u.param_rows_visible
+                                                      : g_report.n_param_lines - p->advanced_paramline_scroll),
+                     g_report.n_param_lines);
             ui_text(r, UI_FONT_MONO_SM, b, u.params.x + u.params.w - 240, u.params.y + 8, UI_FAINT);
         }
 

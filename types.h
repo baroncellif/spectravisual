@@ -363,6 +363,7 @@ typedef struct {
     int advanced_line_scroll;
     int advanced_species_scroll;
     int advanced_project_scroll;
+    int advanced_paramline_scroll;  /* fitted-parameters block, Fitting tab */
     int advanced_delete_hamiltonian_id; /* second click confirms this H only */
     int advanced_hover_line;
     char advanced_edit_buf[256];
