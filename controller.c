@@ -26,6 +26,7 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b);
 static void handle_mouse_motion(AppState *s, Layout *l, SDL_MouseMotionEvent *m);
 static void handle_mouse_wheel(AppState *s, Layout *l, SDL_MouseWheelEvent *w);
 static void run_right_click_peak_find(AppState *s, double x0, double x1);
+static void run_right_click_select(AppState *s, double raw_x);
 static void run_visible_peak_finder(AppState *s);
 static void assign_selected_predictions(AppState *s, double exp_freq, double exp_int);
 static void clamp_assignment_scroll(AppState *s);
@@ -969,70 +970,103 @@ static void handle_mouse_up(AppState *s, Layout *l, SDL_MouseButtonEvent *b) {
         }
     }
 
-    // B. Right Click Drag (Peak Find)
+    // B. Right Click Drag (Peak Find) / Right Click (Select, no drag)
     if (b->button == SDL_BUTTON_RIGHT && s->selecting_right) {
         s->selecting_right = 0;
         // Convert the screen selection to TRUE data coords (subtract the visual
         // offset) so the peak is found and stored at its original frequency.
         double x0 = s->vxmin + (double)(s->sel_start.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin) - s->exp_offset;
         double x1 = s->vxmin + (double)(s->sel_cur.x - l->exp_x)/l->exp_w * (s->vxmax - s->vxmin) - s->exp_offset;
-        if (x1 < x0) { double t=x0; x0=x1; x1=t; }
 
-        run_right_click_peak_find(s, x0, x1);
+        if (ABS(s->sel_cur.x - s->sel_start.x) > 5) {
+            // A real drag: search the dragged range for its true local maximum.
+            if (x1 < x0) { double t=x0; x0=x1; x1=t; }
+            run_right_click_peak_find(s, x0, x1);
+        } else {
+            // A plain click: take the sample under the pointer as-is, with no
+            // max-peak search or parabolic interpolation.
+            run_right_click_select(s, x0);
+        }
     }
 }
 
-// --- HELPER: Right Click Peak Calculation ---
+// --- HELPER: adds a peak, copies it to the clipboard and assigns it to
+// whatever prediction is currently selected.  Shared by the drag (found via a
+// range search) and the plain-click (found at the exact sample) paths. */
+static void finalize_peak(AppState *s, double px, double py) {
+    if (s->n_peaks >= MAX_PEAKS) return;
+    s->peaks[s->n_peaks].x = px;
+    s->peaks[s->n_peaks].y = py;
+    s->n_peaks++;
+
+    char clip[64]; snprintf(clip, 64, "%.4f", px);
+    SDL_SetClipboardText(clip);
+    printf("Peak found: %.4f (Copied to clipboard)\n", px);
+
+    // Auto-assign if prediction is selected
+    assign_selected_predictions(s, px, py);
+}
+
+// --- HELPER: Right Click Peak Calculation (drag) ---
 static void run_right_click_peak_find(AppState *s, double raw_x0, double raw_x1) {
     if (!s->data_loaded) return;
     int start = binary_search_lower(s->current_pts, s->n_pts, raw_x0);
     int end   = binary_search_upper(s->current_pts, s->n_pts, raw_x1);
-    if(start < 0) start = 0; 
+    if(start < 0) start = 0;
     if(end >= s->n_pts) end = s->n_pts - 1;
 
     // Find max Y in range
     double best_y = -1e99;
     int bi = -1;
     for(int i=start; i<=end; i++) {
-        if(s->current_pts[i].y > best_y) { 
-            best_y = s->current_pts[i].y; 
-            bi = i; 
+        if(s->current_pts[i].y > best_y) {
+            best_y = s->current_pts[i].y;
+            bi = i;
         }
     }
 
-    if (bi >= 1 && bi < s->n_pts - 1 && s->n_peaks < MAX_PEAKS) {
+    if (bi >= 1 && bi < s->n_pts - 1) {
         // Parabolic Interpolation
         double y1 = s->current_pts[bi-1].y;
         double y2 = s->current_pts[bi].y;
         double y3 = s->current_pts[bi+1].y;
         double x2 = s->current_pts[bi].x;
-        
+
         double px, py;
         double denom = (y1 - 2*y2 + y3);
-        
-        if (fabs(denom) < 1e-18) { 
-            px = x2; 
-            py = y2; 
+
+        if (fabs(denom) < 1e-18) {
+            px = x2;
+            py = y2;
         } else {
             double dx = 0.5 * ((y1 - y3) / denom);
             // Convert index delta to freq delta
-            double freq_step = s->current_pts[bi+1].x - x2; 
+            double freq_step = s->current_pts[bi+1].x - x2;
             px = x2 + dx * freq_step;
             py = y2 - 0.25 * (y1 - y3) * dx;
         }
-        
-        s->peaks[s->n_peaks].x = px; 
-        s->peaks[s->n_peaks].y = py;
-        s->n_peaks++;
-        
-        // Clipboard
-        char clip[64]; snprintf(clip, 64, "%.4f", px);
-        SDL_SetClipboardText(clip);
-        printf("Peak found: %.4f (Copied to clipboard)\n", px);
 
-        // Auto-assign if prediction is selected
-        assign_selected_predictions(s, px, py);
+        finalize_peak(s, px, py);
     }
+}
+
+// --- HELPER: Right Click Select (no drag) - the sample nearest the pointer,
+// taken as-is with no search or interpolation. ---
+static void run_right_click_select(AppState *s, double raw_x) {
+    if (!s->data_loaded || s->n_pts < 1) return;
+    // First index whose x is >= raw_x; the nearest sample is it or its
+    // predecessor.
+    int idx = binary_search_lower(s->current_pts, s->n_pts, raw_x);
+    int bi;
+    if (idx <= 0) bi = 0;
+    else if (idx >= s->n_pts) bi = s->n_pts - 1;
+    else {
+        double d_hi = s->current_pts[idx].x - raw_x;
+        double d_lo = raw_x - s->current_pts[idx - 1].x;
+        bi = d_lo <= d_hi ? idx - 1 : idx;
+    }
+
+    finalize_peak(s, s->current_pts[bi].x, s->current_pts[bi].y);
 }
 
 /* The displayed trace is translated by exp_offset, unlike the sample array
