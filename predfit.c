@@ -1281,6 +1281,7 @@ void predfit_init(AppState *s) {
     p->advanced_edit_param = -1;
     p->advanced_edit_species = -1;
     p->advanced_edit_hamiltonian = -1;
+    p->advanced_edit_assignment = -1;
     p->advanced_nav_state = -1;
     p->advanced_delete_hamiltonian_id = 0;
     p->advanced_hover_line = -1;
@@ -3175,6 +3176,22 @@ static void advanced_begin_species_edit(PredFitState *p, int row, int field) {
     SDL_StartTextInput();
 }
 
+/* The observed frequency of one assigned line, edited in place exactly like a
+   Pickett parameter cell - the Lines/Fitting pages are read from
+   s->assignments rather than from p, so this one needs AppState. */
+static void advanced_begin_assignment_freq_edit(AppState *s, int row) {
+    PredFitState *p = &s->predfit;
+    if (row < 0 || row >= s->n_assignments) return;
+    p->advanced_edit_param = -8;
+    p->advanced_edit_assignment = row;
+    p->advanced_edit_col = 0;
+    p->advanced_edit_replace = 1;
+    snprintf(p->advanced_edit_buf, sizeof(p->advanced_edit_buf), "%.6f", s->assignments[row].exp_freq);
+    p->advanced_edit_anchor = 0;
+    p->advanced_edit_caret = (int)strlen(p->advanced_edit_buf);
+    SDL_StartTextInput();
+}
+
 static void advanced_edit_clamp(PredFitState *p) {
     int n = (int)strlen(p->advanced_edit_buf);
     if (p->advanced_edit_caret < 0) p->advanced_edit_caret = 0;
@@ -3283,8 +3300,27 @@ static void advanced_edit_paste(PredFitState *p) {
     advanced_edit_insert(p, clean);
 }
 
-static void advanced_commit_edit(PredFitState *p) {
+static void advanced_commit_edit(AppState *s) {
+    PredFitState *p = &s->predfit;
     if (p->advanced_edit_param != -1) p->session_dirty = 1;
+    if (p->advanced_edit_param == -8) {
+        int row = p->advanced_edit_assignment;
+        if (row >= 0 && row < s->n_assignments) {
+            char *end = NULL; double v = strtod(p->advanced_edit_buf, &end);
+            if (end != p->advanced_edit_buf && isfinite(v)) {
+                s->assignments[row].exp_freq = v;
+                save_assignments(s);
+            } else {
+                snprintf(p->status, sizeof(p->status), "Enter a numeric frequency in MHz.");
+            }
+        }
+        p->advanced_edit_param = -1;
+        p->advanced_edit_assignment = -1;
+        p->advanced_edit_replace = 0;
+        p->advanced_edit_anchor = p->advanced_edit_caret = 0;
+        SDL_StopTextInput();
+        return;
+    }
     if (p->advanced_edit_param == -5) {
         PickettIntSettings *x = &p->int_settings;
         char *end = NULL;
@@ -3462,8 +3498,8 @@ static int advanced_edit_event(AppState *s, const SDL_Event *e) {
             advanced_edit_clamp(p);
             return 1;
         }
-        if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { advanced_commit_edit(p); return 1; }
-        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_hamiltonian=-1; p->advanced_edit_species=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
+        if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { advanced_commit_edit(s); return 1; }
+        if (k == SDLK_ESCAPE) { p->advanced_edit_param=-1; p->advanced_edit_hamiltonian=-1; p->advanced_edit_species=-1; p->advanced_edit_assignment=-1; p->advanced_edit_replace=0; p->advanced_edit_anchor=p->advanced_edit_caret=0; SDL_StopTextInput(); return 1; }
         return 1;
     }
     return 0;
@@ -3999,7 +4035,7 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                 return 1;
             }
         }
-        advanced_commit_edit(p);
+        advanced_commit_edit(s);
         if (p->intensity_dirty) { predfit_publish_shared_state(s); p->intensity_dirty = 0; }
     }
 
@@ -4305,12 +4341,18 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
                                 p->advanced_line_scroll + (y - u.rows.y) / u.row_h);
         if (row >= 0) {
             int del_x = u.table.x + u.table.w - 32;
+            /* The OBSERVED/MHz column: click it to correct the measured
+               frequency by hand, exactly like a Pickett parameter cell. */
+            int freq_lo = adv_col(u.table, p->advanced_tab == 1 ? 0.06 : 0.30);
+            int freq_hi = adv_col(u.table, p->advanced_tab == 1 ? 0.26 : 0.46);
             if (x >= del_x) {
                 /* This is deliberately the same deletion as the main
                    Assignments panel: the assignment disappears everywhere. */
                 delete_assignment(s, row);
                 int limit = adv_scroll_limit(adv_row_count(s, p->advanced_tab), u.rows_visible);
                 if (p->advanced_line_scroll > limit) p->advanced_line_scroll = limit;
+            } else if (x >= freq_lo && x < freq_hi) {
+                advanced_begin_assignment_freq_edit(s, row);
             } else {
                 int previous = s->assignments[row].fit_enabled;
                 s->assignments[row].fit_enabled = !previous;
@@ -4668,8 +4710,15 @@ void predfit_render_advanced(AppState *s) {
 
             snprintf(b, sizeof(b), "[%c]", a->fit_enabled ? 'x' : ' ');
             ui_text(r, UI_FONT_MONO, b, adv_col(u.table, 0.00), ty, a->fit_enabled ? UI_OK : UI_FAINT);
-            snprintf(b, sizeof(b), "%.6f", a->exp_freq);
-            ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.26), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            if (p->advanced_edit_param == -8 && p->advanced_edit_assignment == actual) {
+                SDL_Rect freq_cell = {adv_col(u.table, 0.06) - 4, y + 2,
+                                      adv_col(u.table, 0.26) - adv_col(u.table, 0.06) + 4, u.row_h - 6};
+                ui_fill(r, freq_cell, UI_INPUT); ui_frame(r, freq_cell, UI_ACCENT);
+                adv_edit_text(r, UI_FONT_MONO, p, adv_col(u.table, 0.06), ty, UI_ACCENT_TEXT);
+            } else {
+                snprintf(b, sizeof(b), "%.6f", a->exp_freq);
+                ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.26), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            }
             snprintf(b, sizeof(b), "%.6f", a->pred.freq_mhz);
             ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.50), ty, UI_DIM);
             format_assignment_qn(b, sizeof(b), &a->pred);
@@ -4768,8 +4817,15 @@ void predfit_render_advanced(AppState *s) {
             /* Always take the experimental frequency from the live assignment
                list.  This makes the Lines and Fitting pages two views of the
                exact same data, rather than a live list next to a .fit copy. */
-            snprintf(b, sizeof(b), "%.5f", a->exp_freq);
-            ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.46), ty, c);
+            if (p->advanced_edit_param == -8 && p->advanced_edit_assignment == actual) {
+                SDL_Rect freq_cell = {adv_col(u.table, 0.30) - 4, y + 2,
+                                      adv_col(u.table, 0.46) - adv_col(u.table, 0.30) + 4, u.row_h - 6};
+                ui_fill(r, freq_cell, UI_INPUT); ui_frame(r, freq_cell, UI_ACCENT);
+                adv_edit_text(r, UI_FONT_MONO_SM, p, adv_col(u.table, 0.30), ty, UI_ACCENT_TEXT);
+            } else {
+                snprintf(b, sizeof(b), "%.5f", a->exp_freq);
+                ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.46), ty, c);
+            }
             if (state == FIT_ROW_USED || state == FIT_ROW_NOT_USED) {
                 snprintf(b, sizeof(b), "%.5f", o.calc);
                 ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.63), ty, c);
