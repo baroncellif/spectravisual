@@ -25,7 +25,7 @@ int save_assignments(AppState *state);
    again with the same key reverses direction, like clicking a spreadsheet
    column header twice. Any held row index (selection, hover, an open inline
    edit) is cleared, since it would otherwise point at the wrong row. */
-typedef enum { ASSIGN_SORT_FREQ, ASSIGN_SORT_ERROR, ASSIGN_SORT_SEQUENCE } AssignmentSortKey;
+typedef enum { ASSIGN_SORT_FREQ, ASSIGN_SORT_ERROR, ASSIGN_SORT_SEQUENCE, ASSIGN_SORT_RESIDUAL } AssignmentSortKey;
 void sort_assignments(AppState *state, AssignmentSortKey key);
 /* 0 when `key` is not the active sort, else +1/-1 for ascending/descending -
    for a column header to show which way it is currently sorted. */

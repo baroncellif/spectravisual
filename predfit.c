@@ -4360,6 +4360,11 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         /* The extra 16px covers the sort icon drawn just left of the label. */
         if (x >= freq_col - freq_w - 16 && x <= freq_col) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
         if (x >= qn_col - qn_w - 16 && x <= qn_col)       { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+        if (p->advanced_tab == 2) {
+            int res_col = adv_col(u.table, 0.79);
+            int res_w = ui_text_w(UI_FONT_MONO_SM, "OBS-CALC");
+            if (x >= res_col - res_w - 16 && x <= res_col) { sort_assignments(s, ASSIGN_SORT_RESIDUAL); return 1; }
+        }
     }
 
     if (point_in_rect(x, y, u.rows)) {
@@ -4827,7 +4832,9 @@ void predfit_render_advanced(AppState *s) {
                       assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
         adv_sort_header_icon(r, adv_col(u.table, 0.46), hy, "OBSERVED", ASSIGN_SORT_FREQ);
         ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", adv_col(u.table, 0.63), hy, UI_DIM);
-        ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC",   adv_col(u.table, 0.79), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC",   adv_col(u.table, 0.79), hy,
+                      assignment_sort_indicator(ASSIGN_SORT_RESIDUAL) ? UI_ACCENT_TEXT : UI_DIM);
+        adv_sort_header_icon(r, adv_col(u.table, 0.79), hy, "OBS-CALC", ASSIGN_SORT_RESIDUAL);
         ui_text_right(r, UI_FONT_MONO_SM, "/UNC",       adv_col(u.table, 0.93), hy, UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);

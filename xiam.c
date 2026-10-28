@@ -3018,7 +3018,9 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
                   assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
     xiam_sort_header_icon(r, obs_right, split + 10, "OBSERVED", ASSIGN_SORT_FREQ);
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", calc_right, split + 10, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10,
+                  assignment_sort_indicator(ASSIGN_SORT_RESIDUAL) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, residual_right, split + 10, "OBS-CALC", ASSIGN_SORT_RESIDUAL);
     ui_text_right(r, UI_FONT_MONO_SM, "/UNC", sigma_right, split + 10, UI_DIM);
     int first = x->fitting_scroll, max_rows = u->fit_obs_rows_visible;
     for (int visible = 0; visible < max_rows; visible++) {
@@ -3504,11 +3506,14 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (py >= u.split && py < u.fit_obs_rows.y) {
             int qns_right = u.table.x + u.table.w * 28 / 100;
             int obs_right = u.table.x + u.table.w * 46 / 100;
+            int residual_right = u.table.x + u.table.w * 79 / 100;
             int qns_w = ui_text_w(UI_FONT_MONO_SM, "QNS");
             int obs_w = ui_text_w(UI_FONT_MONO_SM, "OBSERVED");
+            int residual_w = ui_text_w(UI_FONT_MONO_SM, "OBS-CALC");
             /* The extra 16px covers the sort icon drawn just left of the label. */
             if (px >= qns_right - qns_w - 16 && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
             if (px >= obs_right - obs_w - 16 && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+            if (px >= residual_right - residual_w - 16 && px <= residual_right) { sort_assignments(s, ASSIGN_SORT_RESIDUAL); return 1; }
         }
         /* Fitting and Lines are two views of the same rows, so the residual
            table includes and removes an observation the same way. */

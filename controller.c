@@ -184,15 +184,29 @@ static int assign_cmp_sequence(const void *pa, const void *pb) {
           : a->pred.Jl - b->pred.Jl;
     return g_assign_sort_desc ? -c : c;
 }
+/* |obs-calc|, by magnitude regardless of sign - a->pred.freq_mhz is the
+   latest regenerated-catalogue prediction for this transition, kept current
+   by both backends independently of whether the line is actually used in
+   the fit, so this needs no per-backend residual lookup. An assignment with
+   no prediction yet sorts as if its residual were zero: there is nothing to
+   flag as anomalous without one. */
+static int assign_cmp_residual(const void *pa, const void *pb) {
+    const Assignment *a = pa, *b = pb;
+    double ra = a->pred.freq_mhz > 0.0 ? fabs(a->exp_freq - a->pred.freq_mhz) : 0.0;
+    double rb = b->pred.freq_mhz > 0.0 ? fabs(b->exp_freq - b->pred.freq_mhz) : 0.0;
+    int c = ra < rb ? -1 : ra > rb ? 1 : 0;
+    return g_assign_sort_desc ? -c : c;
+}
 
 void sort_assignments(AppState *s, AssignmentSortKey key) {
     if (!s || s->n_assignments < 2) return;
     g_assign_sort_desc = (key == g_assign_sort_key) ? !g_assign_sort_desc
-                                                     : key == ASSIGN_SORT_ERROR;
+                                                     : (key == ASSIGN_SORT_ERROR || key == ASSIGN_SORT_RESIDUAL);
     g_assign_sort_key = key;
     int (*cmp)(const void *, const void *) =
         key == ASSIGN_SORT_FREQ ? assign_cmp_freq :
-        key == ASSIGN_SORT_ERROR ? assign_cmp_error : assign_cmp_sequence;
+        key == ASSIGN_SORT_ERROR ? assign_cmp_error :
+        key == ASSIGN_SORT_RESIDUAL ? assign_cmp_residual : assign_cmp_sequence;
     qsort(s->assignments, (size_t)s->n_assignments, sizeof(s->assignments[0]), cmp);
 
     /* Every held row index now points at a different assignment. */
