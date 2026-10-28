@@ -499,15 +499,18 @@ static int same_assignment_transition(const PredLine *a, const PredLine *b) {
     if (a->backend == PRED_BACKEND_XIAM || b->backend == PRED_BACKEND_XIAM) {
         if (a->backend != PRED_BACKEND_XIAM || b->backend != PRED_BACKEND_XIAM ||
             !a->xiam.present || !b->xiam.present) return 0;
+        /* K and tau are output annotations XIAM derives from the six rotor
+           QNs (see xiam_same_input_transition()), not independent identity -
+           and are not always printed, so comparing them too made a
+           reassignment of an already-assigned line fail to find it and
+           silently add a duplicate instead of updating it. */
         return a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
                a->Jl == b->Jl && a->Kal == b->Kal && a->Kcl == b->Kcl &&
                a->xiam.f1u == b->xiam.f1u && a->xiam.f1l == b->xiam.f1l &&
                a->xiam.fu == b->xiam.fu && a->xiam.fl == b->xiam.fl &&
                a->xiam.su == b->xiam.su && a->xiam.sl == b->xiam.sl &&
                a->xiam.vu == b->xiam.vu && a->xiam.vl == b->xiam.vl &&
-               a->xiam.bu == b->xiam.bu && a->xiam.bl == b->xiam.bl &&
-               a->xiam.ku == b->xiam.ku && a->xiam.kl == b->xiam.kl &&
-               a->xiam.tu == b->xiam.tu && a->xiam.tl == b->xiam.tl;
+               a->xiam.bu == b->xiam.bu && a->xiam.bl == b->xiam.bl;
     }
     return a->n_qn == b->n_qn &&
            a->Ju  == b->Ju  && a->Kau == b->Kau && a->Kcu == b->Kcu &&

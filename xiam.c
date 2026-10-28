@@ -556,9 +556,19 @@ int xiam_same_transition(const PredLine *a, const PredLine *b) {
     if (!a || !b) return 0;
     if (a->backend != PRED_BACKEND_XIAM || b->backend != PRED_BACKEND_XIAM ||
         !a->xiam.present || !b->xiam.present) return 0;
+    /* K and tau are output annotations XIAM derives from the six rotor QNs
+       (see xiam_same_input_transition()), not independent identity, and are
+       not always printed - comparing them with memcmp made reassigning an
+       already-assigned line, or refreshing its prediction after a fit, fail
+       to recognise it whenever a regenerated catalogue happened to print
+       them differently (or not at all) for the exact same transition. */
     return a->Ju == b->Ju && a->Kau == b->Kau && a->Kcu == b->Kcu &&
            a->Jl == b->Jl && a->Kal == b->Kal && a->Kcl == b->Kcl &&
-           memcmp(&a->xiam, &b->xiam, sizeof(a->xiam)) == 0;
+           a->xiam.f1u == b->xiam.f1u && a->xiam.f1l == b->xiam.f1l &&
+           a->xiam.fu == b->xiam.fu && a->xiam.fl == b->xiam.fl &&
+           a->xiam.su == b->xiam.su && a->xiam.sl == b->xiam.sl &&
+           a->xiam.vu == b->xiam.vu && a->xiam.vl == b->xiam.vl &&
+           a->xiam.bu == b->xiam.bu && a->xiam.bl == b->xiam.bl;
 }
 
 void xiam_cancel_assignment_edit(AppState *s) {
