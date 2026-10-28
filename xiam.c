@@ -2732,6 +2732,17 @@ static void xiam_cell_text(SDL_Renderer *r, int font, const XiamState *x, int ed
     else ui_text(r, font, text, px, py, c);
 }
 
+/* A small, always-visible sort icon beside a column header, drawn just left
+   of the right-aligned label, so a sortable column reads as a control and
+   not just as plain text: dim and pointing up when idle, accent-coloured
+   and pointing with the current direction once this is the active sort. */
+static void xiam_sort_header_icon(SDL_Renderer *r, int col_x, int hy, const char *label, AssignmentSortKey key) {
+    int ind = assignment_sort_indicator(key);
+    int w = ui_text_w(UI_FONT_MONO_SM, label);
+    ui_draw_icon(r, ind < 0 ? UI_ICON_DOWN : UI_ICON_UP, (SDL_Rect){col_x - w - 16, hy - 1, 12, 12},
+                 ind ? UI_ACCENT_TEXT : UI_DIM);
+}
+
 /* Kept intentionally identical to the SPFIT residual scale. */
 static SDL_Color xiam_residual_color(double z) {
     double a = fabs(z);
@@ -2917,11 +2928,14 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "UPPER  –  LOWER", qns_right, u->table.y + 9,
                   assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, qns_right, u->table.y + 9, "UPPER  –  LOWER", ASSIGN_SORT_SEQUENCE);
     ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz", obs_right, u->table.y + 9,
                   assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, obs_right, u->table.y + 9, "OBSERVED / MHz", ASSIGN_SORT_FREQ);
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED / MHz", calc_right, u->table.y + 9, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "UNC / MHz", unc_right, u->table.y + 9,
                   assignment_sort_indicator(ASSIGN_SORT_ERROR) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, unc_right, u->table.y + 9, "UNC / MHz", ASSIGN_SORT_ERROR);
     ui_text_right(r, UI_FONT_MONO_SM, "DEL", u->table.x + u->table.w - 10, u->table.y + 9, UI_DIM);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, u->rows.y - 3, UI_LINE);
     const int del_x = u->table.x + u->table.w - 30;
@@ -2989,8 +3003,10 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "QNS", qns_right, split + 10,
                   assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, qns_right, split + 10, "QNS", ASSIGN_SORT_SEQUENCE);
     ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED", obs_right, split + 10,
                   assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
+    xiam_sort_header_icon(r, obs_right, split + 10, "OBSERVED", ASSIGN_SORT_FREQ);
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", calc_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "/UNC", sigma_right, split + 10, UI_DIM);
@@ -3438,9 +3454,10 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
             int qns_w = ui_text_w(UI_FONT_MONO_SM, "UPPER  –  LOWER");
             int obs_w = ui_text_w(UI_FONT_MONO_SM, "OBSERVED / MHz");
             int unc_w = ui_text_w(UI_FONT_MONO_SM, "UNC / MHz");
-            if (px >= qns_right - qns_w && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
-            if (px >= obs_right - obs_w && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
-            if (px >= unc_right - unc_w && px <= unc_right) { sort_assignments(s, ASSIGN_SORT_ERROR); return 1; }
+            /* The extra 16px covers the sort icon drawn just left of the label. */
+            if (px >= qns_right - qns_w - 16 && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+            if (px >= obs_right - obs_w - 16 && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+            if (px >= unc_right - unc_w - 16 && px <= unc_right) { sort_assignments(s, ASSIGN_SORT_ERROR); return 1; }
         }
         if (point_in_rect(px, py, u.rows)) {
             int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h);
@@ -3479,8 +3496,9 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
             int obs_right = u.table.x + u.table.w * 46 / 100;
             int qns_w = ui_text_w(UI_FONT_MONO_SM, "QNS");
             int obs_w = ui_text_w(UI_FONT_MONO_SM, "OBSERVED");
-            if (px >= qns_right - qns_w && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
-            if (px >= obs_right - obs_w && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+            /* The extra 16px covers the sort icon drawn just left of the label. */
+            if (px >= qns_right - qns_w - 16 && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+            if (px >= obs_right - obs_w - 16 && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
         }
         /* Fitting and Lines are two views of the same rows, so the residual
            table includes and removes an observation the same way. */

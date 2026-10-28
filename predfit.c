@@ -3866,6 +3866,17 @@ static int adv_col(SDL_Rect table, double fraction) {
     return table.x + 10 + (int)((table.w - 20) * fraction);
 }
 
+/* A small, always-visible sort icon beside a column header, so a sortable
+   column reads as a control and not just as plain text: dim and pointing up
+   when idle, accent-coloured and pointing with the current direction once
+   this is the active sort. */
+static void adv_sort_header_icon(SDL_Renderer *r, int col_x, int hy, const char *label, AssignmentSortKey key) {
+    int ind = assignment_sort_indicator(key);
+    int w = ui_text_w(UI_FONT_MONO_SM, label);
+    ui_draw_icon(r, ind < 0 ? UI_ICON_DOWN : UI_ICON_UP, (SDL_Rect){col_x - w - 16, hy - 1, 12, 12},
+                 ind ? UI_ACCENT_TEXT : UI_DIM);
+}
+
 static int adv_scroll_limit(int total, int visible) {
     int limit = total - visible;
     return limit > 0 ? limit : 0;
@@ -4346,8 +4357,9 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         const char *qn_label   = p->advanced_tab == 1 ? "UPPER  —  LOWER" : "QNS";
         int freq_w = ui_text_w(UI_FONT_MONO_SM, freq_label);
         int qn_w   = ui_text_w(UI_FONT_MONO_SM, qn_label);
-        if (x >= freq_col - freq_w && x <= freq_col) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
-        if (x >= qn_col - qn_w && x <= qn_col)       { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+        /* The extra 16px covers the sort icon drawn just left of the label. */
+        if (x >= freq_col - freq_w - 16 && x <= freq_col) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+        if (x >= qn_col - qn_w - 16 && x <= qn_col)       { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
     }
 
     if (point_in_rect(x, y, u.rows)) {
@@ -4722,9 +4734,11 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.26), hy,
                       assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
+        adv_sort_header_icon(r, adv_col(u.table, 0.26), hy, "OBSERVED / MHz", ASSIGN_SORT_FREQ);
         ui_text_right(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.50), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.92), hy,
                       assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+        adv_sort_header_icon(r, adv_col(u.table, 0.92), hy, "UPPER  —  LOWER", ASSIGN_SORT_SEQUENCE);
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
@@ -4808,8 +4822,10 @@ void predfit_render_advanced(AppState *s) {
         ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "QNS",        adv_col(u.table, 0.28), hy,
                       assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+        adv_sort_header_icon(r, adv_col(u.table, 0.28), hy, "QNS", ASSIGN_SORT_SEQUENCE);
         ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED",   adv_col(u.table, 0.46), hy,
                       assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
+        adv_sort_header_icon(r, adv_col(u.table, 0.46), hy, "OBSERVED", ASSIGN_SORT_FREQ);
         ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", adv_col(u.table, 0.63), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC",   adv_col(u.table, 0.79), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "/UNC",       adv_col(u.table, 0.93), hy, UI_DIM);
