@@ -48,4 +48,10 @@ int xiam_restore_session_predictions(AppState *state);
  * identity includes tunnelling and hyperfine labels outside CAT QNFMT. */
 int xiam_same_transition(const PredLine *a, const PredLine *b);
 
+/* Closes any inline edit of an assignment's observed frequency/uncertainty
+ * and drops the hovered-row cache, without touching the assignment itself.
+ * For callers outside xiam.c (e.g. a global reorder of the assignment list)
+ * that just made those row indices stale. */
+void xiam_cancel_assignment_edit(AppState *state);
+
 #endif

@@ -561,6 +561,17 @@ int xiam_same_transition(const PredLine *a, const PredLine *b) {
            memcmp(&a->xiam, &b->xiam, sizeof(a->xiam)) == 0;
 }
 
+void xiam_cancel_assignment_edit(AppState *s) {
+    if (!s) return;
+    XiamState *x = &s->xiam;
+    x->hover_line = -1;
+    if (x->edit_param == XIAM_EDIT_LINE_OBS || x->edit_param == XIAM_EDIT_LINE_ERR) {
+        x->edit_param = XIAM_EDIT_NONE;
+        SDL_StopTextInput();
+    }
+    x->edit_assignment = -1;
+}
+
 static int xiam_read_output_records(const char *path, int model_id, PredLine **out, int *count, double *lo, double *hi, double *top) {
     FILE *fp = fopen(path, "rb"); if (!fp) return 0;
     PredLine *rows = NULL; int n = 0, cap = 0; char line[2048];
@@ -2904,10 +2915,13 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
     int unc_right = u->table.x + u->table.w * 89 / 100;
     int unc_decimal = u->table.x + u->table.w * 84 / 100;
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "UPPER  –  LOWER", qns_right, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz", obs_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "UPPER  –  LOWER", qns_right, u->table.y + 9,
+                  assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz", obs_right, u->table.y + 9,
+                  assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED / MHz", calc_right, u->table.y + 9, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "UNC / MHz", unc_right, u->table.y + 9, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "UNC / MHz", unc_right, u->table.y + 9,
+                  assignment_sort_indicator(ASSIGN_SORT_ERROR) ? UI_ACCENT_TEXT : UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "DEL", u->table.x + u->table.w - 10, u->table.y + 9, UI_DIM);
     ui_hline(r, u->table.x + 2, u->table.x + u->table.w - 2, u->rows.y - 3, UI_LINE);
     const int del_x = u->table.x + u->table.w - 30;
@@ -2973,8 +2987,10 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
     int residual_right = u->table.x + u->table.w * 79 / 100;
     int sigma_right = u->table.x + u->table.w * 93 / 100;
     ui_text(r, UI_FONT_MONO_SM, "FIT", u->table.x + 12, split + 10, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "QNS", qns_right, split + 10, UI_DIM);
-    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED", obs_right, split + 10, UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "QNS", qns_right, split + 10,
+                  assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+    ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED", obs_right, split + 10,
+                  assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", calc_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC", residual_right, split + 10, UI_DIM);
     ui_text_right(r, UI_FONT_MONO_SM, "/UNC", sigma_right, split + 10, UI_DIM);
@@ -3412,6 +3428,20 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
            corner Pred&Fit keeps the .lin one. */
         if (point_in_rect(px, py, u.unc)) { xiam_edit_commit(s); xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
     } else if (x->active_tab == 1) {
+        /* Click a column header to sort the whole assignment list by it;
+           click again to reverse. Modelled on pislin's sort menu - see
+           sort_assignments(). */
+        if (py >= u.table.y && py < u.rows.y) {
+            int qns_right = u.table.x + u.table.w * 35 / 100;
+            int obs_right = u.table.x + u.table.w * 55 / 100;
+            int unc_right = u.table.x + u.table.w * 89 / 100;
+            int qns_w = ui_text_w(UI_FONT_MONO_SM, "UPPER  –  LOWER");
+            int obs_w = ui_text_w(UI_FONT_MONO_SM, "OBSERVED / MHz");
+            int unc_w = ui_text_w(UI_FONT_MONO_SM, "UNC / MHz");
+            if (px >= qns_right - qns_w && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+            if (px >= obs_right - obs_w && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+            if (px >= unc_right - unc_w && px <= unc_right) { sort_assignments(s, ASSIGN_SORT_ERROR); return 1; }
+        }
         if (point_in_rect(px, py, u.rows)) {
             int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h);
             if (ai >= 0) {
@@ -3437,6 +3467,17 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_fit(s); return 1; }
     } else if (x->active_tab == 2) {
+        /* Click a column header to sort the whole assignment list by it;
+           click again to reverse. Modelled on pislin's sort menu - see
+           sort_assignments(). */
+        if (py >= u.split && py < u.fit_obs_rows.y) {
+            int qns_right = u.table.x + u.table.w * 28 / 100;
+            int obs_right = u.table.x + u.table.w * 46 / 100;
+            int qns_w = ui_text_w(UI_FONT_MONO_SM, "QNS");
+            int obs_w = ui_text_w(UI_FONT_MONO_SM, "OBSERVED");
+            if (px >= qns_right - qns_w && px <= qns_right) { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+            if (px >= obs_right - obs_w && px <= obs_right) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+        }
         /* Fitting and Lines are two views of the same rows, so the residual
            table includes and removes an observation the same way. */
         if (point_in_rect(px, py, u.fit_obs_rows)) {

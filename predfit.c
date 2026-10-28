@@ -4336,6 +4336,20 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         return 1;
     }
 
+    /* Lines and Fitting share the same clickable column headers: click one
+       to sort the whole assignment list by it, click again to reverse.
+       Modelled on pislin's sort menu - see sort_assignments(). */
+    if ((p->advanced_tab == 1 || p->advanced_tab == 2) && y >= u.table.y && y < u.rows.y) {
+        int freq_col = adv_col(u.table, p->advanced_tab == 1 ? 0.26 : 0.46);
+        int qn_col   = adv_col(u.table, p->advanced_tab == 1 ? 0.92 : 0.28);
+        const char *freq_label = p->advanced_tab == 1 ? "OBSERVED / MHz" : "OBSERVED";
+        const char *qn_label   = p->advanced_tab == 1 ? "UPPER  —  LOWER" : "QNS";
+        int freq_w = ui_text_w(UI_FONT_MONO_SM, freq_label);
+        int qn_w   = ui_text_w(UI_FONT_MONO_SM, qn_label);
+        if (x >= freq_col - freq_w && x <= freq_col) { sort_assignments(s, ASSIGN_SORT_FREQ); return 1; }
+        if (x >= qn_col - qn_w && x <= qn_col)       { sort_assignments(s, ASSIGN_SORT_SEQUENCE); return 1; }
+    }
+
     if (point_in_rect(x, y, u.rows)) {
         int row = adv_row_index(s, p->advanced_tab,
                                 p->advanced_line_scroll + (y - u.rows.y) / u.row_h);
@@ -4702,9 +4716,11 @@ void predfit_render_advanced(AppState *s) {
 
         int hy = u.table.y + 8;
         ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
-        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.26), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED / MHz",  adv_col(u.table, 0.26), hy,
+                      assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "PREDICTED / MHz", adv_col(u.table, 0.50), hy, UI_DIM);
-        ui_text_right(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.92), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "UPPER  —  LOWER", adv_col(u.table, 0.92), hy,
+                      assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
         ui_text(r, UI_FONT_MONO_SM, "DEL",             adv_col(u.table, 0.94), hy, UI_DIM);
         ui_hline(r, u.table.x + 2, u.table.x + u.table.w - 2, u.rows.y - 3, UI_LINE);
 
@@ -4786,8 +4802,10 @@ void predfit_render_advanced(AppState *s) {
         ui_frame(r, u.table, UI_LINE);
         int hy = u.table.y + 8;
         ui_text(r, UI_FONT_MONO_SM, "FIT",             adv_col(u.table, 0.00), hy, UI_DIM);
-        ui_text_right(r, UI_FONT_MONO_SM, "QNS",        adv_col(u.table, 0.28), hy, UI_DIM);
-        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED",   adv_col(u.table, 0.46), hy, UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "QNS",        adv_col(u.table, 0.28), hy,
+                      assignment_sort_indicator(ASSIGN_SORT_SEQUENCE) ? UI_ACCENT_TEXT : UI_DIM);
+        ui_text_right(r, UI_FONT_MONO_SM, "OBSERVED",   adv_col(u.table, 0.46), hy,
+                      assignment_sort_indicator(ASSIGN_SORT_FREQ) ? UI_ACCENT_TEXT : UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "CALCULATED", adv_col(u.table, 0.63), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "OBS-CALC",   adv_col(u.table, 0.79), hy, UI_DIM);
         ui_text_right(r, UI_FONT_MONO_SM, "/UNC",       adv_col(u.table, 0.93), hy, UI_DIM);

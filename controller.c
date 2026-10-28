@@ -11,6 +11,7 @@
 #include "view.h"
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include <strings.h>
@@ -148,6 +149,64 @@ int save_assignments(AppState *s) {
                  SAVE_ASSIGNMENTS_SKIPPED " %d row%s whose NQN is unknown: assign %s again from a catalogue.",
                  skipped, skipped == 1 ? "" : "s", skipped == 1 ? "it" : "them");
     return 1;
+}
+
+/* --- ASSIGNMENT SORTING ---------------------------------------------------
+   Modelled on pislin's sort menu (Z. Kisiel's .lin checker/sorter for
+   SPFIT): frequency, error/uncertainty, and the P/Q/R - Ka - J "transition
+   sequence" (pislin's option 30: branch, then Ka' within it, then J' within
+   that). A single global direction flag is enough since only one sort is
+   ever in effect at a time; calling the same key again reverses it, the way
+   clicking a spreadsheet column header a second time does. */
+static int g_assign_sort_key = -1;
+static int g_assign_sort_desc = 0;
+
+static int assign_branch_rank(const PredLine *q) {
+    int dj = q->Ju - q->Jl;
+    return dj > 0 ? 0 : dj == 0 ? 1 : 2;   /* R, then Q, then P */
+}
+
+static int assign_cmp_freq(const void *pa, const void *pb) {
+    const Assignment *a = pa, *b = pb;
+    int c = a->exp_freq < b->exp_freq ? -1 : a->exp_freq > b->exp_freq ? 1 : 0;
+    return g_assign_sort_desc ? -c : c;
+}
+static int assign_cmp_error(const void *pa, const void *pb) {
+    const Assignment *a = pa, *b = pb;
+    int c = a->line_error_mhz < b->line_error_mhz ? -1 : a->line_error_mhz > b->line_error_mhz ? 1 : 0;
+    return g_assign_sort_desc ? -c : c;
+}
+static int assign_cmp_sequence(const void *pa, const void *pb) {
+    const Assignment *a = pa, *b = pb;
+    int ra = assign_branch_rank(&a->pred), rb = assign_branch_rank(&b->pred);
+    int c = ra != rb ? ra - rb
+          : a->pred.Kau != b->pred.Kau ? a->pred.Kau - b->pred.Kau
+          : a->pred.Jl - b->pred.Jl;
+    return g_assign_sort_desc ? -c : c;
+}
+
+void sort_assignments(AppState *s, AssignmentSortKey key) {
+    if (!s || s->n_assignments < 2) return;
+    g_assign_sort_desc = (key == g_assign_sort_key) ? !g_assign_sort_desc
+                                                     : key == ASSIGN_SORT_ERROR;
+    g_assign_sort_key = key;
+    int (*cmp)(const void *, const void *) =
+        key == ASSIGN_SORT_FREQ ? assign_cmp_freq :
+        key == ASSIGN_SORT_ERROR ? assign_cmp_error : assign_cmp_sequence;
+    qsort(s->assignments, (size_t)s->n_assignments, sizeof(s->assignments[0]), cmp);
+
+    /* Every held row index now points at a different assignment. */
+    s->selected_assignment = -1;
+    s->predfit.advanced_hover_line = -1;
+    if (s->predfit.advanced_edit_param == -8) { s->predfit.advanced_edit_param = -1; SDL_StopTextInput(); }
+    xiam_cancel_assignment_edit(s);
+    clamp_assignment_scroll(s);
+    save_assignments(s);
+}
+
+int assignment_sort_indicator(AssignmentSortKey key) {
+    if ((int)key != g_assign_sort_key) return 0;
+    return g_assign_sort_desc ? -1 : 1;
 }
 
 // --- TEXT FIELD EDITING ---------------------------------------------------
