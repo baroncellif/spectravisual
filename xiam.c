@@ -2941,7 +2941,7 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai)
             xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, x, a), y + 6, UI_ACCENT_TEXT);
         else { snprintf(b, sizeof(b), "%.6g", xiam_line_error(x, a)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
-        ui_draw_icon(r, UI_ICON_JUMP, (SDL_Rect){del_x - 20, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DIM);
+        ui_draw_icon(r, UI_ICON_JUMP, (SDL_Rect){row.x + 36, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DIM);
         ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del_x, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DANGER_TEXT);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -3033,7 +3033,7 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
             ui_text(r, UI_FONT_MONO_SM, "not in refreshed catalogue", obs_right + 16, ry + 6, UI_DIM);
         }
         ui_draw_icon(r, UI_ICON_JUMP,
-                     (SDL_Rect){u->table.x + u->table.w - 46, ry + (u->row_h - 2 - 14) / 2, 14, 14},
+                     (SDL_Rect){u->table.x + 36, ry + (u->row_h - 2 - 14) / 2, 14, 14},
                      UI_DIM);
         ui_draw_icon(r, UI_ICON_CLOSE,
                      (SDL_Rect){u->table.x + u->table.w - 26, ry + (u->row_h - 2 - 14) / 2, 14, 14},
@@ -3445,8 +3445,12 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.rows)) {
             int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h);
             if (ai >= 0) {
-                int del_x = u.table.x + u.table.w - 30, jump_x = u.table.x + u.table.w - 50;
-                if (px >= jump_x && px < del_x) {
+                int del_x = u.table.x + u.table.w - 30;
+                /* Right after the FIT checkbox, deliberately far from the
+                   delete icon - too easy to misclick when the two sit side
+                   by side. */
+                int jump_lo = u.rows.x + 36, jump_hi = jump_lo + 18;
+                if (px >= jump_lo && px < jump_hi) {
                     double freq = s->assignments[ai].exp_freq + s->exp_offset;
                     double width = s->vxmax - s->vxmin;
                     s->vxmin = freq - width / 2.0; s->vxmax = freq + width / 2.0;
@@ -3483,8 +3487,12 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.fit_obs_rows)) {
             int ai = xiam_assignment_index(s, x->fitting_scroll + (py - u.fit_obs_rows.y) / u.row_h);
             if (ai >= 0) {
-                int del_x = u.table.x + u.table.w - 30, jump_x = u.table.x + u.table.w - 50;
-                if (px >= jump_x && px < del_x) {
+                int del_x = u.table.x + u.table.w - 30;
+                /* Right after the FIT checkbox, deliberately far from the
+                   delete icon - too easy to misclick when the two sit side
+                   by side. */
+                int jump_lo = u.table.x + 36, jump_hi = jump_lo + 18;
+                if (px >= jump_lo && px < jump_hi) {
                     double freq = s->assignments[ai].exp_freq + s->exp_offset;
                     double width = s->vxmax - s->vxmin;
                     s->vxmin = freq - width / 2.0; s->vxmax = freq + width / 2.0;
