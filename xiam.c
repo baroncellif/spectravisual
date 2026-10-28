@@ -2159,8 +2159,27 @@ static int xiam_move_hamiltonian(AppState *s, int index, int delta) {
 
 static void xiam_format_transition(const PredLine *p, char *out, size_t size) {
     if (!p) { snprintf(out, size, "—"); return; }
-    snprintf(out, size, "%d %d %d  –  %d %d %d", p->Ju, p->Kau, p->Kcu,
-             p->Jl, p->Kal, p->Kcl);
+    if (!p->xiam.present) {
+        snprintf(out, size, "%d %d %d  –  %d %d %d", p->Ju, p->Kau, p->Kcu,
+                 p->Jl, p->Kal, p->Kcl);
+        return;
+    }
+    /* The six rotor QNs alone do not identify a XIAM transition - its
+       torsional/hyperfine state (S, and V/F1/F/B when they apply) does too,
+       the same fields same_assignment_transition() matches on. */
+    char extra[64] = ""; size_t off = 0;
+    if (p->xiam.f1u || p->xiam.f1l)
+        off += (size_t)snprintf(extra + off, sizeof(extra) - off, " F1 %d %d", p->xiam.f1u, p->xiam.f1l);
+    if (off < sizeof(extra) && (p->xiam.fu || p->xiam.fl))
+        off += (size_t)snprintf(extra + off, sizeof(extra) - off, " F %d %d", p->xiam.fu, p->xiam.fl);
+    if (off < sizeof(extra))
+        off += (size_t)snprintf(extra + off, sizeof(extra) - off, " S %d", p->xiam.su);
+    if (off < sizeof(extra) && (p->xiam.vu || p->xiam.vl))
+        off += (size_t)snprintf(extra + off, sizeof(extra) - off, " V %d", p->xiam.vu);
+    if (off < sizeof(extra) && (p->xiam.bu || p->xiam.bl))
+        snprintf(extra + off, sizeof(extra) - off, " B %d", p->xiam.bu);
+    snprintf(out, size, "%d %d %d  –  %d %d %d%s", p->Ju, p->Kau, p->Kcu,
+             p->Jl, p->Kal, p->Kcl, extra);
 }
 
 static double xiam_assignment_calculated(const AppState *s, const Assignment *a) {
