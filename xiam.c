@@ -601,6 +601,24 @@ static int xiam_read_output_records(const char *path, int model_id, PredLine **o
 
 static void xiam_adopt_prediction(AppState *s, PredLine *rows, int n, double lo, double hi, double top, const char *path) {
     int model_id = n ? rows[0].hamiltonian_id : 0;
+
+    /* The pred-pane selection is about to go stale: this model's rows are
+       replaced below and the whole array is re-sorted by frequency, so an
+       old index can end up pointing at an unrelated line. Capture the
+       selected ones by identity first, so a transition selected before
+       running Predict/Fit is still selected afterward instead of silently
+       dropped - without this, right-clicking to reassign right after a
+       recalculation had nothing selected to assign, which looked exactly
+       like the reassignment being ignored. */
+    PredLine reselect[MAX_SELECTED]; int n_reselect = 0;
+    for (int k = 0; k < s->n_selected; k++) {
+        int idx = s->selected_indices[k];
+        if (idx < 0 || idx >= s->n_pred) continue;
+        const PredLine *q = &s->pred_lines[idx];
+        if (q->backend != PRED_BACKEND_XIAM || q->hamiltonian_id != model_id) continue;
+        if (n_reselect < MAX_SELECTED) reselect[n_reselect++] = *q;
+    }
+
     /* A post-fit prediction replaces calculated frequencies and native
        intensities in the existing assignment rows, never their observations
        or the user's Fit inclusion choice. */
@@ -635,7 +653,17 @@ static void xiam_adopt_prediction(AppState *s, PredLine *rows, int n, double lo,
     lo = s->pred_lines[0].freq_mhz; hi = s->pred_lines[s->n_pred - 1].freq_mhz;
     (void)top;
     xiam_apply_concentrations(s);
-    s->n_selected = 0; s->pxmin = lo; s->pxmax = hi;
+    s->n_selected = 0;
+    for (int k = 0; k < n_reselect; k++) {
+        for (int i = 0; i < s->n_pred; i++) {
+            if (s->pred_lines[i].hamiltonian_id != model_id) continue;
+            if (!xiam_same_transition(&s->pred_lines[i], &reselect[k]) &&
+                !xiam_same_input_transition(&s->pred_lines[i], &reselect[k])) continue;
+            if (s->n_selected < MAX_SELECTED) s->selected_indices[s->n_selected++] = i;
+            break;
+        }
+    }
+    s->pxmin = lo; s->pxmax = hi;
     /* A mixed prediction keeps Pred&Fit's display controls authoritative for
        its own rows.  XIAM native intensities do not have a CAT temperature
        that can be rescaled, so changing these shared fields after adding one
