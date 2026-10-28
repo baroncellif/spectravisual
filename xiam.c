@@ -48,7 +48,8 @@ enum { XIAM_EDIT_NONE = -1, XIAM_EDIT_FMIN = -2, XIAM_EDIT_FMAX = -3,
        XIAM_EDIT_LINE_OBS = -6, XIAM_EDIT_LINE_ERR = -7,
        XIAM_EDIT_CONCENTRATION = -8, XIAM_EDIT_PARAM_NAME = -9,
        XIAM_EDIT_H_NAME = -10, XIAM_EDIT_CONTROL = -11,
-       XIAM_EDIT_STATE_ROW = -12, XIAM_EDIT_LINE_DEFAULT = -13 };
+       XIAM_EDIT_STATE_ROW = -12, XIAM_EDIT_LINE_DEFAULT = -13,
+       XIAM_EDIT_STATE_W = -14 };
 
 static int xiam_same_input_transition(const PredLine *a, const PredLine *b);
 static int xiam_prefix_w(int font, const char *text, int n);
@@ -253,6 +254,8 @@ static void xiam_store_active(XiamState *x) {
     snprintf(h->diagnostics, sizeof(h->diagnostics), "%s", x->diagnostics);
 }
 
+static void xiam_refresh_fit_summary(XiamState *x);
+
 static void xiam_restore_active(XiamState *x, int index) {
     if (!x || index < 0 || index >= x->n_hamiltonians) return;
     const XiamHamiltonian *h = &x->hamiltonian[index];
@@ -274,6 +277,7 @@ static void xiam_restore_active(XiamState *x, int index) {
     snprintf(x->status, sizeof(x->status), "%s", h->status);
     snprintf(x->diagnostics, sizeof(x->diagnostics), "%s", h->diagnostics);
     x->params_scroll = x->lines_scroll = x->assignments_scroll = x->fitting_scroll = x->fit_params_scroll = 0;
+    xiam_refresh_fit_summary(x);
 }
 
 static void xiam_clear_active(XiamState *x) {
@@ -287,6 +291,7 @@ static void xiam_clear_active(XiamState *x) {
     x->has_freq = x->has_ints = x->has_j = 0;
     x->axis_convention = x->axis_auto_convention = x->axis_override = 0;
     x->status[0] = x->diagnostics[0] = '\0';
+    x->has_fit_summary = 0; x->fit_std_mhz = 0.0; x->fit_iterations = 0;
 }
 
 static int xiam_select_hamiltonian(XiamState *x, int index) {
@@ -912,6 +917,26 @@ static void xiam_state_row_text(const XiamState *x, const XiamStateRow *row,
     snprintf(out, size, "%s", at);
 }
 
+/* The optional spin-statistical weight on a block V symmetry record:
+   `/label S sigma... W value`.  Absent means 1, matching XIAM's own default
+   and its own echo of block V, which omits W entirely unless a species'
+   weight differs from 1 - see iamio.f/iamint.f ("spin stat. weights W,
+   block 5"). */
+static double xiam_state_row_w(const XiamState *x, const XiamStateRow *row) {
+    if (row->block != 5) return 1.0;
+    char text[256]; xiam_state_row_text(x, row, text, sizeof(text));
+    char *bang = strchr(text, '!'); if (bang) *bang = '\0';
+    char *v[32]; int n = 0;
+    for (char *tok = strtok(text, " \t"); tok && n < 32; tok = strtok(NULL, " \t")) v[n++] = tok;
+    for (int i = 0; i + 1 < n; i++)
+        if (xiam_equal(v[i], "W")) {
+            char *end = NULL; double val = xiam_number(v[i + 1], &end);
+            if (end != v[i + 1] && isfinite(val)) return val;
+        }
+    return 1.0;
+}
+
+
 /* Which native block a source line belongs to, by walking the headings. */
 static int xiam_line_block(const XiamState *x, int upto) {
     int block = 0;
@@ -1010,6 +1035,46 @@ static int xiam_state_record_kind(const char *line) {
     int v = 0;
     if (sscanf(at, "%15s %d", key, &v) == 2 && xiam_equal(key, "V")) return 6;
     return 0;
+}
+
+/* Rewrites a block V record's W clause in place, keeping its label, sigma(s),
+   disabled marker and any inline `!` comment untouched.  value == 1.0 drops
+   the clause instead of writing a redundant `W 1`, mirroring XIAM's own
+   block-5 echo. */
+static int xiam_set_state_row_w(AppState *s, int line, double value) {
+    XiamState *x = &s->xiam;
+    if (line < 0 || line >= x->n_source_lines) return 0;
+    if (xiam_state_record_kind(x->source_lines[line]) != 5) return 0;
+    int enabled = !xiam_is_comment(x->source_lines[line]);
+    XiamStateRow row = {line, 5, enabled};
+    char text[256]; xiam_state_row_text(x, &row, text, sizeof(text));
+
+    char data[256], tail[96] = "";
+    char *comment = strchr(text, '!');
+    if (comment) {
+        size_t dn = (size_t)(comment - text);
+        if (dn >= sizeof(data)) dn = sizeof(data) - 1;
+        memcpy(data, text, dn); data[dn] = '\0';
+        snprintf(tail, sizeof(tail), "%s", comment);
+    } else snprintf(data, sizeof(data), "%s", text);
+    for (int i = (int)strlen(data) - 1; i >= 0 && isspace((unsigned char)data[i]); i--) data[i] = '\0';
+
+    char *v2[32]; int n = 0;
+    for (char *tok = strtok(data, " \t"); tok && n < 32; tok = strtok(NULL, " \t")) v2[n++] = tok;
+    int w_idx = -1;
+    for (int i = 0; i + 1 < n; i++) if (xiam_equal(v2[i], "W")) { w_idx = i; break; }
+    int keep = w_idx >= 0 ? w_idx : n;
+
+    char rebuilt[256]; size_t off = 0;
+    for (int i = 0; i < keep; i++)
+        off += (size_t)snprintf(rebuilt + off, off < sizeof(rebuilt) ? sizeof(rebuilt) - off : 0, "%s ", v2[i]);
+    if (isfinite(value) && value >= 0.0 && fabs(value - 1.0) > 1e-9)
+        off += (size_t)snprintf(rebuilt + off, off < sizeof(rebuilt) ? sizeof(rebuilt) - off : 0, "W %.6g ", value);
+    if (tail[0]) snprintf(rebuilt + off, off < sizeof(rebuilt) ? sizeof(rebuilt) - off : 0, "%s", tail);
+    else if (off > 0) rebuilt[off - 1] = '\0';
+
+    snprintf(x->source_lines[line], sizeof(x->source_lines[0]), enabled ? " %s" : "\\ %s", rebuilt);
+    return 1;
 }
 
 static int xiam_state_rows(const XiamState *x, XiamStateRow *out, int max) {
@@ -1574,6 +1639,24 @@ static int xiam_run(AppState *s, int fitting) {
     return 1;
 }
 
+/* The closing "Standard Deviation  0.048002 MHz" is XIAM's own figure of
+   merit for a fit (the counterpart of SPFIT's MICROWAVE RMS).  A report
+   without it, e.g. a prediction-only .xo, simply has no summary. */
+static void xiam_refresh_fit_summary(XiamState *x) {
+    x->has_fit_summary = 0; x->fit_std_mhz = 0.0; x->fit_iterations = 0;
+    if (!x->fit_output_path[0]) return;
+    FILE *fp = fopen(x->fit_output_path, "rb"); if (!fp) return;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        int iteration = 0; double std = 0.0;
+        if (sscanf(line, " Iteration : %d", &iteration) == 1) x->fit_iterations = iteration;
+        else if (sscanf(line, " Standard Deviation %lf", &std) == 1 && isfinite(std)) {
+            x->fit_std_mhz = std; x->has_fit_summary = 1;
+        }
+    }
+    fclose(fp);
+}
+
 static int xiam_parse_fit_parameters(XiamState *x, const char *path) {
     FILE *fp = fopen(path, "rb"); if (!fp) return 0;
     char line[1024]; int in = 0, values_are_errors = 0, updated = 0;
@@ -1700,7 +1783,7 @@ int xiam_load_output_file(AppState *s, const char *path) {
     /* XIAM can be asked to print a catalogue together with a fit report.
        Preserve the report pathname even in that mixed form: otherwise the
        Fitting page loses its provenance as soon as it displays the sticks. */
-    if (fit_parameters) snprintf(s->xiam.fit_output_path,sizeof(s->xiam.fit_output_path),"%s",path);
+    if (fit_parameters) { snprintf(s->xiam.fit_output_path,sizeof(s->xiam.fit_output_path),"%s",path); xiam_refresh_fit_summary(&s->xiam); }
     if (!xiam_read_output_records(path,model_id,&rows,&n,&lo,&hi,&top)) {
         if (fit_parameters) {
             snprintf(s->xiam.status,sizeof(s->xiam.status),"Loaded %d fitted XIAM parameters; this .xo contains no native prediction list.",fit_parameters);
@@ -1878,6 +1961,7 @@ static int xiam_undo_last_fit(AppState *s) {
     for (int i = at; i + 1 < x->history_count; i++) x->history[i] = x->history[i + 1];
     x->history_count--;
     x->fit_output_path[0] = '\0';
+    xiam_refresh_fit_summary(x);
     xiam_update_axis_convention(x);
     xiam_store_active(x);
     xiam_mark_session_dirty(s);
@@ -1903,13 +1987,18 @@ int xiam_fit(AppState *s) {
         xiam_store_active(&s->xiam);
         return 0;
     }
+    xiam_refresh_fit_summary(&s->xiam);
+    char quality[96] = "";
+    if (s->xiam.has_fit_summary)
+        snprintf(quality, sizeof(quality), "; std. deviation %.6g MHz after %d iterations",
+                 s->xiam.fit_std_mhz, s->xiam.fit_iterations);
     int predicted = xiam_calculate(s);
     if (predicted)
         snprintf(s->xiam.status, sizeof(s->xiam.status),
-                 "Fit completed (%d constants); fit.xo is retained and the updated MHz prediction is refreshed.", updated);
+                 "Fit completed (%d constants)%s; fit.xo is retained and the updated MHz prediction is refreshed.", updated, quality);
     else
         snprintf(s->xiam.status, sizeof(s->xiam.status),
-                 "Fit completed (%d constants); fit.xo is retained, but the updated prediction could not be read.", updated);
+                 "Fit completed (%d constants)%s; fit.xo is retained, but the updated prediction could not be read.", updated, quality);
     xiam_store_active(&s->xiam);
     xiam_mark_session_dirty(s);
     /* The fit itself is valid even if the optional catalogue refresh fails. */
@@ -2190,6 +2279,14 @@ static void xiam_edit_begin(XiamState *x, int what) {
             xiam_state_row_text(x, &row, x->edit_buf, sizeof(x->edit_buf));
         }
     }
+    else if (what==XIAM_EDIT_STATE_W) {
+        double w = 1.0;
+        if (x->edit_state_line >= 0 && x->edit_state_line < x->n_source_lines) {
+            XiamStateRow row = {x->edit_state_line, 5, 0};
+            w = xiam_state_row_w(x, &row);
+        }
+        snprintf(x->edit_buf, sizeof(x->edit_buf), "%.6g", w);
+    }
     else if (what==XIAM_EDIT_LINE_DEFAULT)
         snprintf(x->edit_buf,sizeof(x->edit_buf),"%.12g",x->line_error_mhz > 0.0 ? x->line_error_mhz : 0.010);
     else if (what==XIAM_EDIT_H_NAME)
@@ -2253,6 +2350,11 @@ static void xiam_edit_commit(AppState *s) {
             snprintf(x->status, sizeof(x->status),
                      "A block V record is `/label S sigma` and a block VI record is `V n`.");
         }
+        x->edit_state_line = -1;
+    }
+    else if (x->edit_param == XIAM_EDIT_STATE_W) {
+        if (!isfinite(v) || v < 0.0 || !xiam_set_state_row_w(s, x->edit_state_line, v))
+            snprintf(x->status, sizeof(x->status), "W (spin statistical weight) must be a number >= 0.");
         x->edit_state_line = -1;
     }
     else if (x->edit_param == XIAM_EDIT_LINE_DEFAULT) {
@@ -2921,6 +3023,13 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         ui_text(r, UI_FONT_SANS_SM, band[i], lx + 13, ly, UI_FAINT);
         lx += 13 + ui_text_w(UI_FONT_SANS_SM, band[i]) + 14;
     }
+    if (x->has_fit_summary) {
+        int enabled = 0; xiam_assignment_count(s, &enabled);
+        snprintf(b, sizeof(b), "Std. deviation  %.6f MHz   %d lines   %d iterations",
+                 x->fit_std_mhz, enabled, x->fit_iterations);
+        int bw = ui_text_w(UI_FONT_MONO_SM, b), right = u->w - XIAM_PAD;
+        if (right - bw > lx + 20) ui_text_right(r, UI_FONT_MONO_SM, b, right, ly, UI_TEXT);
+    }
 }
 
 static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
@@ -2946,9 +3055,11 @@ static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
     ui_fill(r, u->state_table, UI_INPUT); ui_frame(r, u->state_table, UI_LINE);
     int kind_x = u->state_table.x + u->state_table.w * 10 / 100;
     int record_x = u->state_table.x + u->state_table.w * 34 / 100;
+    int w_x = u->state_table.x + u->state_table.w * 88 / 100;
     ui_text(r, UI_FONT_MONO_SM, "USE", u->state_table.x + 12, u->state_table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "KIND", kind_x, u->state_table.y + 9, UI_DIM);
     ui_text(r, UI_FONT_MONO_SM, "NATIVE RECORD", record_x, u->state_table.y + 9, UI_DIM);
+    ui_text(r, UI_FONT_MONO_SM, "W", w_x, u->state_table.y + 9, UI_DIM);
     ui_hline(r, u->state_table.x + 2, u->state_table.x + u->state_table.w - 2, u->state_rows.y - 3, UI_LINE);
     XiamStateRow rows[MAX_XIAM_STATE_ROWS];
     int total = xiam_state_rows(x, rows, MAX_XIAM_STATE_ROWS);
@@ -2968,6 +3079,15 @@ static void xiam_render_states(SDL_Renderer *r, AppState *s, XiamState *x,
         xiam_state_row_text(x, &rows[i], b, sizeof(b));
         xiam_cell_text(r, UI_FONT_MONO_SM, x, editing, b, record_x, y + 6,
                        editing ? UI_ACCENT_TEXT : rows[i].enabled ? UI_TEXT : UI_FAINT);
+        /* Only a block V symmetry record carries a spin-statistical weight;
+           block VI torsional states have none. */
+        if (rows[i].block == 5) {
+            int editing_w = x->edit_param == XIAM_EDIT_STATE_W && x->edit_state_line == rows[i].line;
+            double w = xiam_state_row_w(x, &rows[i]);
+            snprintf(b, sizeof(b), "%.6g", w);
+            xiam_cell_text(r, UI_FONT_MONO_SM, x, editing_w, b, w_x, y + 6,
+                           editing_w ? UI_ACCENT_TEXT : rows[i].enabled ? UI_TEXT : UI_FAINT);
+        }
     }
     SDL_RenderSetClipRect(r, NULL);
     if (!total)
@@ -3313,7 +3433,10 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
             if (i >= 0 && i < total) {
                 if (px < u.state_table.x + u.state_table.w * 10 / 100)
                     xiam_toggle_state_row(s, rows[i].line);
-                else if (px >= u.state_table.x + u.state_table.w * 34 / 100) {
+                else if (rows[i].block == 5 && px >= u.state_table.x + u.state_table.w * 86 / 100) {
+                    x->edit_state_line = rows[i].line;
+                    xiam_edit_begin(x, XIAM_EDIT_STATE_W);
+                } else if (px >= u.state_table.x + u.state_table.w * 34 / 100) {
                     x->edit_state_line = rows[i].line;
                     xiam_edit_begin(x, XIAM_EDIT_STATE_ROW);
                 }
