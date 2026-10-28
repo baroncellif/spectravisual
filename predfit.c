@@ -4340,11 +4340,24 @@ int predfit_handle_advanced_event(AppState *s, const SDL_Event *e) {
         int row = adv_row_index(s, p->advanced_tab,
                                 p->advanced_line_scroll + (y - u.rows.y) / u.row_h);
         if (row >= 0) {
-            int del_x = u.table.x + u.table.w - 32;
+            int jump_x = u.table.x + u.table.w - 56, del_x = u.table.x + u.table.w - 32;
             /* The OBSERVED/MHz column: click it to correct the measured
                frequency by hand, exactly like a Pickett parameter cell. */
             int freq_lo = adv_col(u.table, p->advanced_tab == 1 ? 0.06 : 0.30);
             int freq_hi = adv_col(u.table, p->advanced_tab == 1 ? 0.26 : 0.46);
+            if (x >= jump_x && x < del_x) {
+                /* Re-centre the experimental spectrum on this line's measured
+                   frequency, keeping the current zoom width - a pure view
+                   change, so it does not dirty the session. */
+                double freq = s->assignments[row].exp_freq + s->exp_offset;
+                double width = s->vxmax - s->vxmin;
+                s->vxmin = freq - width / 2.0; s->vxmax = freq + width / 2.0;
+                if (s->sync_active) {
+                    double pwidth = s->pvxmax - s->pvxmin;
+                    s->pvxmin = freq - pwidth / 2.0; s->pvxmax = freq + pwidth / 2.0;
+                }
+                return 1;
+            }
             if (x >= del_x) {
                 /* This is deliberately the same deletion as the main
                    Assignments panel: the assignment disappears everywhere. */
@@ -4723,6 +4736,8 @@ void predfit_render_advanced(AppState *s) {
             ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.50), ty, UI_DIM);
             format_assignment_qn(b, sizeof(b), &a->pred);
             ui_text_right(r, UI_FONT_MONO, b, adv_col(u.table, 0.92), ty, a->fit_enabled ? UI_TEXT : UI_FAINT);
+            SDL_Rect jump = {u.table.x + u.table.w - 56, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            ui_draw_icon(r, UI_ICON_JUMP, jump, UI_DIM);
             SDL_Rect del = {u.table.x + u.table.w - 30, y + (u.row_h - 2 - 18) / 2, 18, 18};
             ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }
@@ -4865,6 +4880,8 @@ void predfit_render_advanced(AppState *s) {
             } else {
                 ui_text(r, UI_FONT_MONO_SM, "not fitted yet", adv_col(u.table, 0.47), ty, UI_FAINT);
             }
+            SDL_Rect jump = {u.table.x + u.table.w - 56, y + (u.row_h - 2 - 18) / 2, 18, 18};
+            ui_draw_icon(r, UI_ICON_JUMP, jump, UI_DIM);
             SDL_Rect del = {u.table.x + u.table.w - 30, y + (u.row_h - 2 - 18) / 2, 18, 18};
             ui_draw_icon(r, UI_ICON_CLOSE, del, UI_DANGER_TEXT);
         }

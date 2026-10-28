@@ -2927,6 +2927,7 @@ static void xiam_render_lines(SDL_Renderer *r, AppState *s, XiamState *x,
         if (x->edit_param == XIAM_EDIT_LINE_ERR && x->edit_assignment == ai)
             xiam_edit_text(r, UI_FONT_MONO_SM, x, xiam_line_unc_text_x(u, x, a), y + 6, UI_ACCENT_TEXT);
         else { snprintf(b, sizeof(b), "%.6g", xiam_line_error(x, a)); xiam_text_decimal(r, UI_FONT_MONO_SM, b, unc_decimal, y + 6, a->fit_enabled ? UI_TEXT : UI_DIM); }
+        ui_draw_icon(r, UI_ICON_JUMP, (SDL_Rect){del_x - 20, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DIM);
         ui_draw_icon(r, UI_ICON_CLOSE, (SDL_Rect){del_x, y + (u->row_h - 2 - 14) / 2, 14, 14}, UI_DANGER_TEXT);
     }
     SDL_RenderSetClipRect(r, NULL);
@@ -3015,6 +3016,9 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         } else {
             ui_text(r, UI_FONT_MONO_SM, "not in refreshed catalogue", obs_right + 16, ry + 6, UI_DIM);
         }
+        ui_draw_icon(r, UI_ICON_JUMP,
+                     (SDL_Rect){u->table.x + u->table.w - 46, ry + (u->row_h - 2 - 14) / 2, 14, 14},
+                     UI_DIM);
         ui_draw_icon(r, UI_ICON_CLOSE,
                      (SDL_Rect){u->table.x + u->table.w - 26, ry + (u->row_h - 2 - 14) / 2, 14, 14},
                      UI_DANGER_TEXT);
@@ -3408,7 +3412,28 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
            corner Pred&Fit keeps the .lin one. */
         if (point_in_rect(px, py, u.unc)) { xiam_edit_commit(s); xiam_edit_begin(x, XIAM_EDIT_LINE_DEFAULT); return 1; }
     } else if (x->active_tab == 1) {
-        if (point_in_rect(px, py, u.rows)) { int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h); if (ai >= 0) { if (px >= u.table.x + u.table.w - 30) xiam_delete_assignment(s, ai); else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1); else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0); else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); } xiam_store_active(x); } return 1; }
+        if (point_in_rect(px, py, u.rows)) {
+            int ai = xiam_assignment_index(s, x->lines_scroll + (py - u.rows.y) / u.row_h);
+            if (ai >= 0) {
+                int del_x = u.table.x + u.table.w - 30, jump_x = u.table.x + u.table.w - 50;
+                if (px >= jump_x && px < del_x) {
+                    double freq = s->assignments[ai].exp_freq + s->exp_offset;
+                    double width = s->vxmax - s->vxmin;
+                    s->vxmin = freq - width / 2.0; s->vxmax = freq + width / 2.0;
+                    if (s->sync_active) {
+                        double pwidth = s->pvxmax - s->pvxmin;
+                        s->pvxmin = freq - pwidth / 2.0; s->pvxmax = freq + pwidth / 2.0;
+                    }
+                    return 1;
+                }
+                if (px >= del_x) xiam_delete_assignment(s, ai);
+                else if (px >= u.table.x + u.table.w * 78 / 100) xiam_edit_assignment_begin(s, ai, 1);
+                else if (px >= u.table.x + u.table.w * 38 / 100 && px < u.table.x + u.table.w * 57 / 100) xiam_edit_assignment_begin(s, ai, 0);
+                else { s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled; save_assignments(s); xiam_mark_session_dirty(s); }
+                xiam_store_active(x);
+            }
+            return 1;
+        }
         if (point_in_rect(px, py, u.btn_a)) { char path[512]; if (xiam_pick_fit_destination(path, sizeof(path))) xiam_save_fit_file(s, path); return 1; }
         if (point_in_rect(px, py, u.btn_b)) { xiam_fit(s); return 1; }
     } else if (x->active_tab == 2) {
@@ -3417,7 +3442,18 @@ int xiam_handle_event(AppState *s, const SDL_Event *e) {
         if (point_in_rect(px, py, u.fit_obs_rows)) {
             int ai = xiam_assignment_index(s, x->fitting_scroll + (py - u.fit_obs_rows.y) / u.row_h);
             if (ai >= 0) {
-                if (px >= u.table.x + u.table.w - 30) xiam_delete_assignment(s, ai);
+                int del_x = u.table.x + u.table.w - 30, jump_x = u.table.x + u.table.w - 50;
+                if (px >= jump_x && px < del_x) {
+                    double freq = s->assignments[ai].exp_freq + s->exp_offset;
+                    double width = s->vxmax - s->vxmin;
+                    s->vxmin = freq - width / 2.0; s->vxmax = freq + width / 2.0;
+                    if (s->sync_active) {
+                        double pwidth = s->pvxmax - s->pvxmin;
+                        s->pvxmin = freq - pwidth / 2.0; s->pvxmax = freq + pwidth / 2.0;
+                    }
+                    return 1;
+                }
+                if (px >= del_x) xiam_delete_assignment(s, ai);
                 else {
                     s->assignments[ai].fit_enabled = !s->assignments[ai].fit_enabled;
                     save_assignments(s);
