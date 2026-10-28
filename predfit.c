@@ -4838,7 +4838,19 @@ void predfit_render_advanced(AppState *s) {
                     ui_text(r, UI_FONT_MONO_SM, "not used in the fit", adv_col(u.table, 0.64), ty, UI_FAINT);
                 }
             } else if (state == FIT_ROW_EXCLUDED) {
-                ui_text(r, UI_FONT_MONO_SM, "excluded", adv_col(u.table, 0.47), ty, UI_FAINT);
+                /* SPFIT never saw this line - it was left out of model.lin on
+                   purpose - but the regenerated SPCAT catalogue still predicts
+                   this transition like any other, so show that instead of
+                   leaving the row blank.  The "[ ]" checkbox already says it
+                   was excluded; no need to repeat that as a text label too. */
+                if (a->pred.freq_mhz > 0.0) {
+                    snprintf(b, sizeof(b), "%.5f", a->pred.freq_mhz);
+                    ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.63), ty, UI_FAINT);
+                    snprintf(b, sizeof(b), "%+.5f", a->exp_freq - a->pred.freq_mhz);
+                    ui_text_right(r, UI_FONT_MONO_SM, b, adv_col(u.table, 0.79), ty, UI_FAINT);
+                } else {
+                    ui_text(r, UI_FONT_MONO_SM, "excluded", adv_col(u.table, 0.47), ty, UI_FAINT);
+                }
             } else if (state == FIT_ROW_REJECTED) {
                 ui_text(r, UI_FONT_MONO_SM, "rejected by SPFIT", adv_col(u.table, 0.47), ty, UI_DANGER_TEXT);
             } else if (state == FIT_ROW_STALE) {

@@ -2985,7 +2985,13 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
         else if (visible & 1) ui_fill(r, (SDL_Rect){u->table.x + 1, ry, u->table.w - 2, u->row_h - 2}, UI_CHROME);
         double calc = xiam_assignment_calculated(s, a);
         int have_report = x->fit_output_path[0] != '\0';
-        int have_residual = have_report && a->fit_enabled && calc != 0.0;
+        /* XIAM never saw an excluded line during the fit, but the refreshed
+           native prediction still carries this transition like any other, so
+           its calculated frequency is available regardless of fit_enabled -
+           only the fit-weighted residual/sigma need the line to have actually
+           been fit. */
+        int have_calc = have_report && calc != 0.0;
+        int have_residual = have_calc && a->fit_enabled;
         double uncertainty = xiam_line_error(x, a);
         double z = have_residual ? (a->exp_freq - calc) / uncertainty : 0.0;
         SDL_Color c = !a->fit_enabled ? UI_FAINT : have_residual ? xiam_residual_color(z) : have_report ? UI_DIM : UI_FAINT;
@@ -2997,6 +3003,11 @@ static void xiam_render_fitting(SDL_Renderer *r, AppState *s, XiamState *x,
             snprintf(b, sizeof(b), "%.6f", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, ry + 6, c);
             snprintf(b, sizeof(b), "%+.6f", a->exp_freq - calc); ui_text_right(r, UI_FONT_MONO_SM, b, residual_right, ry + 6, c);
             snprintf(b, sizeof(b), "%+.2f", z); ui_text_right(r, UI_FONT_MONO_SM, b, sigma_right, ry + 6, c);
+        } else if (have_calc) {
+            /* Excluded, but still predicted: the "[ ]" checkbox already says
+               it was excluded, so just show where the model puts the line. */
+            snprintf(b, sizeof(b), "%.6f", calc); ui_text_right(r, UI_FONT_MONO_SM, b, calc_right, ry + 6, c);
+            snprintf(b, sizeof(b), "%+.6f", a->exp_freq - calc); ui_text_right(r, UI_FONT_MONO_SM, b, residual_right, ry + 6, c);
         } else if (!a->fit_enabled) {
             ui_text(r, UI_FONT_MONO_SM, "excluded", obs_right + 16, ry + 6, UI_FAINT);
         } else if (!have_report) {
