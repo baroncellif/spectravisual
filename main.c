@@ -756,6 +756,14 @@ int main(int argc, char *argv[])
     SDL_Window *win = SDL_CreateWindow("SpectraVisual", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                        1400, 884, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_SetWindowMinimumSize(win, 900, 560);
+    /* Launched as a plain binary (not a .app bundle), the window is not
+       always handed key focus by the window manager on its own - how often
+       depends on timing outside this process (what had focus a moment ago,
+       how fast the compositor maps the window), which is exactly why it
+       varied run to run. The first click then only raises/focuses the window
+       instead of being delivered as a click, so every control needs a second
+       one. Claiming focus explicitly here removes that race. */
+    SDL_RaiseWindow(win);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
