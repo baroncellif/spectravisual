@@ -1850,7 +1850,7 @@ static void draw_help_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *state
         {NULL,        "R",         "Reset the view"},
         {NULL,        "Shift+Tab", "Normalize prediction"},
         {NULL,        "Up Down",   "Shift the spectrum vertically"},
-        {"Measure",   "K  L",      "Move the bar"},
+        {"Measure",   "Left Right","Move the bar"},
         {NULL,        "G",         "Distance between two points"},
         {NULL,        "Delete",    "Remove the latest peak"},
         {NULL,        "X",         "Export the view as BMP"},
@@ -2033,7 +2033,8 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
     if (in_exp && !state->selecting_left && !state->selecting_right) {
         double fx = (mx - l->exp_x) / (double)l->exp_w;
         double fy = 1.0 - (my - l->exp_y) / (double)l->exp_h;
-        double cx = state->vxmin + fx * (state->vxmax - state->vxmin) - state->exp_offset;
+        double disp_x = state->vxmin + fx * (state->vxmax - state->vxmin);
+        double cx = disp_x - state->exp_offset;
         double cy = state->vymin + fy * (state->vymax - state->vymin);
         char freq[48]; fmt_mhz(freq, sizeof(freq), cx, 4);
         if (state->intensity_preview && state->intensity_axis_norm > 0.0)
@@ -2048,6 +2049,14 @@ static void draw_cursor_overlay(SDL_Renderer *ren, TTF_Font *font, AppState *sta
         SDL_Color cc = state->settings.cursor_color;
         SDL_SetRenderDrawColor(ren, cc.r, cc.g, cc.b, 150);
         SDL_RenderDrawLine(ren, mx, l->exp_y, mx, l->exp_y + l->exp_h);
+
+        // Mirror the same frequency into the prediction pane (if it's in
+        // view there), so the cursor marks one frequency in both panes.
+        if (l->pred_h > 0 && state->pvxmax > state->pvxmin &&
+            disp_x >= state->pvxmin && disp_x <= state->pvxmax) {
+            int px = l->pred_x + (int)lround((disp_x - state->pvxmin) / (state->pvxmax - state->pvxmin) * l->pred_w);
+            SDL_RenderDrawLine(ren, px, l->pred_y, px, l->pred_y + l->pred_h);
+        }
     }
 
     if (state->n_peaks > 0 && !state->selecting_right) {

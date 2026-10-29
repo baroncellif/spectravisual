@@ -1479,19 +1479,36 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
             break;
         }
 
-        // Panning X
+        // Panning X. The bar (if active) pans together with whichever range
+        // moves, so it keeps its place in the plotted window instead of being
+        // left behind at a now-stale absolute frequency - which used to make
+        // zoom (E/Q), which pivots on the bar, snap back to that stale spot.
         case SDLK_a:
-            if(s->sync_active) { s->vxmin -= pan_exp; s->vxmax -= pan_exp; }
-            else { 
-                if(is_shift) { s->pvxmin -= pan_pred; s->pvxmax -= pan_pred; } 
-                else { s->vxmin -= pan_exp; s->vxmax -= pan_exp; } 
+            if(s->sync_active) {
+                s->vxmin -= pan_exp; s->vxmax -= pan_exp;
+                if (s->bar_active) { s->bar_x -= pan_exp; s->pbar_x -= pan_exp; }
+            } else {
+                if(is_shift) {
+                    s->pvxmin -= pan_pred; s->pvxmax -= pan_pred;
+                    if (s->bar_active) s->pbar_x -= pan_pred;
+                } else {
+                    s->vxmin -= pan_exp; s->vxmax -= pan_exp;
+                    if (s->bar_active) s->bar_x -= pan_exp;
+                }
             }
             break;
         case SDLK_s:
-            if(s->sync_active) { s->vxmin += pan_exp; s->vxmax += pan_exp; }
-            else { 
-                if(is_shift) { s->pvxmin += pan_pred; s->pvxmax += pan_pred; } 
-                else { s->vxmin += pan_exp; s->vxmax += pan_exp; } 
+            if(s->sync_active) {
+                s->vxmin += pan_exp; s->vxmax += pan_exp;
+                if (s->bar_active) { s->bar_x += pan_exp; s->pbar_x += pan_exp; }
+            } else {
+                if(is_shift) {
+                    s->pvxmin += pan_pred; s->pvxmax += pan_pred;
+                    if (s->bar_active) s->pbar_x += pan_pred;
+                } else {
+                    s->vxmin += pan_exp; s->vxmax += pan_exp;
+                    if (s->bar_active) s->bar_x += pan_exp;
+                }
             }
             break;
 
@@ -1560,13 +1577,13 @@ static void handle_keydown(AppState *s, Layout *l, SDL_KeyboardEvent *key) {
             else { s->vymin += pan_y/10; s->vymax += pan_y/10; } 
             break;
 
-        // Move Bar (K / L)
-        case SDLK_k: 
+        // Move Bar (Left / Right arrows)
+        case SDLK_LEFT:
             if(s->bar_active) {
                 if(s->sync_active) { s->bar_x -= bar_step_exp; s->pbar_x -= bar_step_exp; }
                 else { if(is_shift) s->pbar_x -= bar_step_pred; else s->bar_x -= bar_step_exp; }
             } break;
-        case SDLK_l: 
+        case SDLK_RIGHT:
             if(s->bar_active) {
                 if(s->sync_active) { s->bar_x += bar_step_exp; s->pbar_x += bar_step_exp; }
                 else { if(is_shift) s->pbar_x += bar_step_pred; else s->bar_x += bar_step_exp; }
