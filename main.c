@@ -749,6 +749,17 @@ int main(int argc, char *argv[])
     if (session_arg) adopt_session_data_dir(&state, session_arg);
     predfit_refresh_work_dir(&state);
 
+    /* By default a window manager (macOS very much included) treats the
+       click that brings an unfocused window to the front as ONLY an
+       activation: it is consumed to raise/focus the window and never
+       delivered to the app as a real click, so the next, separate click is
+       the first one that actually registers. That is the "every so often
+       the first click does nothing, even on a plain table button" symptom -
+       and raising the window ourselves (below) does not change it, since it
+       is about what happens to the click itself, not about who has focus
+       beforehand. This hint tells SDL to pass that first click through
+       instead of swallowing it. Must be set before SDL_Init. */
+    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     if (TTF_Init() != 0) return 1;
