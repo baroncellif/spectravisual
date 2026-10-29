@@ -27,10 +27,26 @@ typedef enum {
     UI_FONT_COUNT
 } UiFontRole;
 
+// The main window, Pred&Fit Advanced and XIAM are separate SDL windows that
+// can each sit on their own display, so each gets its own font-cache slot
+// scaled to its own density; switching slots is just an index change, so a
+// window's text stays correctly scaled no matter which window last rendered
+// or currently has OS focus.
+enum {
+    UI_FONT_SLOT_MAIN = 0,
+    UI_FONT_SLOT_ADVANCED,
+    UI_FONT_SLOT_XIAM,
+    UI_FONT_SLOT_COUNT
+};
+
 // Opens the faces at size * scale, where scale is the backing-store ratio of
 // the window (2.0 on a Retina display). Returns 0 if no face could be opened.
+// ui_fonts_init() is ui_fonts_init_slot(UI_FONT_SLOT_MAIN, scale).
 int   ui_fonts_init(float scale);
+int   ui_fonts_init_slot(int slot, float scale);
 void  ui_fonts_close(void);
+void  ui_fonts_close_slot(int slot);
+void  ui_fonts_use(int slot);
 TTF_Font *ui_font(int role);
 float ui_scale(void);
 int   ui_text_w(int role, const char *txt);

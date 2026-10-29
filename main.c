@@ -682,6 +682,24 @@ static void save_screenshot(SDL_Renderer *ren, AppState *state) {
     SDL_FreeSurface(surf);
 }
 
+// Rescales `slot`'s font cache to `win`'s own window/drawable ratio if it has
+// drifted (e.g. the window was just dragged to a monitor with a different
+// pixel density) and selects it, so the text/icons the caller is about to
+// draw for THIS window come out at THIS window's density - independent of
+// which window rendered last or currently has OS focus.
+static void sync_font_slot(SDL_Window *win, SDL_Renderer *ren, int slot, float *dpi) {
+    if (!win || !ren) { ui_fonts_use(slot); return; }
+    int w = 0, h = 0, dw = 0, dh = 0;
+    SDL_GetWindowSize(win, &w, &h);
+    SDL_GetRendererOutputSize(ren, &dw, &dh);
+    float now = (w > 0 && dw > 0) ? (float)dw / (float)w : 1.0f;
+    if (fabs(now - *dpi) > 0.01f) {
+        *dpi = now;
+        ui_fonts_init_slot(slot, now);
+    }
+    ui_fonts_use(slot);
+}
+
 int main(int argc, char *argv[])
 {
     /* AppState contains the fixed-capacity assignment/project buffers.  It is
@@ -745,19 +763,22 @@ int main(int argc, char *argv[])
     // (logical) coordinates but let the renderer scale to the real pixel grid,
     // and open the fonts at the same factor: text and hairlines are then
     // rendered at native density instead of being blown up from a 1x bitmap.
-    // main_dpi tracks the main window's own renderer scale; ui_dpi is the one
-    // shared font cache's scale, which follows whichever window (main,
-    // Pred&Fit Advanced or XIAM) currently has focus - see the loop below.
-    float main_dpi = 1.0f, ui_dpi = 1.0f;
+    // main, Pred&Fit Advanced and XIAM are separate windows that can each sit
+    // on a different-density monitor. Each gets its own font-cache slot
+    // (UI_FONT_SLOT_MAIN/ADVANCED/XIAM); main_dpi/adv_dpi/xiam_dpi track each
+    // window's own ratio, and sync_font_slot() below rescales and selects a
+    // window's slot right before THAT window renders - not based on focus,
+    // since two windows can be visible on two monitors at once and a
+    // focus-based single shared scale can only ever be right for one of them.
+    float main_dpi = 1.0f, adv_dpi = 1.0f, xiam_dpi = 1.0f;
     {
         int ww = 0, wh = 0, dw = 0, dh = 0;
         SDL_GetWindowSize(win, &ww, &wh);
         SDL_GetRendererOutputSize(ren, &dw, &dh);
         if (ww > 0 && dw > 0) main_dpi = (float)dw / (float)ww;
-        ui_dpi = main_dpi;
         SDL_RenderSetScale(ren, main_dpi, main_dpi);
     }
-    if (!ui_fonts_init(ui_dpi)) { fprintf(stderr, "No font found.\n"); return 1; }
+    if (!ui_fonts_init(main_dpi)) { fprintf(stderr, "No font found.\n"); return 1; }
     if (!plotgpu_init(ren)) fprintf(stderr, "Plot renderer unavailable; spectra will not be drawn.\n");
     TTF_Font *font = ui_font(UI_FONT_SANS);
 
@@ -778,50 +799,23 @@ int main(int argc, char *argv[])
 
     while(running) {
         int w, h; SDL_GetWindowSize(win, &w, &h);
-        {   // the main window can be moved to a display with a different
-            // density; its own renderer always tracks its own window.
-            int dw = 0, dh = 0;
-            SDL_GetRendererOutputSize(ren, &dw, &dh);
-            float now = (w > 0 && dw > 0) ? (float)dw / (float)w : 1.0f;
-            if (fabs(now - main_dpi) > 0.01f) {
-                main_dpi = now;
-                SDL_RenderSetScale(ren, main_dpi, main_dpi);
-            }
-        }
-        {   // Pred&Fit Advanced and XIAM are separate windows that can each
-            // sit on their own display too, but every window draws text
-            // through the one shared font cache below. Follow whichever
-            // window currently has focus so its own proportions are the
-            // ones that come out right, instead of always the main
-            // window's - that was the bug: moving Advanced/XIAM to a
-            // second monitor left their text sized for the main window's
-            // density, out of step with their own (correctly adaptive)
-            // render scale.
-            SDL_Window *focused = win; SDL_Renderer *focused_ren = ren;
-            PredFitState *pf = &state.predfit; XiamState *xi = &state.xiam;
-            if (pf->advanced_window && (SDL_GetWindowFlags(pf->advanced_window) & SDL_WINDOW_INPUT_FOCUS)) {
-                focused = pf->advanced_window; focused_ren = pf->advanced_renderer;
-            } else if (xi->window && (SDL_GetWindowFlags(xi->window) & SDL_WINDOW_INPUT_FOCUS)) {
-                focused = xi->window; focused_ren = xi->renderer;
-            }
-            int fw = 0, fh = 0, dw = 0, dh = 0;
-            SDL_GetWindowSize(focused, &fw, &fh);
-            SDL_GetRendererOutputSize(focused_ren, &dw, &dh);
-            float now = (fw > 0 && dw > 0) ? (float)dw / (float)fw : 1.0f;
-            if (fabs(now - ui_dpi) > 0.01f) {
-                ui_dpi = now;
-                ui_fonts_close();
-                ui_fonts_init(ui_dpi);
-                font = ui_font(UI_FONT_SANS);
-            }
-        }
+        sync_font_slot(win, ren, UI_FONT_SLOT_MAIN, &main_dpi);
+        SDL_RenderSetScale(ren, main_dpi, main_dpi);
         app_compute_layout(&state, &layout, w, h);
 
         handle_app_events(&state, &layout, &running);
         process_pending_loads(&state);
         restore_session_view(&state);
+
+        // Advanced and XIAM each get their own font-cache slot synced to
+        // their own window right before they render; the main window's slot
+        // is restored afterwards for intensity/settings and the main render.
+        sync_font_slot(state.predfit.advanced_window, state.predfit.advanced_renderer, UI_FONT_SLOT_ADVANCED, &adv_dpi);
         predfit_render_advanced(&state);
+        sync_font_slot(state.xiam.window, state.xiam.renderer, UI_FONT_SLOT_XIAM, &xiam_dpi);
         xiam_render(&state);
+        ui_fonts_use(UI_FONT_SLOT_MAIN);
+        font = ui_font(UI_FONT_SANS);
         intensity_analysis_poll(&state);
         intensity_analysis_render(&state);
         settings_render(&state);

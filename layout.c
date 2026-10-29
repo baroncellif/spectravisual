@@ -186,8 +186,9 @@ void fill_rounded_rect(SDL_Renderer *ren, SDL_Rect dst, int radius, SDL_Color c)
 //  logical size, so text is rendered at the display's real pixel density
 //  instead of being scaled up from a 1x bitmap.
 // ============================================================================
-static TTF_Font *g_fonts[UI_FONT_COUNT];
-static float     g_scale = 1.0f;
+static TTF_Font *g_fonts[UI_FONT_SLOT_COUNT][UI_FONT_COUNT];
+static float     g_scale[UI_FONT_SLOT_COUNT] = {1.0f, 1.0f, 1.0f};
+static int       g_cur_slot = UI_FONT_SLOT_MAIN;
 
 static const int UI_FONT_SIZE[UI_FONT_COUNT] = {
     12,   /* UI_FONT_SANS    labels, buttons        */
@@ -246,46 +247,65 @@ static const char *const FONT_MONO[] = {
 #define N_TITLE (int)(sizeof(FONT_TITLE) / sizeof(FONT_TITLE[0]))
 #define N_MONO  (int)(sizeof(FONT_MONO)  / sizeof(FONT_MONO[0]))
 
-int ui_fonts_init(float scale) {
-    g_scale = (scale > 0.1f) ? scale : 1.0f;
-    g_dev_scale = g_scale;
+int ui_fonts_init_slot(int slot, float scale) {
+    if (slot < 0 || slot >= UI_FONT_SLOT_COUNT) return 0;
+    float sc = (scale > 0.1f) ? scale : 1.0f;
+    g_scale[slot] = sc;
     for (int r = 0; r < UI_FONT_COUNT; r++) {
-        int px = (int)lround(UI_FONT_SIZE[r] * g_scale);
-        if (r == UI_FONT_MONO || r == UI_FONT_MONO_SM) g_fonts[r] = open_first(FONT_MONO, N_MONO, px);
-        else if (r == UI_FONT_TITLE)                   g_fonts[r] = open_first(FONT_TITLE, N_TITLE, px);
-        else                                           g_fonts[r] = open_first(FONT_SANS, N_SANS, px);
-        if (!g_fonts[r]) g_fonts[r] = open_first(FONT_SANS, N_SANS, px);
-        if (!g_fonts[r]) return 0;
+        if (g_fonts[slot][r]) { TTF_CloseFont(g_fonts[slot][r]); g_fonts[slot][r] = NULL; }
+        int px = (int)lround(UI_FONT_SIZE[r] * sc);
+        if (r == UI_FONT_MONO || r == UI_FONT_MONO_SM) g_fonts[slot][r] = open_first(FONT_MONO, N_MONO, px);
+        else if (r == UI_FONT_TITLE)                   g_fonts[slot][r] = open_first(FONT_TITLE, N_TITLE, px);
+        else                                           g_fonts[slot][r] = open_first(FONT_SANS, N_SANS, px);
+        if (!g_fonts[slot][r]) g_fonts[slot][r] = open_first(FONT_SANS, N_SANS, px);
+        if (!g_fonts[slot][r]) return 0;
     }
+    if (slot == g_cur_slot) g_dev_scale = sc;
     return 1;
 }
 
-void ui_fonts_close(void) {
+int ui_fonts_init(float scale) { return ui_fonts_init_slot(UI_FONT_SLOT_MAIN, scale); }
+
+void ui_fonts_close_slot(int slot) {
+    if (slot < 0 || slot >= UI_FONT_SLOT_COUNT) return;
     for (int r = 0; r < UI_FONT_COUNT; r++) {
-        if (g_fonts[r]) { TTF_CloseFont(g_fonts[r]); g_fonts[r] = NULL; }
+        if (g_fonts[slot][r]) { TTF_CloseFont(g_fonts[slot][r]); g_fonts[slot][r] = NULL; }
     }
+}
+
+void ui_fonts_close(void) {
+    for (int s = 0; s < UI_FONT_SLOT_COUNT; s++) ui_fonts_close_slot(s);
+}
+
+// Selects which window's font-cache slot ui_font()/ui_scale()/ui_dev() read
+// from. Call this right before a given window renders, so its text and icons
+// use ITS OWN density regardless of which window rendered last or has focus.
+void ui_fonts_use(int slot) {
+    if (slot < 0 || slot >= UI_FONT_SLOT_COUNT) slot = UI_FONT_SLOT_MAIN;
+    g_cur_slot = slot;
+    g_dev_scale = g_scale[slot];
 }
 
 TTF_Font *ui_font(int role) {
     if (role < 0 || role >= UI_FONT_COUNT) role = UI_FONT_SANS;
-    return g_fonts[role];
+    return g_fonts[g_cur_slot][role];
 }
 
-float ui_scale(void) { return g_scale; }
+float ui_scale(void) { return g_scale[g_cur_slot]; }
 
-// Width of `txt` in logical pixels (the font is oversized by g_scale).
+// Width of `txt` in logical pixels (the font is oversized by the slot's scale).
 int ui_text_w(int role, const char *txt) {
     TTF_Font *f = ui_font(role);
     if (!f || !txt || !*txt) return 0;
     int w = 0, h = 0;
     TTF_SizeUTF8(f, txt, &w, &h);
-    return (int)lround(w / (double)g_scale);
+    return (int)lround(w / (double)g_scale[g_cur_slot]);
 }
 
 int ui_text_h(int role) {
     TTF_Font *f = ui_font(role);
     if (!f) return 0;
-    return (int)lround(TTF_FontHeight(f) / (double)g_scale);
+    return (int)lround(TTF_FontHeight(f) / (double)g_scale[g_cur_slot]);
 }
 
 // --- DRAWING FUNCTIONS ---
@@ -297,8 +317,8 @@ void draw_text(SDL_Renderer *ren, TTF_Font *font, const char *txt, int x, int y,
     if (!surf) return;
     SDL_Texture *tex  = SDL_CreateTextureFromSurface(ren, surf);
     SDL_Rect dst = {x, y,
-                    (int)lround(surf->w / (double)g_scale),
-                    (int)lround(surf->h / (double)g_scale)};
+                    (int)lround(surf->w / (double)g_scale[g_cur_slot]),
+                    (int)lround(surf->h / (double)g_scale[g_cur_slot])};
     SDL_FreeSurface(surf);
     SDL_RenderCopy(ren, tex, NULL, &dst);
     SDL_DestroyTexture(tex);
@@ -329,8 +349,8 @@ void draw_text_vertical(SDL_Renderer *ren, TTF_Font *font, const char *txt, int 
     if (!surf) return;
     SDL_Texture *tex  = SDL_CreateTextureFromSurface(ren, surf);
     SDL_Rect dst = {x, y,
-                    (int)lround(surf->w / (double)g_scale),
-                    (int)lround(surf->h / (double)g_scale)};
+                    (int)lround(surf->w / (double)g_scale[g_cur_slot]),
+                    (int)lround(surf->h / (double)g_scale[g_cur_slot])};
     SDL_Point center = {0, dst.h};
     SDL_RenderCopyEx(ren, tex, NULL, &dst, -90.0, &center, SDL_FLIP_NONE);
     SDL_FreeSurface(surf);
