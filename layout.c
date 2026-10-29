@@ -90,6 +90,28 @@ int pred_passes_filter(const AppState *s, int idx) {
     if (p->lgint < s->pred_min_log_int) return 0;
     if (p->lgint > s->pred_max_log_int) return 0;
 
+    // Unchecking a Hamiltonian in the Simulation tab (XIAM or Pred&Fit) only
+    // ever stopped it from being recalculated on the next Simulate - its rows
+    // already in s->pred_lines kept being drawn (sticks, the broadened sum
+    // curve, peak matching) exactly as if it were still checked. Gate every
+    // use of a prediction row on its owning Hamiltonian's checkbox here, in
+    // the one place all of those reads already pass through.
+    if (p->hamiltonian_id != 0) {
+        if (p->backend == PRED_BACKEND_XIAM) {
+            for (int i = 0; i < s->xiam.n_hamiltonians; i++)
+                if (s->xiam.hamiltonian[i].model_id == p->hamiltonian_id) {
+                    if (s->xiam.hamiltonian[i].simulate_excluded) return 0;
+                    break;
+                }
+        } else {
+            for (int i = 0; i < s->predfit.n_hamiltonians; i++)
+                if (s->predfit.hamiltonian[i].id == p->hamiltonian_id) {
+                    if (s->predfit.hamiltonian[i].simulate_excluded) return 0;
+                    break;
+                }
+        }
+    }
+
     if (!s->filter_active) return 1;
 
     // Dipole type (mu = a/b/c).
