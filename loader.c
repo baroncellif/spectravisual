@@ -543,6 +543,32 @@ void deduplicate_assignments(Assignment *list, int *n) {
     *n = keep;
 }
 
+/* exp_freq is saved/reloaded with 6 decimal digits (see save_assignments),
+   so two reads of "the same observed peak" can differ by that much; this
+   margin is still far below the spacing of any two genuinely distinct
+   peaks. */
+#define ASSIGNMENT_FREQ_EPS 1e-4
+
+void clear_superseded_assignments(Assignment *list, int *n, double exp_f,
+                                   const int *hamiltonian_ids, const PredLine *keep, int n_keep) {
+    int out = 0;
+    for (int i = 0; i < *n; i++) {
+        int touched = 0;
+        for (int k = 0; k < n_keep; k++)
+            if (hamiltonian_ids[k] == list[i].hamiltonian_id) { touched = 1; break; }
+        if (touched && fabs(list[i].exp_freq - exp_f) <= ASSIGNMENT_FREQ_EPS) {
+            int still_wanted = 0;
+            for (int k = 0; k < n_keep; k++)
+                if (hamiltonian_ids[k] == list[i].hamiltonian_id &&
+                    same_assignment_transition(&list[i].pred, &keep[k])) { still_wanted = 1; break; }
+            if (!still_wanted) continue;   /* superseded by this reassignment: drop it */
+        }
+        if (out != i) list[out] = list[i];
+        out++;
+    }
+    *n = out;
+}
+
 void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f, double exp_i,
                               int hamiltonian_id) {
     /* Frequencies from SPCAT are model-dependent.  QNs are the identity of a

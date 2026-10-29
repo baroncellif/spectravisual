@@ -75,6 +75,13 @@ void add_or_update_assignment(Assignment *list, int *n, PredLine p, double exp_f
 /* An assignment is identified by its complete upper/lower quantum-number
    tuple, never by a calculated frequency (which changes after SPFIT). */
 void deduplicate_assignments(Assignment *list, int *n);
+/* Call before (re)assigning a batch of predictions to the same observed peak:
+   drops whichever OLD assignments under the touched Hamiltonian(s) sit at
+   that same exp_f but are not part of the new batch, so reassigning a peak
+   to a different prediction replaces the old assignment instead of leaving
+   it behind as a duplicate that still feeds the fit. */
+void clear_superseded_assignments(Assignment *list, int *n, double exp_f,
+                                   const int *hamiltonian_ids, const PredLine *keep, int n_keep);
 void load_existing_assignments(const char *filename, Assignment *list, int *n);
 
 /* Version written in the header line of assignments.txt. */

@@ -1155,9 +1155,18 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
     if (s->n_selected <= 0 || s->viewer_readonly) return;
 
     int requested = s->n_selected, assigned = 0;
-    for(int k = 0; k < requested; k++) {
+
+    /* Figure out the owning Hamiltonian of every prediction about to be
+       (re)assigned first, so any OLD assignment sitting at this same peak
+       under one of those same Hamiltonians - from a previous, different
+       prediction - can be dropped before adding the new one. Without this,
+       reassigning a peak to a different predicted transition left the old
+       assignment behind as an invisible duplicate (same screen position,
+       still counted in the fit) instead of replacing it. */
+    PredLine keep[MAX_SELECTED]; int keep_ham[MAX_SELECTED]; int n_keep = 0;
+    for (int k = 0; k < requested; k++) {
         int idx = s->selected_indices[k];
-        if (idx < 0 || idx >= s->n_pred) continue;
+        if (idx < 0 || idx >= s->n_pred || n_keep >= MAX_SELECTED) continue;
         /* In a simulation the plot holds several models at once, so the owner
            is the Hamiltonian of the catalogue row itself; only a row without
            one falls back to the active Hamiltonian. */
@@ -1171,8 +1180,15 @@ static void assign_selected_predictions(AppState *s, double exp_freq, double exp
                               ? s->pred_lines[idx].hamiltonian_id
                               : (s->predfit.generated_catalog_active
                                  ? predfit_active_hamiltonian_id(s) : 0));
+        keep[n_keep] = s->pred_lines[idx];
+        keep_ham[n_keep] = hamiltonian_id;
+        n_keep++;
+    }
+    clear_superseded_assignments(s->assignments, &s->n_assignments, exp_freq, keep_ham, keep, n_keep);
+
+    for (int k = 0; k < n_keep; k++) {
         add_or_update_assignment(s->assignments, &s->n_assignments,
-                                 s->pred_lines[idx], exp_freq, exp_int, hamiltonian_id);
+                                 keep[k], exp_freq, exp_int, keep_ham[k]);
         assigned++;
     }
 
